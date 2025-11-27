@@ -17,12 +17,14 @@
 - **Eşzamanlı işleme**: Yapılandırılabilir iş parçacığı sayısı (1-256)
 - **Toplu çeviri**: Birden fazla metni birlikte işler (1-2000)
 - **Proxy rotasyonu**: Otomatik proxy yönetimi ve doğrulama
+- **Yapılandırılabilir davranış**: Proxy güncelleme aralığı, hata limiti ve başlangıçta test etme gibi ayarlar artık tamamen `Proxy` sekmesinden yönetilir.
 - **Akıllı yedekleme**: Proxy'ler başarısız olursa doğrudan isteklere geri döner
 - **Hız sınırlama**: Engellemeyi önlemek için uyarlanabilir gecikmeler
 
 ### 🎨 Modern Arayüz
-- **Profesyonel temalar**: Koyu, Açık, Solarized, Göz dostu
-- **Gerçek zamanlı izleme**: Canlı çeviri ilerlemesi ve istatistikleri
+- **Profesyonel temalar**: Koyu ve Solarized temalar
+- **Basit ana ekran**: Sadece klasör seçimi, temel çeviri ayarları ve ilerleme çubuğu
+- **Ayrı ayarlar penceresi**: Gelişmiş performans / proxy / günlük ayarları `Ayarlar` menüsünde
 - **İki dilli kullanıcı arayüzü**: İngilizce ve Türkçe arayüz desteği
 - **Otomatik kaydetme**: Uygun RenPy yapısı ile zaman damgalı çıktı
 
@@ -85,6 +87,7 @@ Veya Windows'ta, `run.bat` dosyasını çift tıklayabilirsiniz.
 - İstek gecikmesi (0–5 s)
 - Maksimum yeniden deneme sayısı
 - Proxy'yi etkinleştir / devre dışı bırak
+- Proxy hata limiti, güncelleme aralığı ve özel proxy listesi (her satıra bir tane)
 
 ## 🌍 Motor Durumu Tablosu
 | Motor | Durum | Not |
@@ -125,6 +128,22 @@ Pull Request'ler memnuniyetle kabul edilir. Önerilen iyileştirmeler:
 - Performans optimizasyonu
 - Ek dil desteği
 - UI iyileştirmeleri
+
+### Gelişmiş Kullanıcılar İçin Yardımcı Script'ler
+
+`tools/` klasöründe tanılama ve test için bazı ek script'ler bulunur:
+
+- `tools/system_check.py`: Ortamı ve bağımlılıkları kontrol eder, tipik hataları raporlar.
+- `tools/parser_smoke.py`: Örnek `.rpy` dosyaları üzerinde ayrıştırıcının temel çalışmasını test eder.
+- `tools/renpy_compatibility_test.py`: Üretilen çıktıların Ren'Py ile uyumluluğunu basit kontrollerle doğrular.
+- `tools/performance_test.py`: Farklı thread/batch ayarlarıyla kaba performans testi yapar.
+
+Bu script'leri çalıştırmak için (sanal ortam aktifken) proje kök dizininde şu komutlardan birini kullanabilirsiniz:
+
+```bash
+python tools/system_check.py
+python tools/parser_smoke.py
+```
 
 ## ❓ Sorun Giderme
 | Sorun | Çözüm |

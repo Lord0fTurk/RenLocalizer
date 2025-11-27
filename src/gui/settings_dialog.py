@@ -124,22 +124,6 @@ class SettingsDialog(QDialog):
         self.check_updates_check = QCheckBox()
         layout.addRow(self.config_manager.get_ui_text("check_updates_label"), self.check_updates_check)
         
-        # Window size
-        window_group = QGroupBox(self.config_manager.get_ui_text("window_size_group"))
-        window_layout = QFormLayout(window_group)
-        
-        self.window_width_spin = QSpinBox()
-        self.window_width_spin.setRange(800, 2560)
-        self.window_width_spin.setSuffix(" px")
-        window_layout.addRow(self.config_manager.get_ui_text("width_label"), self.window_width_spin)
-        
-        self.window_height_spin = QSpinBox()
-        self.window_height_spin.setRange(600, 1440)
-        self.window_height_spin.setSuffix(" px")
-        window_layout.addRow(self.config_manager.get_ui_text("height_label"), self.window_height_spin)
-        
-        layout.addWidget(window_group)
-        
         self.tab_widget.addTab(widget, self.config_manager.get_ui_text("general_tab"))
     
     def create_translation_tab(self):
@@ -320,8 +304,6 @@ class SettingsDialog(QDialog):
         self.auto_save_check.setChecked(self.config_manager.app_settings.auto_save_settings)
         self.auto_save_translations_check.setChecked(self.config_manager.get_setting('ui.auto_save_translations', True))
         self.check_updates_check.setChecked(self.config_manager.app_settings.check_for_updates)
-        self.window_width_spin.setValue(self.config_manager.app_settings.window_width)
-        self.window_height_spin.setValue(self.config_manager.app_settings.window_height)
         
         # Translation settings
         source_lang = self.config_manager.translation_settings.source_language
@@ -373,8 +355,6 @@ class SettingsDialog(QDialog):
         self.config_manager.app_settings.auto_save_settings = self.auto_save_check.isChecked()
         self.config_manager.set_setting('ui.auto_save_translations', self.auto_save_translations_check.isChecked())
         self.config_manager.app_settings.check_for_updates = self.check_updates_check.isChecked()
-        self.config_manager.app_settings.window_width = self.window_width_spin.value()
-        self.config_manager.app_settings.window_height = self.window_height_spin.value()
         
         # Translation settings
         self.config_manager.translation_settings.source_language = self.default_source_combo.currentData()

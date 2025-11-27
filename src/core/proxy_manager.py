@@ -43,7 +43,12 @@ class ProxyInfo:
         return self.success_count / total
 
 class ProxyManager:
-    """Manages proxy servers for translation requests."""
+    """Manages proxy servers for translation requests.
+
+    This class is intentionally kept independent from the UI layer.
+    Runtime behaviour can be tuned via ``configure_from_settings`` which
+    accepts a ProxySettings-like object (from src.utils.config).
+    """
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -60,6 +65,11 @@ class ProxyManager:
             "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt"
         ]
         
+        # Behaviour toggles (filled from config via configure_from_settings)
+        self.auto_rotate: bool = True
+        self.test_on_startup: bool = True
+        self.max_failures: int = 10
+
         # Test URLs for proxy validation
         self.test_urls = [
             "http://httpbin.org/ip",
@@ -67,6 +77,31 @@ class ProxyManager:
             "http://icanhazip.com",
             "http://checkip.amazonaws.com"
         ]
+
+        # Optional user provided proxies (host:port or full URLs)
+        self.custom_proxy_strings: List[str] = []
+
+    def configure_from_settings(self, proxy_settings) -> None:
+        """Configure manager behaviour from a ProxySettings-like object.
+
+        This keeps core decoupled from ConfigManager while still allowing
+        runtime tuning from the settings dialog.
+        """
+        try:
+            if proxy_settings is None:
+                return
+            # Interval / limits
+            self.proxy_update_interval = int(getattr(proxy_settings, "update_interval", self.proxy_update_interval) or self.proxy_update_interval)
+            self.max_failures = int(getattr(proxy_settings, "max_failures", self.max_failures) or self.max_failures)
+            # Behaviour flags
+            self.auto_rotate = bool(getattr(proxy_settings, "auto_rotate", self.auto_rotate))
+            self.test_on_startup = bool(getattr(proxy_settings, "test_on_startup", self.test_on_startup))
+            # Custom proxy list (list of strings)
+            custom = getattr(proxy_settings, "custom_proxies", None)
+            if isinstance(custom, list):
+                self.custom_proxy_strings = [str(x).strip() for x in custom if str(x).strip()]
+        except Exception as e:
+            self.logger.warning(f"Error configuring ProxyManager from settings: {e}")
     
     async def fetch_proxies_from_geonode(self) -> List[ProxyInfo]:
         """Fetch proxies from GeoNode API."""
@@ -167,6 +202,36 @@ class ProxyManager:
         self.logger.info("Updating proxy list...")
         
         all_proxies = []
+
+        # Load user-provided custom proxies first so they are preferred
+        if self.custom_proxy_strings:
+            self.logger.info(f"Loading {len(self.custom_proxy_strings)} custom proxies from settings")
+            for entry in self.custom_proxy_strings:
+                try:
+                    entry = entry.strip()
+                    if not entry:
+                        continue
+                    protocol = "http"
+                    host = None
+                    port = None
+
+                    # If full URL provided
+                    if "://" in entry:
+                        parsed = urlparse(entry)
+                        protocol = parsed.scheme or "http"
+                        host = parsed.hostname
+                        port = parsed.port
+                    else:
+                        # Expect host:port
+                        if ":" in entry:
+                            host_part, port_part = entry.split(":", 1)
+                            host = host_part.strip()
+                            port = int(port_part.strip())
+
+                    if host and port:
+                        all_proxies.append(ProxyInfo(host=host, port=port, protocol=protocol))
+                except Exception as e:
+                    self.logger.debug(f"Invalid custom proxy entry '{entry}': {e}")
         
         # Fetch from GeoNode API
         geonode_proxies = await self.fetch_proxies_from_geonode()
@@ -242,7 +307,8 @@ class ProxyManager:
         proxy.failure_count += 1
         
         # Disable proxy if it fails too often
-        if proxy.failure_count > 10 and proxy.success_rate < 0.3:
+        failure_limit = getattr(self, "max_failures", 10) or 10
+        if proxy.failure_count > failure_limit and proxy.success_rate < 0.3:
             proxy.is_working = False
             self.logger.debug(f"Disabled proxy {proxy.url} due to high failure rate")
     
@@ -253,7 +319,15 @@ class ProxyManager:
     async def initialize(self) -> None:
         """Initialize the proxy manager."""
         self.logger.info("Initializing proxy manager...")
-        await self.update_proxy_list()
+        # Respect test_on_startup flag; if disabled we only
+        # prepare custom proxies without live testing external lists.
+        if getattr(self, "test_on_startup", True):
+            await self.update_proxy_list()
+        else:
+            # Only use custom proxies if provided
+            self.proxies = []
+            if self.custom_proxy_strings:
+                await self.update_proxy_list()
     
     async def _safe_update_proxy_list(self):
         """Safely update proxy list with lock."""

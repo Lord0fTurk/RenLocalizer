@@ -5,12 +5,13 @@ Simple RenPy Parser - Working Version
 import re
 import logging
 from pathlib import Path
-from typing import Set, Union, List
+from typing import Set, Union, List, Dict, Any
 import chardet
 
 class RenPyParser:
-    def __init__(self):
+    def __init__(self, config_manager=None):
         self.logger = logging.getLogger(__name__)
+        self.config = config_manager
         
         # Core dialogue patterns
         self.char_dialog_re = re.compile(r'^(?P<indent>\s*)(?P<char>[A-Za-z_]\w*)\s+(?P<quote>"(?:[^"\\]|\\.)*"|\'(?:[^\\\']|\\.)*\')')
@@ -112,6 +113,11 @@ class RenPyParser:
         
         if text_lower in self.renpy_technical_terms:
             return False
+
+        # Skip pure placeholder-only strings (e.g. only [player_name] or only {var})
+        # Such strings have no visible user-facing text.
+        if re.fullmatch(r"\s*(\[[^\]]+\]|\{[^}]+\}|%s|%\([^)]+\)[sdif])\s*", text):
+            return False
         
         # IMPROVED: Skip technical patterns
         technical_patterns = [
@@ -164,11 +170,17 @@ class RenPyParser:
             return 'gui'
         elif 'style.' in context_lower:
             return 'style'
+        elif 'renpy.' in context_lower or ' notify(' in context_lower or ' input(' in context_lower:
+            return 'renpy_func'
         else:
             return 'dialogue'
     
     def parse_directory(self, directory: Union[str, Path]) -> List[dict]:
-        """Parse all .rpy files in a directory and return formatted text data."""
+        """Parse all .rpy files in a directory and return formatted text data.
+
+        Honors type-based translation filters and never-translate rules if
+        a ConfigManager instance was provided at construction time.
+        """
         directory = Path(directory)
         results = []
         # Find all .rpy files, ama 'game/tl/' içerenleri hariç tut
@@ -200,6 +212,10 @@ class RenPyParser:
                             break
                     # Determine text type based on context
                     text_type = self.determine_text_type(text, context)
+
+                    # Apply type-based filters and never-translate rules
+                    if not self._should_translate_text(text, text_type):
+                        continue
                     text_data = {
                         'text': text,
                         'type': text_type,
@@ -213,6 +229,58 @@ class RenPyParser:
                 self.logger.error(f"Error parsing file {rpy_file}: {e}")
         self.logger.info(f"Total extracted texts: {len(results)}")
         return results
+
+    def _should_translate_text(self, text: str, text_type: str) -> bool:
+        """Decide whether a text should be translated based on type and rules."""
+        # If no config provided, keep legacy behavior
+        if self.config is None:
+            return True
+
+        # 1) Type-based filters from TranslationSettings
+        ts = self.config.translation_settings
+        if text_type == 'dialogue' and not ts.translate_dialogue:
+            return False
+        if text_type == 'menu' and not ts.translate_menu:
+            return False
+        if text_type == 'ui' and not ts.translate_ui:
+            return False
+        if text_type == 'config' and not ts.translate_config_strings:
+            return False
+        if text_type == 'gui' and not ts.translate_gui_strings:
+            return False
+        if text_type == 'style' and not ts.translate_style_strings:
+            return False
+        if text_type == 'renpy_func' and not ts.translate_renpy_functions:
+            return False
+
+        # 2) never_translate.json rules (exact / contains / regex)
+        rules: Dict[str, Any] = getattr(self.config, 'never_translate_rules', {}) or {}
+        text_strip = text.strip()
+
+        try:
+            # Exact matches
+            for val in rules.get('exact', []) or []:
+                if text_strip == val:
+                    return False
+
+            # Contains
+            for val in rules.get('contains', []) or []:
+                if val and val in text_strip:
+                    return False
+
+            # Regex
+            import re
+            for pattern in rules.get('regex', []) or []:
+                try:
+                    if re.search(pattern, text_strip):
+                        return False
+                except re.error:
+                    # Ignore invalid patterns
+                    continue
+        except Exception as e:
+            self.logger.warning(f"never_translate rules failed: {e}")
+
+        return True
     
     def extract_from_directory_parallel(self, directory: Union[str, Path], recursive: bool = True, max_workers: int = 4):
         """Extract texts from all .rpy files in parallel (for compatibility with GUI)."""

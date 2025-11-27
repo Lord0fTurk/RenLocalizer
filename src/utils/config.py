@@ -81,6 +81,18 @@ class TranslationSettings:
     enable_proxy: bool = True
     max_retries: int = 3
     timeout: int = 30
+    # Glossary & critical terms
+    # Glossary & critical terms
+    glossary_file: str = "glossary.json"  # Terim sözlüğü yolu (proje köküne göre)
+    critical_terms_file: str = "critical_terms.json"  # Kritik kelimeler listesi
+    # Type-based translation filters
+    translate_dialogue: bool = True
+    translate_menu: bool = True
+    translate_ui: bool = False
+    translate_config_strings: bool = False
+    translate_gui_strings: bool = False
+    translate_style_strings: bool = False
+    translate_renpy_functions: bool = False
 
 @dataclass
 class ApiKeys:
@@ -145,6 +157,13 @@ class ConfigManager:
         # Load language files
         self._language_data = {}
         self._load_language_files()
+
+        # Load glossary and critical terms
+        self.glossary = self._load_json_file(self.translation_settings.glossary_file, default={})
+        self.critical_terms = self._load_json_file(self.translation_settings.critical_terms_file, default=[])
+
+        # Load never-translate rules (optional)
+        self.never_translate_rules = self._load_json_file("never_translate.json", default={})
         
         # Load existing configuration
         self.load_config()
@@ -196,6 +215,17 @@ class ConfigManager:
             self.logger.warning(f"Could not load language files: {e}")
             # Fallback to embedded translations if JSON files fail
             self._language_data = self._get_fallback_translations()
+
+    def _load_json_file(self, filename: str, default):
+        """Load a JSON file from project root; return default on error."""
+        try:
+            path = Path(filename)
+            if path.exists():
+                with open(path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            self.logger.warning(f"Could not load JSON file {filename}: {e}")
+        return default
     
     def _get_fallback_translations(self) -> Dict[str, Dict[str, Any]]:
         """Fallback translations if JSON files are not available."""

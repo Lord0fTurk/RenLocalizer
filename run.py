@@ -8,6 +8,8 @@ import sys
 import os
 from pathlib import Path
 
+from src.version import VERSION
+
 # Add project root to Python path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
@@ -27,7 +29,7 @@ if __name__ == "__main__":
         # Create application
         app = QApplication(sys.argv)
         app.setApplicationName("RenLocalizer")
-        app.setApplicationVersion("2.0.0")
+        app.setApplicationVersion(VERSION)
         
         # Set application icon
         icon_path = project_root / "icon.ico"

@@ -50,6 +50,10 @@ class TranslationWorker(QObject):
         self.is_running = False
         self.should_stop = False
         self.results = []
+
+        # Load glossary and critical terms from config
+        self.glossary = getattr(self.config, 'glossary', {}) or {}
+        self.critical_terms = set(getattr(self.config, 'critical_terms', []) or [])
     
     def stop(self):
         """Stop the translation process."""
@@ -125,6 +129,7 @@ class TranslationWorker(QObject):
             completed = 0
             
             self.results = []
+            quality_issues = []  # For simple quality report
             
             for i in range(0, len(requests), batch_size):
                 if self.should_stop:
@@ -159,6 +164,16 @@ class TranslationWorker(QObject):
                             
                             # Log restoration
                             self.logger.debug(f"Restored {len(placeholder_map)} placeholders in translated text")
+
+                        # Apply glossary replacements (post-processing)
+                        if self.glossary:
+                            result.translated_text = self._apply_glossary(
+                                result.translated_text,
+                                self.glossary
+                            )
+
+                        # Check critical terms preservation; log only
+                        self._check_critical_terms(result, quality_issues)
                 
                 self.results.extend(batch_results)
                 
@@ -171,6 +186,14 @@ class TranslationWorker(QObject):
             
             if not self.should_stop:
                 self.logger.info(f"Translation completed: {len(self.results)} results")
+
+                # Simple quality report (log-only for now)
+                if quality_issues:
+                    self.logger.warning("Quality Report: potential issues detected:")
+                    for issue in quality_issues[:50]:  # limit log spam
+                        self.logger.warning(issue)
+                else:
+                    self.logger.info("Quality Report: no critical term issues detected")
                 self.translation_completed.emit(self.results)
             else:
                 self.logger.info("Translation stopped")
@@ -178,3 +201,53 @@ class TranslationWorker(QObject):
         except Exception as e:
             self.logger.error(f"Error in translation process: {e}", exc_info=True)
             self.error_occurred.emit(str(e))
+
+    def _apply_glossary(self, text: str, glossary: Dict[str, str]) -> str:
+        """Apply simple glossary replacements on translated text.
+
+        Glossary format (glossary.json):
+        {
+          "HP": "Can Puanı",
+          "Save": "Kayıt",
+          "Load": "Yükle"
+        }
+        """
+        try:
+            # Basit ve deterministik: uzun anahtarlar önce, büyük/küçük harf duyarlı
+            for src, dst in sorted(glossary.items(), key=lambda x: -len(x[0])):
+                if not src:
+                    continue
+                text = text.replace(src, dst)
+        except Exception as e:
+            self.logger.warning(f"Glossary application failed: {e}")
+        return text
+
+    def _check_critical_terms(self, result, quality_issues):
+        """Check that critical terms are preserved; log warnings if not.
+
+        critical_terms.json format:
+        [
+          "player_name",
+          "HP",
+          "SpecialItem42"
+        ]
+        """
+        try:
+            if not self.critical_terms:
+                return
+            original = result.original_text or ""
+            translated = result.translated_text or ""
+            for term in self.critical_terms:
+                if not term:
+                    continue
+                in_original = term in original
+                in_translated = term in translated
+                if in_original and not in_translated:
+                    msg = (
+                        f"Critical term missing after translation: '{term}' | "
+                        f"file={result.metadata.get('file_path')} line={result.metadata.get('line_number')}"
+                    )
+                    self.logger.warning(msg)
+                    quality_issues.append(msg)
+        except Exception as e:
+            self.logger.warning(f"Critical term check failed: {e}")

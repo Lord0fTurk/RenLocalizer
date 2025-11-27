@@ -1,0 +1,5 @@
+APP_NAME = "RenLocalizer V2"
+VERSION = "2.0.6"
+COPYRIGHT_YEAR = "2025"
+TEAM_NAME_EN = "RenLocalizer Team"
+TEAM_NAME_TR = "RenLocalizer Ekibi"

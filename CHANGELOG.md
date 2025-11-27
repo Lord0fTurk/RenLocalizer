@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.6] - 2025-11-26
+
+### 🎨 UI Simplification & UX
+- **Minimal main window:** Simplified the main screen to only show project folder selection, basic translation settings and a progress section so new users are not overwhelmed.
+- **Removed results/log tabs:** The old right-hand panel with `Translation Results`, `Extracted Texts` and log tabs has been removed; extracted texts are now written to simple `.txt` reports under `logs/`.
+- **Settings-only advanced options:** Advanced performance, proxy and logging options are now managed exclusively via the `Settings` dialog instead of the main window.
+- **Window size cleanup:** Removed window size persistence and the related controls in Settings; the app now opens with a sane default size instead of reusing previous large/fullscreen sizes.
+
+### 🌐 Glossary, Proxy & Localization
+- **Glossary editor dialog:** Added a dedicated `Glossary` menu entry and dialog to edit `glossary.json` (term → preferred translation) with immediate in-memory update.
+- **Config‑driven proxy manager:** Proxy behaviour is now fully driven by `Proxy` settings (enable/disable, failure limit, update interval and startup testing) instead of hardcoded values.
+- **Custom proxy list support:** You can now define your own proxy list in the `Proxy` tab; these entries are parsed and preferred over public proxy sources.
+- **Locale updates:** Updated English and Turkish locale files to match the new minimal UI and removed obsolete Quick Options/OPUS-MT related strings.
+
+### 📚 Documentation
+- **README refresh:** Updated both `README.md` and `README.tr.md` to describe the minimal main window, current theme options and the separate Settings dialog.
+
 ## [2.0.5] - 2025-09-16
 
 ### 🧹 Removal: Deep-Translator

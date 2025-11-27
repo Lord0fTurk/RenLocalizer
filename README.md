@@ -18,12 +18,14 @@
 - **Concurrent processing**: Configurable thread count (1-256)
 - **Batch translation**: Process multiple texts together (1-2000)
 - **Proxy rotation**: Automatic proxy management and validation
+- **Config-driven behaviour**: Proxy update interval, failure limits and startup tests are now fully controlled from the `Proxy` tab in Settings.
 - **Smart fallback**: Falls back to direct requests if proxies fail
 - **Rate limiting**: Adaptive delays to prevent blocking
 
 ### 🎨 Modern Interface
-- **Professional themes**: Dark, Light, Solarized, Eye-friendly
-- **Real-time monitoring**: Live translation progress and statistics
+- **Professional themes**: Dark and Solarized themes
+- **Minimal main screen**: Only folder selection, basic translation settings and progress bar
+- **Separate settings dialog**: Advanced performance / proxy / logging options in the `Settings` menu
 - **Bilingual UI**: English and Turkish interface support
 - **Auto-save**: Timestamped output with proper RenPy structure
 
@@ -86,6 +88,7 @@ Or on Windows, you can double-click `run.bat`
 - Request delay (0–5 s)
 - Max retries
 - Enable / disable proxy
+- Proxy failure limit, update interval and custom proxy list (one per line)
 
 ## 🌍 Engine Status Table
 | Engine | Status | Languages | Note |

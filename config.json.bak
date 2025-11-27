@@ -7,7 +7,16 @@
         "max_batch_size": 500,
         "enable_proxy": true,
         "max_retries": 3,
-        "timeout": 30
+        "timeout": 30,
+        "glossary_file": "glossary.json",
+        "critical_terms_file": "critical_terms.json",
+        "translate_dialogue": true,
+        "translate_menu": true,
+        "translate_ui": false,
+        "translate_config_strings": false,
+        "translate_gui_strings": false,
+        "translate_style_strings": false,
+        "translate_renpy_functions": false
     },
     "api_keys": {
         "google_api_key": "",
@@ -16,20 +25,20 @@
         "yandex_api_key": ""
     },
     "app_settings": {
-        "ui_language": "en",
+        "ui_language": "tr",
         "theme": "solarized",
         "window_width": 1536,
         "window_height": 793,
-        "last_input_directory": "C:/Users/User/Desktop/Projelerim/Renpy/game/DreamCorruption-v0.1.5-pc/game",
+        "last_input_directory": "C:/Users/User/Desktop/Programlar/Renpy/game/FromTheEclipse-0.4.4p-pc/game",
         "last_output_directory": "C:\\Users\\User\\Desktop\\Projelerim\\Renpy\\game\\DreamCorruption-v0.1.5-pc",
         "auto_save_settings": true,
         "auto_save_translations": true,
         "check_for_updates": true,
-        "output_format": "old_new",
+        "output_format": "simple",
         "parser_workers": 8
     },
     "proxy_settings": {
-        "enabled": false,
+        "enabled": true,
         "auto_rotate": true,
         "test_on_startup": true,
         "update_interval": 3600,
