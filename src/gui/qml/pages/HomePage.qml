@@ -134,7 +134,7 @@ Rectangle {
         onAccepted: {
             var p = selectedFile.toString()
             backend.setProjectPath(p)
-            projectPathField.text = (Qt.platform.os === "windows") ? p.replace("file:///", "") : p.replace("file://", "")
+            projectPathField.text = backend.urlToPath(p)
         }
     }
 
@@ -145,7 +145,7 @@ Rectangle {
         onAccepted: {
             var p = selectedFolder.toString()
             backend.setProjectPath(p)
-            projectPathField.text = (Qt.platform.os === "windows") ? p.replace("file:///", "") : p.replace("file://", "")
+            projectPathField.text = backend.urlToPath(p)
         }
     }
 
@@ -726,8 +726,7 @@ Rectangle {
                         // Link tıklama işleyicisi
                         onLinkActivated: (link) => {
                             if (link === "faq") {
-                                var appPath = backend.get_app_path()
-                                var faqPath = "file:///" + appPath + "/docs/wiki/FAQ.md"
+                                var faqPath = backend.get_asset_url("docs/wiki/FAQ.md")
                                 console.log("Opening FAQ at: " + faqPath)
                                 backend.openUrl(faqPath)
                             } else {

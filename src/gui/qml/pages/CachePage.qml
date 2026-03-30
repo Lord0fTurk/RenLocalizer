@@ -65,8 +65,8 @@ Rectangle {
     FolderDialog {
         id: tmFolderDialog
         title: (backend.uiTrigger, backend.getTextWithDefault("tm_select_folder_title", "Select tl/<language> Folder"))
-        currentFolder: "file:///" + backend.get_app_path()
-        onAccepted: tmPathField.text = selectedFolder.toString().replace("file:///", "")
+        currentFolder: backend.get_app_url()
+        onAccepted: tmPathField.text = backend.urlToPath(selectedFolder.toString())
     }
 
     ColumnLayout {

@@ -294,8 +294,8 @@ Rectangle {
     FolderDialog {
         id: tlPathDialog
         title: (backend.uiTrigger, backend.getTextWithDefault("select_tl_folder_title", "Select TL Folder"))
-        currentFolder: "file:///" + backend.get_app_path()
-        onAccepted: tlPathField.text = selectedFolder.toString().replace("file:///", "")
+        currentFolder: backend.get_app_url()
+        onAccepted: tlPathField.text = backend.urlToPath(selectedFolder.toString())
     }
 
     component ToolCard: Rectangle {
