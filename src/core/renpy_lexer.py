@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ren'Py Lexer Stub for RenLocalizer Lite.
+Ren'Py Lexer Stub.
 ========================================
 
-This file stubs out the custom Ren'Py Lexer to reduce complexity in the Lite version.
+This file stubs out the custom Ren'Py Lexer to reduce complexity.
 """
 
 class TokenStream:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Minimal but functional Deep Extraction helpers ported from the full
-Standard-Version to improve Lite extraction coverage.
+Standard-Version to improve extraction coverage.
 
 This module intentionally keeps dependencies low while providing:
 - variable-name heuristics (`DeepVariableAnalyzer`)
@@ -92,7 +92,7 @@ class DeepVariableAnalyzer:
         
         Returns: "translatable" | "non_translatable" | "uncertain"
         
-        LITE version uses a conservative approach: always return "translatable"
+        This version uses a conservative approach: always return "translatable"
         to ensure maximum extraction. The parser's own filters will catch
         false positives later.
         """

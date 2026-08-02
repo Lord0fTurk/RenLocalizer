@@ -101,14 +101,14 @@ python -m venv .venv
 ```bash
 .venv\Scripts\activate
 pip install -r requirements.txt
-python run_lite.py
+python run.py
 ```
 
 **Linux / macOS:**
 ```bash
 source .venv/bin/activate
 pip install -r requirements.txt
-python run_lite.py
+python run.py
 ```
 
 ---

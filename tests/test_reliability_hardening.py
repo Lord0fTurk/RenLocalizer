@@ -173,7 +173,7 @@ def test_coverage_warning_summary_logs_without_popup() -> None:
 
 
 def test_app_backend_completion_summary_includes_review_notes() -> None:
-    return  # AppBackend is deleted in Lite version
+    return  # Old AppBackend deleted
     from src.backend.app_backend import AppBackend
 
     fake_backend = SimpleNamespace(

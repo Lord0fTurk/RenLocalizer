@@ -152,7 +152,7 @@ def test_classify_text_type():
     assert parser.classify_text_type("Merhaba, nasılsın?") == "general"
 
 
-@unittest.skip("pyparse_grammar is stubbed in Lite version")
+@unittest.skip("pyparse_grammar is stubbed")
 def test_pyparse_python_calls_and_notify(tmp_path):
     from src.core.pyparse_grammar import extract_with_pyparsing
     sample = '''

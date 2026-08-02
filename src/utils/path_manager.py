@@ -138,7 +138,7 @@ def get_project_id(project_path: str, game_exe_path: Optional[str] = None) -> st
     if game_exe_path and os.path.isfile(game_exe_path):
         exe_name = os.path.basename(game_exe_path)
         name_no_ext, _ = os.path.splitext(exe_name)
-        if name_no_ext.lower() not in ("py", "exe", "sh", "run_lite", "run"):
+        if name_no_ext.lower() not in ("py", "exe", "sh", "run"):
             cleaned = normalize_project_name(name_no_ext)
             if cleaned:
                 return cleaned
@@ -153,7 +153,7 @@ def get_project_id(project_path: str, game_exe_path: Optional[str] = None) -> st
                 if os.path.isfile(f_path) and f.lower().endswith(('.exe', '.sh', '.py')):
                     name_no_ext, _ = os.path.splitext(f)
                     if name_no_ext.lower() not in (
-                        'opencode', 'unrpyc', 'python', 'run_lite', 'run', 'unren',
+                        'opencode', 'unrpyc', 'python', 'run', 'unren',
                         'uninstall', 'setup', 'patch', 'game', 'renlocalizer', 'launcher'
                     ):
                         candidates.append(name_no_ext)

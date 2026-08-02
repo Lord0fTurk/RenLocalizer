@@ -13,6 +13,9 @@ charset-normalizer>=3.3.0
 # AI Translation Engines (OpenAI, DeepSeek, LocalLLM)
 openai>=1.14.0
 
+# Google Gemini Translation
+google-genai>=1.0.0
+
 # RPA Extraction
 unrpa>=2.3.0
 
@@ -25,3 +28,6 @@ rpycdec>=0.1.12
 # Terminal UI (CLI mode)
 rich>=13.7.0
 PyYAML>=6.0.1
+
+# Font tools
+fonttools>=4.38.0

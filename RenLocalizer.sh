@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_BINARY="$SCRIPT_DIR/RenLocalizer"
-RUN_PY="$SCRIPT_DIR/run_lite.py"
+RUN_PY="$SCRIPT_DIR/run.py"
 VENV_DIR="$SCRIPT_DIR/venv"
 REQ_FILE="$SCRIPT_DIR/requirements.txt"
 

@@ -32,6 +32,11 @@ from src.core.constants import (
     MIRROR_MAX_FAILURES,
     MIRROR_BAN_TIME,
 )
+from src.core.exceptions import (
+    RateLimitError,
+    QuotaExceededError,
+    NetworkConnectionError,
+)
 from src.utils.config import get_effective_batch_size
 from src.version import VERSION as _APP_VERSION
 
@@ -90,6 +95,11 @@ class BaseTranslator(ABC):
             asyncio.Lock()
         )  # Mutex for thread-safe session creation checks
         self.user_agents = USER_AGENTS
+        self.enable_parallel_batch = True
+        if config_manager and hasattr(config_manager, "translation_settings"):
+            self.enable_parallel_batch = getattr(
+                config_manager.translation_settings, "enable_parallel_batch", True
+            )
 
     def emit_log(self, level: str, message: str):
         """Emits log to both standard logger and UI status callback."""
@@ -155,7 +165,7 @@ class BaseTranslator(ABC):
             try:
                 await self._session.close()
             except Exception:
-                pass
+                self.logger.debug("Failed to close aiohttp session")
             self._session = None
             self._connector = None
 
@@ -204,7 +214,24 @@ class BaseTranslator(ABC):
     async def translate_batch(
         self, requests: List[TranslationRequest]
     ) -> List[TranslationResult]:
-        return [await self.translate_single(r) for r in requests]
+        is_parallel = getattr(self, "enable_parallel_batch", True)
+        if hasattr(self, "config_manager") and self.config_manager:
+            is_parallel = getattr(
+                getattr(self.config_manager, "translation_settings", None),
+                "enable_parallel_batch",
+                is_parallel,
+            )
+        if not is_parallel or len(requests) <= 1:
+            return [await self.translate_single(r) for r in requests]
+
+        limit = getattr(self, "multi_q_concurrency", 4)
+        sem = asyncio.Semaphore(limit)
+
+        async def _guarded(req: TranslationRequest) -> TranslationResult:
+            async with sem:
+                return await self.translate_single(req)
+
+        return list(await asyncio.gather(*[_guarded(r) for r in requests]))
 
     @abstractmethod
     def get_supported_languages(self) -> Dict[str, str]: ...
@@ -308,6 +335,7 @@ class GoogleTranslator(BaseTranslator):
             ts = config_manager.translation_settings
             self.use_multi_endpoint = getattr(ts, "use_multi_endpoint", True)
             self.enable_lingva_fallback = getattr(ts, "enable_lingva_fallback", True)
+            self.enable_parallel_batch = getattr(ts, "enable_parallel_batch", True)
             # Slider ile kontrol edilen 'max_concurrent_threads' değerini baz alıyoruz
             self.multi_q_concurrency = getattr(ts, "max_concurrent_threads", 16)
             self.max_slice_chars = getattr(ts, "max_chars_per_request", 2000)
@@ -531,6 +559,26 @@ class GoogleTranslator(BaseTranslator):
                         if proxy_url_used and self.proxy_manager:
                             self.proxy_manager.mark_proxy_failed(proxy_url_used)
 
+                except aiohttp.ClientError as e:
+                    # Network/Timeout errors — likely proxy failure
+                    if proxy_url_used and self.proxy_manager:
+                        self.proxy_manager.mark_proxy_failed(proxy_url_used)
+                    err = NetworkConnectionError(str(e), context={"endpoint": endpoint})
+                    self.logger.debug(err.get_user_friendly_message())
+                    # Mild Backoff: Wait 1s -> 2s
+                    wait_time = (1.5**attempt) * 0.5
+                    await asyncio.sleep(wait_time)
+                    if endpoint in self._endpoint_health:
+                        self._endpoint_health[endpoint]["fails"] += 1
+                except asyncio.TimeoutError as e:
+                    if proxy_url_used and self.proxy_manager:
+                        self.proxy_manager.mark_proxy_failed(proxy_url_used)
+                    err = NetworkConnectionError(f"Timeout: {e}", context={"endpoint": endpoint})
+                    self.logger.debug(err.get_user_friendly_message())
+                    wait_time = (1.5**attempt) * 0.5
+                    await asyncio.sleep(wait_time)
+                    if endpoint in self._endpoint_health:
+                        self._endpoint_health[endpoint]["fails"] += 1
                 except Exception:
                     # Network/Timeout errors — likely proxy failure
                     if proxy_url_used and self.proxy_manager:
@@ -648,7 +696,7 @@ class GoogleTranslator(BaseTranslator):
                                                 "Lingva rescued the translation!"
                                             )
                                 except Exception:
-                                    pass
+                                    self.logger.debug("Lingva rescue attempt failed")
 
                         if not retry_success:
                             self.logger.warning("Attempting placeholder injection...")
@@ -868,7 +916,7 @@ class GoogleTranslator(BaseTranslator):
                                             "Lingva rescued the translation (Single)!"
                                         )
                             except Exception:
-                                pass
+                                self.logger.debug("Lingva rescue single attempt failed")
 
                     if not retry_success:
                         self.logger.warning(
@@ -1051,7 +1099,7 @@ class GoogleTranslator(BaseTranslator):
                         metadata=request.metadata,
                     )
         except Exception as e:
-            pass
+            self.logger.warning("translate_single failed for text=%r: %s", text, e)
 
         return TranslationResult(
             source_text,
@@ -1281,7 +1329,7 @@ class GoogleTranslator(BaseTranslator):
                 if base:
                     self.multi_q_concurrency = base
         except Exception:
-            pass
+            self.logger.debug("Failed to parse multi-q concurrency setting")
 
         self.logger.info(
             f"Starting batch translation: {len(requests)} texts, max_slice_chars={self.max_slice_chars}, concurrency={self.multi_q_concurrency}"
@@ -1331,8 +1379,17 @@ class GoogleTranslator(BaseTranslator):
             f"Dedup: {len(requests)} -> {len(unique_list)} unique, {len(slices)} slices"
         )
 
-        # Paralel çalıştır (bounded)
-        sem = asyncio.Semaphore(self.multi_q_concurrency)
+        # Paralel mi sıralı mı çalıştırılacak kontrol et
+        is_parallel = getattr(self, "enable_parallel_batch", True)
+        if hasattr(self, "config_manager") and self.config_manager:
+            is_parallel = getattr(
+                getattr(self.config_manager, "translation_settings", None),
+                "enable_parallel_batch",
+                is_parallel,
+            )
+
+        concurrency_limit = self.multi_q_concurrency if is_parallel else 1
+        sem = asyncio.Semaphore(concurrency_limit)
 
         async def run_slice(slice_items: List[Tuple[int, TranslationRequest]]):
             async with sem:
@@ -2347,6 +2404,8 @@ class DeepLTranslator(BaseTranslator):
                         last_error = f"HTTP {resp.status}: {msg[:100]}"
                         if is_quota:
                             # Quota exhausted — no point retrying, return immediately
+                            qe = QuotaExceededError(f"DeepL API quota aşıldı (HTTP 456)", code=456)
+                            self.emit_log("error", qe.get_user_friendly_message())
                             return [
                                 TranslationResult(
                                     r.text,
@@ -2470,6 +2529,21 @@ class DeepLTranslator(BaseTranslator):
                         )
                 return results
 
+            except aiohttp.ClientError as e:
+                # Retry on network/timeout errors
+                last_error = str(e)
+                nc_err = NetworkConnectionError(str(e), context={"engine": "deepl"})
+                self.logger.debug(nc_err.get_user_friendly_message())
+                if attempt < self.MAX_RETRIES - 1:
+                    await asyncio.sleep(self.RETRY_DELAYS[attempt])
+                    continue
+            except asyncio.TimeoutError as e:
+                last_error = str(e)
+                nc_err = NetworkConnectionError(f"Timeout: {e}", context={"engine": "deepl"})
+                self.logger.debug(nc_err.get_user_friendly_message())
+                if attempt < self.MAX_RETRIES - 1:
+                    await asyncio.sleep(self.RETRY_DELAYS[attempt])
+                    continue
             except Exception as e:
                 # Retry on network/timeout errors
                 last_error = str(e)
@@ -2481,7 +2555,8 @@ class DeepLTranslator(BaseTranslator):
         msg = last_error or "Unknown error after retries"
         is_quota = "456" in msg or "quota" in msg.lower()
         if is_quota:
-            msg = "Quota Exceeded"
+            qe = QuotaExceededError("DeepL API quota aşıldı", code=456)
+            msg = qe.get_user_friendly_message()
         return [
             TranslationResult(
                 r.text,
@@ -2684,6 +2759,8 @@ class LibreTranslateTranslator(BaseTranslator):
                                 await asyncio.sleep(self.RETRY_DELAYS[attempt])
                                 continue
                             else:
+                                rl = RateLimitError("LibreTranslate rate limit aşıldı (HTTP 429)", code=429)
+                                self.emit_log("error", rl.get_user_friendly_message())
                                 return [
                                     TranslationResult(
                                         r.text,
@@ -2692,7 +2769,7 @@ class LibreTranslateTranslator(BaseTranslator):
                                         r.target_lang,
                                         TranslationEngine.LIBRETRANSLATE,
                                         False,
-                                        "Error: Rate Limit Exceeded (Use local/API key or wait)",
+                                        rl.get_user_friendly_message(),
                                         quota_exceeded=True,
                                     )
                                     for r in requests

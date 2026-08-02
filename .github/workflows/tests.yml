@@ -56,13 +56,13 @@ jobs:
       - name: Run targeted regression suite
         shell: bash
         run: |
-          python -m pytest tests/test_parser.py tests/test_false_positive_filters.py tests/test_text_type_filtering.py tests/test_reliability_hardening.py tests/test_runtime_coverage.py tests/test_runtime_templates.py tests/test_runtime_hook_diagnostics.py tests/test_release_linux_artifacts.py -q --rootdir .
+          python -m pytest tests/ -q --rootdir .
 
       - name: Smoke test source Qt startup (Linux)
         if: runner.os == 'Linux'
         run: |
           export RENLOCALIZER_QT_SMOKE_TEST="1"
-          xvfb-run -a python run_lite.py
+          xvfb-run -a python run.py
 
       - name: Smoke test source Qt startup (Windows)
         if: runner.os == 'Windows'
@@ -70,7 +70,7 @@ jobs:
         run: |
           export RENLOCALIZER_QT_SMOKE_TEST="1"
           export QT_QPA_PLATFORM="offscreen"
-          python run_lite.py
+          python run.py
 
   archlinux:
     name: Arch Linux (Python 3.14)
@@ -103,7 +103,7 @@ jobs:
       - name: Run tests
         run: |
           . venv/bin/activate
-          python -m pytest tests/test_parser.py tests/test_false_positive_filters.py tests/test_text_type_filtering.py tests/test_reliability_hardening.py -q --rootdir .
+          python -m pytest tests/ -q --rootdir .
 
   linux-pyqt-compat:
     name: Linux source compatibility (PyQt6 ${{ matrix.pyqt6-version }})
@@ -165,9 +165,9 @@ jobs:
 
       - name: Run compatibility regression suite
         run: |
-          python -m pytest tests/test_parser.py tests/test_false_positive_filters.py tests/test_text_type_filtering.py tests/test_reliability_hardening.py tests/test_runtime_coverage.py tests/test_runtime_templates.py tests/test_runtime_hook_diagnostics.py -q --rootdir .
+          python -m pytest tests/ -q --rootdir .
 
       - name: Smoke test source Qt startup
         run: |
           export RENLOCALIZER_QT_SMOKE_TEST="1"
-          xvfb-run -a python run_lite.py
+          xvfb-run -a python run.py

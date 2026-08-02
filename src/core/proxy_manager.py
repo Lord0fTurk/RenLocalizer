@@ -447,3 +447,13 @@ class ProxyManager:
             return 4
         else:
             return 2
+
+    def get_proxy_count(self) -> int:
+        """Return total number of proxies (including non-working)."""
+        return len(self.proxies)
+
+    def is_proxy_enabled(self) -> bool:
+        """Return True if at least one proxy is configured and available."""
+        return len(self.proxies) > 0 and any(
+            p.is_personal or p.is_working for p in self.proxies
+        )

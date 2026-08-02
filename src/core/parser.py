@@ -23,7 +23,6 @@ import configparser
 import yaml
 from src.core.deep_extraction import (
     DeepExtractionConfig,
-    DeepVariableAnalyzer,
     FStringReconstructor,
     MultiLineStructureParser,
     confidence_band,
@@ -1531,7 +1530,7 @@ class RenPyParser:
                     entries.append(entry)
                     seen_texts.add(text)
         except Exception:
-            pass
+            self.logger.warning("Failed to process entry for text=%r", text)
 
         return entries
 
@@ -2910,7 +2909,7 @@ class RenPyParser:
                     if len(text_strip) != 1 or text_strip not in '<>{}[]()^v↑↓←→':
                         return False
         except Exception:
-            pass
+            self.logger.debug("is_meaningful_text inner check failed")
 
         # ============================================================
         # V2.6.6: FALSE POSITIVE PREVENTION FOR NEW PATTERNS
@@ -3648,7 +3647,7 @@ class RenPyParser:
                 
             except SyntaxError:
                 # Invalid Python, skip this block
-                pass
+                self.logger.debug("Syntax error in Python block, skipping: %s", line[:80])
             except Exception as exc:
                 self.logger.debug(f"AST parse error in block: {exc}")
         

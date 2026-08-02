@@ -30,40 +30,9 @@ class RenPyOutputFormatter:
     def apply_glossary(self, text: str, glossary: dict, original_text: str = None) -> str:
         """
         Glossary'deki terimleri öncelik sırasına göre (uzun terim önce) metin içinde değiştirir.
-        
-        Args:
-            text: Çevrilmiş metin
-            glossary: {kaynak: hedef} sözlüğü
-            original_text: Orijinal kaynak metin (opsiyonel, tam eşleşme kontrolü için)
         """
-        if not glossary or not text:
-            return text
-            
-        # 1. Adım: Tam eşleşme kontrolü (En etkili yöntem)
-        # Eğer orijinal metin sözlükteki bir anahtarla (büyük/küçük harf duyarsız) tam eşleşiyorsa
-        # doğrudan sözlükteki karşılığını döndür.
-        if original_text:
-            orig_stripped = original_text.strip()
-            for src, dst in glossary.items():
-                if src.lower() == orig_stripped.lower():
-                    return dst
-
-        # 2. Adım: Metin içinde arama ve değiştirme
-        # En uzun terimler önce, çakışma riskini azaltır
-        sorted_terms = sorted(glossary.items(), key=lambda x: -len(x[0]))
-        result = text
-        for src, dst in sorted_terms:
-            # Sadece tam kelime eşleşmesi için word boundary kullan
-            pattern = re.compile(r'(?i)\b' + re.escape(src) + r'\b')
-            
-            # Eğer kaynak kelime çevrilmiş metinde HALA DURUYORSA (çevrilmemişse) değiştir
-            if pattern.search(result):
-                result = pattern.sub(lambda m: _preserve_case(m.group(0), dst), result)
-            
-            # TODO: Gelecekte makine çevirisinin yaptığı yaygın hataları da 
-            # (örn: Load -> Yük) burada yakalamak için eşleme tablosu eklenebilir.
-            
-        return result
+        from src.core.glossary_manager import GlossaryManager
+        return GlossaryManager.apply_glossary(text, glossary, original_text=original_text)
     
     # File extensions that should never be translated
     SKIP_FILE_EXTENSIONS = (
@@ -211,6 +180,37 @@ class RenPyOutputFormatter:
         r'^\s*(?:show|scene|hide)\s+[a-zA-Z_]\w*\s+[a-zA-Z_]\w*\s*$'
     )
 
+    # Pre-compiled Python code & builtin call patterns for high performance
+    _PYTHON_CODE_RE = re.compile(
+        r'(?:'
+        r'\bdef\s+\w+\s*\(|'
+        r'\bclass\s+\w+\s*[:\(]|'
+        r'(?:^|\n)\s*for\s+\w+\s+in\s+\w+\s*:|'
+        r'\bif\s+\w+\s+in\s+\w+:|'
+        r'\bimport\s+\w+|'
+        r'\bfrom\s+\w+\s+import|'
+        r'\breturn\s+(?:self|cls|True|False|None|\d|\(|\[|\{|"|\')|'
+        r'\braise\s+\w+|'
+        r'\btry\s*:|'
+        r'\bexcept\s+\w*:|'
+        r'(?:^|\n)\s*while\s+\w+\s*:|'
+        r'\bwhile\s+(?:True|False|not\s+|\d)|'
+        r'\blambda\s+\w*:|'
+        r'\bwith\s+\w+\s*\(.*\)\s+as\s+|'
+        r'renpy\.\w+\.\w+|'
+        r'renpy\.\w+\(|'
+        r'_\w+\[|'
+        r'\w+\s*=\s*\[|'
+        r'\w+\s*=\s*\{|'
+        r'\w+\s*=\s*True\b|'
+        r'\w+\s*=\s*False\b|'
+        r'\w+\s*=\s*None\b'
+        r')'
+    )
+    _PYTHON_BUILTIN_CALLS_RE = re.compile(
+        r'\b(?:str|int|float|len|list|dict|tuple|set|abs|min|max|round|range|format|repr|ord|chr)\s*\('
+    )
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
@@ -249,36 +249,8 @@ class RenPyOutputFormatter:
         # --- PYTHON CODE / DOCSTRING DETECTION ---
         # Skip strings containing Python code patterns (commonly from docstrings)
         # These cause critical game-breaking issues when translated
-        # NOTE: Patterns must be strict to avoid catching natural English:
-        #   "I'll return home" != code, "return self.x" = code
-        #   "Stay a while longer" != code, "while True:" = code
-        python_code_patterns = [
-            r'\bdef\s+\w+\s*\(',           # Function definitions: def foo(
-            r'\bclass\s+\w+\s*[:\(]',      # Class definitions: class Foo:
-            r'(?:^|\n)\s*for\s+\w+\s+in\s+\w+\s*:',  # For loops at statement level: for x in items:
-            r'\bif\s+\w+\s+in\s+\w+:',     # If in checks: if key in km:
-            r'\bimport\s+\w+',              # Import statements
-            r'\bfrom\s+\w+\s+import',       # From imports
-            r'\breturn\s+(?:self|cls|True|False|None|\d|\(|\[|\{|"|\')',  # Return code values only
-            r'\braise\s+\w+',               # Raise exceptions
-            r'\btry\s*:',                   # Try blocks
-            r'\bexcept\s+\w*:',             # Except blocks
-            r'(?:^|\n)\s*while\s+\w+\s*:',  # While at statement level: while True:
-            r'\bwhile\s+(?:True|False|not\s+|\d)',  # while True, while not, while 0
-            r'\blambda\s+\w*:',             # Lambda functions
-            r'\bwith\s+\w+\s*\(.*\)\s+as\s+',  # With context manager: with open() as f
-            r'renpy\.\w+\.\w+',             # Ren'Py module calls: renpy.store.x
-            r'renpy\.\w+\(',                # Ren'Py function calls: renpy.block_rollback()
-            r'_\w+\[',                      # Internal dict access: _saved_keymap[key]
-            r'\w+\s*=\s*\[',                # List assignment: x = [
-            r'\w+\s*=\s*\{',                # Dict assignment: x = {
-            r'\w+\s*=\s*True\b',            # Boolean assignment with True
-            r'\w+\s*=\s*False\b',           # Boolean assignment with False
-            r'\w+\s*=\s*None\b',            # None assignment
-        ]
-        for pattern in python_code_patterns:
-            if re.search(pattern, text_strip):
-                return True
+        if self._PYTHON_CODE_RE.search(text_strip):
+            return True
         
         # --- STRING CONCATENATION / CODE EXPRESSIONS ---
         # Skip strings that are Python string concatenation or code expressions
@@ -292,16 +264,9 @@ class RenPyOutputFormatter:
         # Skip strings containing Python function calls like str(), int(), len()
         # v2.5.0: Now smarter - if the string is long and has spaces, it's likely a quest text
         # we only skip short technical strings like "image_"+str(i)+".png"
-        python_builtin_calls = [
-            r'\bstr\s*\(', r'\bint\s*\(', r'\bfloat\s*\(', r'\blen\s*\(',
-            r'\blist\s*\(', r'\bdict\s*\(', r'\btuple\s*\(', r'\bset\s*\(',
-            r'\babs\s*\(', r'\bmin\s*\(', r'\bmax\s*\(', r'\bround\s*\(',
-            r'\brange\s*\(', r'\bformat\s*\(', r'\brepr\s*\(', r'\bord\s*\(', r'\bchr\s*\('
-        ]
         if len(text_strip) < 80 or ' ' not in text_strip.strip():
-            for pattern in python_builtin_calls:
-                if re.search(pattern, text_strip):
-                    return True
+            if self._PYTHON_BUILTIN_CALLS_RE.search(text_strip):
+                return True
         
         # --- FILE PATH PATTERNS WITH VARIABLES ---
         # Skip strings that look like path templates with string concatenation

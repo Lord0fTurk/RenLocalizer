@@ -12,6 +12,11 @@ especially for:
 - Menu items with conditions
 
 Implementation based on Ren'Py's internal pickle format (MIT licensed).
+
+The Fake* classes below only reproduce the class/attribute names Ren'Py's
+own `renpy/ast.py` (Copyright 2004-2026 Tom Rothamel, MIT License) uses in
+its pickled .rpyc output, which is required for pickle to unpickle those
+files at all -- no original Ren'Py source or logic is copied.
 """
 
 from __future__ import annotations
@@ -146,6 +151,16 @@ class FakeASTBase:
         self.linenumber: int = 0
         self.filename: str = ""
     
+    def __getattr__(self, name: str) -> Any:
+        """Fallback for missing attributes in legacy/variant Ren'Py AST nodes."""
+        if name == "hide":
+            return False
+        if name == "code":
+            return None
+        if name == "store":
+            return "store"
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
     def __setstate__(self, state: dict) -> None:
         """Handle pickle deserialization with Data Integrity protection."""
         # Initialize extra_state to capture unknown slots (Future Proofing)
@@ -277,6 +292,17 @@ class FakePython(FakeASTBase):
         self.hide = False
         self.store = "store"
         super().__setstate__(state)
+
+
+class FakeEarlyPython(FakePython):
+    """Represents EarlyPython node (pre-dates hide attribute in older Ren'Py versions)."""
+    def __init__(self):
+        super().__init__()
+        self.hide = False
+
+    def __setstate__(self, state) -> None:
+        super().__setstate__(state)
+        self.hide = getattr(self, 'hide', False)
 
 
 class FakePyCode:
@@ -939,7 +965,7 @@ class RenpyUnpickler(pickle.Unpickler):
         ("renpy.ast", "Label"): FakeLabel,
         ("renpy.ast", "Init"): FakeInit,
         ("renpy.ast", "Python"): FakePython,
-        ("renpy.ast", "EarlyPython"): FakePython,
+        ("renpy.ast", "EarlyPython"): FakeEarlyPython,
         ("renpy.ast", "PyCode"): FakePyCode,
         ("renpy.ast", "Screen"): FakeScreen,
         ("renpy.ast", "Translate"): FakeTranslate,
@@ -1370,6 +1396,10 @@ class ExtractedText:
     node_type: str = ""
     confidence: float = 0.0
     confidence_band: str = "candidate"
+    # Real Ren'Py translate identifier baked into the compiled .rpyc (Translate/
+    # TranslateSay node), when available. When present this is the exact id
+    # Ren'Py's own runtime lookup_translate() will use — no hash guessing needed.
+    identifier: str = ""
 
 
 class ASTTextExtractor:
@@ -1441,6 +1471,7 @@ class ASTTextExtractor:
         context: str = "",
         placeholder_map: Dict[str, str] = None,
         node_type: str = "",
+        identifier: str = "",
     ) -> None:
         """Add extracted text if it's meaningful."""
         if not text or not text.strip():
@@ -1510,6 +1541,7 @@ class ASTTextExtractor:
             node_type=node_type or text_type,
             confidence=confidence,
             confidence_band=confidence_band(confidence),
+            identifier=identifier or "",
         )
         self.extracted.append(self.seen_map[key])
         logger.info(f"[AST ENTRY] {self.current_file}:{line_number} [{node_type or text_type}] ctx={context_path} text={text}")
@@ -1677,15 +1709,20 @@ class ASTTextExtractor:
         content = content.replace('\\n', '\n').replace('\\t', '\t')
         return content
     
-    def _walk_nodes(self, nodes: List[Any], context: str = "") -> None:
-        """Recursively walk AST nodes and extract text."""
+    def _walk_nodes(self, nodes: List[Any], context: str = "", identifier: str = "") -> None:
+        """Recursively walk AST nodes and extract text.
+
+        `identifier` carries the real Ren'Py translate id of the enclosing
+        Translate block (default-language only), so the contained Say node
+        can be tagged with it instead of a guessed hash.
+        """
         # Safety: Catch recursion depth if AST is malformed or excessively deep
         try:
             if not isinstance(nodes, (list, tuple)):
                 nodes = [nodes]
             
             for node in nodes:
-                self._process_node(node, context)
+                self._process_node(node, context, identifier=identifier)
         except RecursionError:
             pass # Stop processing this branch deeply to prevent crash
 
@@ -1835,7 +1872,7 @@ class ASTTextExtractor:
         # Otherwise treat as a literal label.
         self._add_text(text, line_number, 'ui', context=context, node_type=node_type)
     
-    def _process_node(self, node: Any, context: str = "") -> None:
+    def _process_node(self, node: Any, context: str = "", identifier: str = "") -> None:
         """Process a single AST node."""
         if node is None:
             return
@@ -1846,6 +1883,10 @@ class ASTTextExtractor:
         if isinstance(node, FakeTranslateSay):
             character = getattr(node, 'who', '') or ""
             what = getattr(node, 'what', '')
+            # The node already carries the exact id Ren'Py's compiler assigned
+            # (only meaningful for the default-language node, language is None).
+            lang = getattr(node, 'language', None)
+            real_id = (getattr(node, 'identifier', '') or '') if lang is None else ''
             if what and isinstance(what, str):
                 self._add_text(
                     str(what),
@@ -1853,7 +1894,8 @@ class ASTTextExtractor:
                     'dialogue',
                     character=str(character) if character else "",
                     context=f"translate:{getattr(node, 'identifier', '')}",
-                    node_type=node_type
+                    node_type=node_type,
+                    identifier=real_id,
                 )
         
         # Dialogue (Say statement)
@@ -1869,7 +1911,8 @@ class ASTTextExtractor:
                     'dialogue',
                     character=str(character) if character else "",
                     context=context,
-                    node_type=node_type
+                    node_type=node_type,
+                    identifier=identifier,
                 )
             
             # Check arguments for additional text (e.g. what_prefix="...")
@@ -2029,7 +2072,10 @@ class ASTTextExtractor:
             block = getattr(node, 'block', None)
             if block:
                 lang = getattr(node, 'language', None)
-                self._walk_nodes(block, f"translate:{lang or 'None'}")
+                # Only the default-language block's id matches what the shipped
+                # game will look up; translated-language blocks reuse that same id.
+                real_id = (getattr(node, 'identifier', '') or '') if lang is None else ''
+                self._walk_nodes(block, f"translate:{lang or 'None'}", identifier=real_id)
 
         # Translate block (style/python)
         elif isinstance(node, FakeTranslateBlock):
@@ -2653,6 +2699,8 @@ def extract_texts_from_rpyc(
             'is_rpyc': True,
             'confidence': r.confidence,
             'confidence_band': r.confidence_band,
+            # Real Ren'Py-assigned translate id from the compiled AST, when available.
+            'identifier': r.identifier,
         }
         for r in results
     ]

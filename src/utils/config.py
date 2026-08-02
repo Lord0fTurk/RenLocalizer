@@ -140,6 +140,7 @@ def _build_ui_lang_map() -> dict[str, str]:
 
 def detect_system_language() -> str:
     """Detect the system language and return appropriate UI language code."""
+    logger = logging.getLogger(__name__)
     lang_map = _build_ui_lang_map()
     try:
         # Method 1: Windows locale detection
@@ -165,7 +166,7 @@ def detect_system_language() -> str:
                 if primary_lang in _WIN_LANG_MAP:
                     return _WIN_LANG_MAP[primary_lang]
             except Exception:
-                pass
+                logger.debug("Failed to detect Windows language")
 
         # Method 2: Standard locale detection (Linux/macOS)
         try:
@@ -177,7 +178,7 @@ def detect_system_language() -> str:
                 if lang_part in lang_map:
                     return lang_map[lang_part]
         except Exception:
-            pass
+            logger.debug("Failed to detect Unix locale language")
 
         # Method 3: Environment variables
         try:
@@ -191,7 +192,7 @@ def detect_system_language() -> str:
                     if code in env_value:
                         return ui_code
         except Exception:
-            pass
+            logger.debug("Failed to detect language from environment")
 
         return "en"
     except Exception:
@@ -213,6 +214,7 @@ class TranslationSettings:
         100  # Default batch size (user adjustable, lower = more stable)
     )
     enable_proxy: bool = False  # Disabled by default
+    enable_parallel_batch: bool = True  # Toplu çeviride paralel (semaphore) isteklere izin ver (kapatılabilir)
     max_retries: int = 3
     timeout: int = 30
     enable_runtime_hook: bool = True
@@ -246,12 +248,6 @@ class TranslationSettings:
     translate_confirmations: bool = True  # Confirm() ve renpy.confirm() metinleri
     translate_define_strings: bool = True  # define statements ile tanımlanan stringler
     translate_character_names: bool = False  # NEW: Character("Name") isimleri
-
-    # Advanced Syntax Guard Settings
-    # DEPRECATED: Fuzzy match özelliği v2.5.1+ sürümlerinde kaldırıldı
-    # XRPYX placeholder formatı fuzzy matching'e ihtiyaç duymuyor
-    # Bu ayar sadece geriye dönük uyumluluk için tutuluyor, UI'da gösterilmiyor
-    enable_fuzzy_match: bool = False
 
     # v2.8.7: Native TLID output mode — generates translate <lang> <label>_<hash>:
     # blocks instead of translate <lang> strings: for dialogues. UI text stays strings:.

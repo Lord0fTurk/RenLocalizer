@@ -5,7 +5,7 @@ from src.utils.update_checker import check_for_updates, _is_newer, _parse_versio
 class TestUpdateChecker(unittest.TestCase):
     def test_parse_version(self):
         self.assertEqual(_parse_version("1.2.3"), (1, 2, 3))
-        self.assertEqual(_parse_version("v2.8.5-LITE"), (2, 8, 5))
+        self.assertEqual(_parse_version("v2.8.5"), (2, 8, 5))
         self.assertEqual(_parse_version(""), (0,))
         self.assertEqual(_parse_version(None), (0,))
 
@@ -15,7 +15,7 @@ class TestUpdateChecker(unittest.TestCase):
         self.assertTrue(_is_newer("10.0.0", "2.8.5"))
         self.assertFalse(_is_newer("2.8.5", "2.8.5"))
         self.assertFalse(_is_newer("2.8.4", "2.8.5"))
-        self.assertFalse(_is_newer("2.8.5", "2.8.5-LITE")) # Same versions
+        self.assertFalse(_is_newer("2.8.5", "2.8.5")) # Same versions
 
     @patch('requests.get')
     def test_check_for_updates_available(self, mock_get):

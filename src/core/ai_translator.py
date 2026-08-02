@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-AI Translator Implementations for RenLocalizer Lite.
+AI Translator Implementations for RenLocalizer.
 =====================================================
 
-Supports OpenAI, DeepSeek (OpenAI-compatible) and Local LLM (Ollama/LM Studio).
-GeminiTranslator remains a stub for future use.
+Supports OpenAI, DeepSeek (OpenAI-compatible), Local LLM (Ollama/LM Studio) and Gemini.
 
 All engines share a common base that handles:
   - XML-based batch segmentation (token-efficient)
@@ -16,7 +15,6 @@ All engines share a common base that handles:
 from __future__ import annotations
 
 import asyncio
-import logging
 import random
 import re
 import xml.etree.ElementTree as ET
@@ -48,6 +46,17 @@ try:
     _OPENAI_AVAILABLE = True
 except ImportError:
     _OPENAI_AVAILABLE = False
+
+try:
+    import google.genai as genai
+    _GEMINI_AVAILABLE = True
+except ImportError:
+    try:
+        import google.generativeai as genai
+        _GEMINI_AVAILABLE = True
+    except ImportError:
+        _GEMINI_AVAILABLE = False
+        genai = None  # type: ignore
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -958,20 +967,122 @@ class LocalLLMTranslator(OpenAITranslator):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GeminiTranslator — stub (for future implementation)
+# GeminiTranslator — Google Gemini (official google-genai SDK)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class GeminiTranslator(BaseTranslator):
-    """Gemini translator stub. Not yet implemented in Lite edition."""
+    """Google Gemini translator using the official google-genai SDK."""
 
-    def __init__(self, *args, **kwargs) -> None:
-        pass  # No super().__init__ — intentionally non-functional
+    def __init__(self, *args, api_key: Optional[str] = None, **kwargs) -> None:
+        if not _GEMINI_AVAILABLE:
+            raise ImportError(
+                "google-genai is required for Gemini translation. "
+                "Install it with: pip install google-genai"
+            )
+        resolved_key = api_key
+        if not resolved_key:
+            cm = kwargs.get('config_manager', None)
+            if cm and hasattr(cm, 'api_keys'):
+                resolved_key = cm.api_keys.gemini_api_key or ""
+        if not resolved_key:
+            resolved_key = "none"  # Allow instantiation without key; fails gracefully at translate time
+
+        if resolved_key != "none":
+            genai.configure(api_key=resolved_key)
+
+        config_manager = kwargs.get('config_manager', None)
+        model_name = "gemini-2.5-flash"
+        if config_manager and hasattr(config_manager, 'translation_settings'):
+            model_name = getattr(config_manager.translation_settings, 'gemini_model', None) or model_name
+
+        super().__init__(
+            api_key=resolved_key,
+            proxy_manager=kwargs.get('proxy_manager', None),
+            config_manager=config_manager,
+        )
+        self._client = genai.GenerativeModel(model_name)
+        self._model: str = model_name
+        self._timeout = kwargs.get('timeout', AI_DEFAULT_TIMEOUT)
+        self._batch_size = min(kwargs.get('batch_size', 20), 50)
+        self._engine = TranslationEngine.GEMINI
 
     async def translate_single(self, request: TranslationRequest) -> TranslationResult:
-        return TranslationResult(
-            request.text, request.text, request.source_lang, request.target_lang,
-            TranslationEngine.GEMINI, False, "Gemini engine is not available in Lite edition.",
-        )
+        """Translate a single text using Gemini."""
+        try:
+            loop = asyncio.get_event_loop()
+            source_lang = request.source_lang or "auto"
+            target_lang = request.target_lang or "en"
+
+            prompt = (
+                f"Translate the following text from {source_lang} to {target_lang}. "
+                f"Only return the translation, nothing else. "
+                f"Do NOT modify or translate any code, markup, HTML tags, or placeholders: "
+                f"{request.text}"
+            )
+
+            response = await loop.run_in_executor(
+                None,
+                lambda: self._client.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=getattr(request, 'temperature', 0.3),
+                        max_output_tokens=getattr(request, 'max_tokens', 2048),
+                    ),
+                    safety_settings={
+                        'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
+                        'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE',
+                        'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE',
+                        'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE',
+                    }
+                )
+            )
+
+            translated = response.text.strip() if response and response.text else request.text
+
+            return TranslationResult(
+                original_text=request.text,
+                translated_text=translated,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                engine=TranslationEngine.GEMINI,
+                success=bool(translated and translated != request.text),
+            )
+
+        except Exception as exc:
+            error_msg = str(exc)
+            if "SAFETY" in error_msg.upper() or "blocked" in error_msg.lower():
+                return TranslationResult(
+                    original_text=request.text,
+                    translated_text=request.text,
+                    source_lang=request.source_lang or "auto",
+                    target_lang=request.target_lang or "en",
+                    engine=TranslationEngine.GEMINI,
+                    success=False,
+                    error="Content blocked by safety filter - original text returned",
+                )
+            self.logger.error(f"Gemini translation error: {exc}")
+            return TranslationResult(
+                original_text=request.text,
+                translated_text=request.text,
+                source_lang=request.source_lang or "auto",
+                target_lang=request.target_lang or "en",
+                engine=TranslationEngine.GEMINI,
+                success=False,
+                error=error_msg,
+            )
+
+    async def translate_batch(self, requests: List[TranslationRequest]) -> List[TranslationResult]:
+        results = []
+        for req in requests:
+            result = await self.translate_single(req)
+            results.append(result)
+        return results
 
     def get_supported_languages(self) -> Dict[str, str]:
-        return {}
+        return {
+            "en": "English", "tr": "Turkish", "de": "German",
+            "fr": "French", "es": "Spanish", "ru": "Russian",
+            "ja": "Japanese", "zh": "Chinese", "ko": "Korean",
+            "ar": "Arabic", "fa": "Persian", "it": "Italian",
+            "pt": "Portuguese", "nl": "Dutch", "pl": "Polish",
+        }

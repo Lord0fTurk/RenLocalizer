@@ -1,6 +1,82 @@
 # RenLocalizer Changelog
 
-#### [2.8.9] - 2026-07-20
+#### [2.8.10] - 2026-07-26
+
+> **Architectural Overhaul — LITE to Unified, Pipeline Modularization & Gemini Integration**
+
+> **🏗️ Project Restructuring:** Removed all "LITE" branding across 30+ files (~568 references). Project is now a unified single codebase — no more LITE vs Full distinction. Renamed `run_lite.py` → `run.py`, `LiteBackend` → `AppBackend`, `LiteMain.qml` → `Main.qml`, `src/backend/lite_backend.py` → `src/backend/app_backend.py`. Removed `src/gui/qml/lite/` directory — QML now directly under `src/gui/qml/`. Cleaned `lite_*` prefixed keys across all 9 locale JSON files (26 keys per file, 234 total renames). Version now displays as `2.8.9` without `-lite` suffix. AppUserModelID updated to `LordOfTurk.RenLocalizer.V1`.
+
+> **🧩 Pipeline Modularization:** Monolithic `translation_pipeline.py` (4862 lines) split into 8 focused submodules under `src/core/pipeline/`:
+> - `base.py` — `PipelineStage`, `PipelineResult`, `PipelineWorker`
+> - `constants.py` — All module-level regexes, language maps, retry sets, coverage keys
+> - `validating.py` — Project validation, file detection, encoding normalization
+> - `extraction.py` — UNRPA, GENERATING, PARSING phases + coverage auditing
+> - `translating.py` — Syntax guard integration, batch execution, corruption recovery, glossary protection
+> - `saving.py` — `strings.json` generation, variant synthesis, runtime hook management, language init
+> - `orchestrator.py` — `TranslationPipeline` class orchestrating all submodules (~2610 lines)
+> - Backward-compatible: `from src.core.translation_pipeline import TranslationPipeline` unchanged via re-export stub.
+
+> **🔧 Backend Separation — Complete:** `SettingsBackend` fully integrated into `AppBackend`. All 22 QML property pairs and 15 slot methods now delegate to the Qt-free, callback-driven settings manager. `AppBackend` reduced from a monolithic 1700-line class to a focused pipeline/project orchestrator. Gemini API key and model fields wired through both `AppBackend` properties and `SettingsBackend` getter/setter chain. All settings signal callbacks registered at init time.
+
+> **🤖 Gemini Translator — Full Implementation:** Replaced the `GeminiTranslator` stub with a complete implementation using the official `google-genai` SDK (migrated from legacy `google.generativeai`). Features: `genai.GenerativeModel` client, `translate_single` with `run_in_executor`, safety filter graceful recovery, 15 supported languages, conditional import guard with fallback to old SDK. Added to QML engine selector (`💎 Gemini`), with dedicated API key and model fields in AI settings panel. Package added to `requirements.txt`, `constraints-release.txt` (pinned), and `RenLocalizer.spec` hidden imports.
+
+> **🌐 Proxy System Re-Enabled:** Proxy rotation was hard-disabled via runtime override. Re-enabled to respect `config.proxy_settings.enabled`. `_start_pipeline_translation()` now passes `use_proxy=self.config.proxy_settings.enabled` instead of hardcoded `False`.
+
+> **🧪 Test Coverage — 916 tests (from 669, +247):**
+> - **AI translators** (`test_ai_translator.py`): 25 tests — XML/JSON batch, Levenshtein recovery, OpenAI/DeepSeek/LocalLLM/Gemini instantiation, import guards
+> - **RPYC reader** (`test_rpyc_reader.py`): 185 tests — `FakePyExpr`, `FakeModule`, header detection, all node types (`Say`, `Menu`, `Translate`, `If`, `Screen`, `Python`, `Bubble`, etc.), directory extraction, `tl/` skip, `renpy/common/` inclusion
+> - **Proxy manager** (`test_proxy_manager.py`): 32 tests — rotation, ban/failover, `configure_from_settings`, `ProxyInfo`, round-robin, manual proxy parsing
+
+> **🧹 Code Quality Improvements:**
+> - **Silent Exception Swallowing Fixed:** 32 `except Exception: pass` patterns replaced with `logger.debug()` and `logger.warning()` calls across 6 files — most critical in `translator.py` (translation failures, Lingva rescues), `orchestrator.py` (diagnostic report calls, file cleanup), `saving.py` (hook removal), `parser.py` (entry processing), `config.py` (language detection), and `app_backend.py` (glossary import). Failures that were completely invisible are now traceable in debug logs.
+> - **Unused Imports Cleaned:** 15+ dead imports removed from `orchestrator.py` (`sys`, `ast`, `Callable`, `Tuple`, `Union`, `QThread`, `DeepSeekTranslator`, unused config/encoding/runtime_coverage imports, 8 unused constants), `parser.py` (`DeepVariableAnalyzer`), and `ai_translator.py` (`logging`).
+> - **Exception Hierarchy Enriched:** `RenLocalizerError` base class now supports `code` (int), `context` (dict), and `solution_hint` (str) parameters for structured error tracking. `get_user_friendly_message()` added for user-facing messages. New subclasses: `RateLimitError` (HTTP 429 with proxy/retry hint), `QuotaExceededError` (API balance hint), `NetworkConnectionError` (connectivity hint). `__str__` and `__repr__` include all fields for debugging.
+> - **Deprecated Field Removed:** `enable_fuzzy_match` (deprecated since v2.5.1) removed from `TranslationSettings` dataclass. No callers existed.
+> - **Version Metadata Expanded:** `src/version.py` now exports `__version_info__` tuple, `__version__`, and `__build_date__` alongside existing `VERSION` string.
+> - **AGENTS.md Updated:** Pipeline subdirectory architecture, corrected line counts for all files, deep scan filter path fix, timestamp bumped to 2026-07-26.
+> - **Requirements:** `fonttools` added to `requirements.txt` (was missing as a dependency for font injection tools).
+> 
+> > **🐛 Bug Fixes:**
+> > - **`detect_system_language()` Crash:** Module-level function was calling `self.logger.debug()` — `self` is undefined outside a class, causing `NameError` crash on Linux/macOS when locale detection failed. Replaced with `logger = logging.getLogger(__name__)`.
+> > - **`zzz_*_language.rpy` SyntaxError:** `create_language_init_file()` template produced `\"\"\"` (backslash-escaped docstrings) due to incorrect `\\"\\"\\"` escape in `f"""..."""` string. Switched to `f'''...'''` delimiter with bare `"""` docstrings. Ren'Py no longer crashes with "unterminated string literal" on startup.
+> 
+> > **⚡ Performance Improvements:**
+> > - **Parallel Batch Translation:** `enable_parallel_batch` toggle added to `TranslationSettings` (`True` by default). `BaseTranslator.translate_batch()` and `GoogleTranslator._translate_batch_dedup()` now use `asyncio.Semaphore` + `asyncio.gather` for concurrent request execution. Disable for proxy-free environments to avoid IP bans. Provides 8-16x speedup on Google Translate.
+> > - **Regex Pre-Compilation:** 17 Python-code detection patterns in `_should_skip_translation()` were re-compiled on every call (10K+ calls in large games). Converted to class-level pre-compiled `_PYTHON_CODE_RE` and `_PYTHON_BUILTIN_CALLS_RE`.
+> 
+> > **🏗️ Refactoring:**
+> > - **GlossaryManager (DRY):** New `src/core/glossary_manager.py` centralizes glossary term protection (`protect_terms`) and application (`apply_glossary`) logic. Duplicated code removed from `translating.py` and `output_formatter.py`. Lazy imports preserve existing API signatures. Unit tests added.
+> 
+> > **🧪 Testing & CI:**
+> > - **`tox.ini` Full Coverage:** Command updated from selective 10-file list to `python -m pytest tests/ -q` — all 916+ tests now run in CI.
+> > - **E2E Pipeline Test:** New `tests/test_pipeline_e2e.py` — creates a minimal Ren'Py game structure and runs `TranslationPipeline.run()` end-to-end with a mocked translator, verifying all stages from validation through completion.
+> > - **Test Count:** 916 tests (+5 from 911).
+
+> > **🎨 UI & i18n:**
+> > - **Google Translate Settings Localized:** 9 `lite_*` prefixed locale keys in QML were orphaned (none existed in any language file), causing Google settings panel to always display in English regardless of UI language. Replaced with existing unprefixed keys (`concurrency_label`, `delay_label`, `batch_label`, `multi_endpoint_title`, `multi_endpoint_desc`, `aggressive_retry`, `aggressive_retry_desc`, `rpyc_reader_title`, `rpyc_reader_desc`) — all fully translated across 9 languages.
+> > - **`enable_parallel_batch` Toggle:** Added QML Switch in Settings → Performans card (next to RPYC AST Reader) with `@pyqtProperty` bridge (`enableParallelBatch`). Locale keys: `parallel_batch_label` / `parallel_batch_desc` (EN+TR). Users can now disable parallel batch requests from the UI to avoid IP bans on proxy-free setups.
+> > - **`engine_desc_gemini` Added:** Missing from `en.json` — now consistent with all other locale files.
+
+> > **🔧 Build & CI Hardening:**
+> > - **`constraints-release.txt` Expanded:** From 4 pinned packages to 13 (added: aiohttp, requests, charset-normalizer, openai, unrpa, rpycdec, rich, PyYAML, fonttools). Release builds are now fully deterministic — no floating dependency versions.
+> > - **`tests.yml` Fixed:** 3 stale `run_lite.py` references → `run.py`; all 3 test matrix jobs now run `tests/ -q` (full suite) instead of selective 8-10 file lists.
+> > - **`README.md` + `Installation.md`:** Stale `run_lite.py` → `run.py`.
+
+> **📝 Documentation & Cleanup:**
+> - `AGENTS.md` completely rewritten — removed all LITE references, updated file paths, module descriptions, and architecture diagrams to reflect unified structure. Additionally updated with pipeline/ subdirectory architecture, corrected line counts for all files, and deep scan filter path fix.
+> - `CHANGELOG.md` — 2.8.10 entry added with code quality improvements
+> - `run.bat`, `RenLocalizer.sh`, `RenLocalizer.spec` updated to reference `run.py`
+> - `version.py` bumped to `2.8.10`, now exports `__version_info__` tuple and `__build_date__`
+> - Test mocks cleaned of legacy LITE references
+> - `path_manager.py` cleaned of `run_lite` references
+> - Deprecated `enable_fuzzy_match` field removed from config (no callers since v2.5.1)
+> - `fonttools` added to `requirements.txt` (missing dependency for font injection)
+
+> **916/916 tests passing** (+6 skipped) — 0 regressions, +247 new tests.
+
+---
+
+#### [2.8.9] - 2026-07-17
 
 > **Thanks to [@Iskander-mlander](https://github.com/Iskander-mlander) for the Google Translate optimization, CI/CD updates, Lingva revival, Python 3.14 compat patches, and most of the 2.8.9 improvements! 🙌**
 

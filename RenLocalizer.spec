@@ -2,7 +2,7 @@
 import os
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 project_dir = os.path.abspath(os.getcwd())
@@ -22,7 +22,7 @@ hidden_imports += collect_submodules('rich')
 hidden_imports += collect_submodules('yaml')
 hidden_imports += collect_submodules('certifi')
 hidden_imports += collect_submodules('openai')
-hidden_imports += collect_submodules('openai')
+hidden_imports += collect_submodules('google.genai')
 # Pandas submodules are too heavy (includes tests, matplotlib, etc). 
 # Basic pandas import is usually enough or handled by auto-analysis.
 # If needed, add only specific submodules manually.
@@ -79,7 +79,7 @@ if sys.platform == 'win32':
 # GUI Application Analysis (RenLocalizer)
 # =========================================================
 a = Analysis(
-    ['run_lite.py'],
+    ['run.py'],
     pathex=[project_dir],
     binaries=binaries_list,
     datas=datas_list,
@@ -113,21 +113,6 @@ exe = EXE(
     entitlements_file=None,
     icon=os.path.join(project_dir, 'icon.ico') if sys.platform == 'win32' else None,
     manifest=os.path.join(project_dir, 'src', 'RenLocalizer.manifest') if (sys.platform == 'win32' and os.path.exists(os.path.join(project_dir, 'src', 'RenLocalizer.manifest'))) else None,
-)
-
-# =========================================================
-# COLLECT (Folder Output)
-# =========================================================
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='RenLocalizer',
 )
 
 # =========================================================
@@ -171,6 +156,23 @@ exe_cli = EXE(
     icon=os.path.join(project_dir, 'icon.ico') if sys.platform == 'win32' else None,
 )
 
+# =========================================================
+# GUI Application COLLECT (RenLocalizer)
+# =========================================================
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='RenLocalizer',
+)
+
+# =========================================================
+# CLI Application COLLECT (RenLocalizerCLI)
+# =========================================================
 coll_cli = COLLECT(
     exe_cli,
     a_cli.binaries,
@@ -183,22 +185,25 @@ coll_cli = COLLECT(
 )
 
 # =========================================================
-# Post-build: Merge CLI into GUI folder (single folder release)
+# Post-build: Copy CLI binary into main GUI distribution folder
 # =========================================================
 import shutil
-import os as _os
 
-_cli_dir = _os.path.join(project_dir, 'dist', 'RenLocalizerCLI')
-_gui_dir = _os.path.join(project_dir, 'dist', 'RenLocalizer')
+_gui_dist = os.path.join(project_dir, 'dist', 'RenLocalizer')
+_cli_dist = os.path.join(project_dir, 'dist', 'RenLocalizerCLI')
 
-if _os.path.isdir(_cli_dir) and _os.path.isdir(_gui_dir):
-    # Copy CLI executable into GUI folder
-    for f in _os.listdir(_cli_dir):
-        if f.lower().startswith('renlocalizercli'):
-            src = _os.path.join(_cli_dir, f)
-            dst = _os.path.join(_gui_dir, f)
-            shutil.copy2(src, dst)
-            print(f"[BUILD] Merged {f} into RenLocalizer/")
-    # Remove separate CLI folder
-    shutil.rmtree(_cli_dir)
-    print("[BUILD] Removed RenLocalizerCLI/ — single folder release ready")
+if os.path.isdir(_gui_dist) and os.path.isdir(_cli_dist):
+    for item in os.listdir(_cli_dist):
+        if item.lower().startswith('renlocalizercli'):
+            src_file = os.path.join(_cli_dist, item)
+            dst_file = os.path.join(_gui_dist, item)
+            try:
+                shutil.copy2(src_file, dst_file)
+                print(f"[SPEC POST-BUILD] Merged {item} into dist/RenLocalizer/")
+            except Exception as e:
+                print(f"[SPEC POST-BUILD] Warning: Could not merge {item}: {e}")
+
+
+
+
+
