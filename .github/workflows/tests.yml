@@ -55,6 +55,8 @@ jobs:
 
       - name: Run targeted regression suite
         shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           python -m pytest tests/ -q --rootdir .
 
@@ -101,6 +103,8 @@ jobs:
         run: . venv/bin/activate && python scripts/patch_aiohttp.py
 
       - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           . venv/bin/activate
           python -m pytest tests/ -q --rootdir .
@@ -164,6 +168,8 @@ jobs:
           python -c "import importlib.metadata as m; print('PyQt6', m.version('PyQt6')); print('PyQt6-Qt6', m.version('PyQt6-Qt6')); print('PyQt6-sip', m.version('PyQt6-sip'))"
 
       - name: Run compatibility regression suite
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           python -m pytest tests/ -q --rootdir .
 
