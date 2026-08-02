@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, pyqtProperty, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QIcon
+from PyQt6.QtWidgets import QSystemTrayIcon
 
 from src.utils.config import ConfigManager
 from src.version import VERSION
@@ -109,6 +110,7 @@ class AppBackend(QObject):
     themeChanged = pyqtSignal(str)
     enableRpycReaderChanged = pyqtSignal()
     enableDeepScanChanged = pyqtSignal()
+    enableDesktopNotificationsChanged = pyqtSignal()
     selectedEngineChanged = pyqtSignal(str)
     openaiApiKeyChanged = pyqtSignal()
     openaiModelChanged = pyqtSignal()
@@ -196,6 +198,7 @@ class AppBackend(QObject):
         self.settings.on("aggressive_retry", lambda: self.aggressiveRetryChanged.emit())
         self.settings.on("use_cache", lambda: self.useCacheChanged.emit())
         self.settings.on("check_for_updates", lambda: self.refreshUI())
+        self.settings.on("enable_desktop_notifications", lambda: self.enableDesktopNotificationsChanged.emit())
         self.settings.on("rpyc_reader", lambda: self.enableRpycReaderChanged.emit())
         self.settings.on("deep_scan", lambda: self.enableDeepScanChanged.emit())
         self.settings.on("selected_engine", lambda engine_str: self.selectedEngineChanged.emit(engine_str))
@@ -244,6 +247,10 @@ class AppBackend(QObject):
                 threading.Thread(
                     target=self._setup_custom_endpoint, daemon=True
                 ).start()
+
+        # ── System Tray & Desktop Notifications ──────────────────────────
+        self._tray_icon: Optional[QSystemTrayIcon] = None
+        self._init_system_tray()
 
     # ── Private setup ────────────────────────────────────────────────────
 
@@ -446,7 +453,7 @@ class AppBackend(QObject):
     def useCache(self, val: bool) -> None:
         self.settings.set_use_cache(val)
 
-    @pyqtProperty(bool, notify=uiTriggerChanged)
+    @pyqtProperty(bool, notify=checkForUpdatesOnStartupChanged if 'checkForUpdatesOnStartupChanged' in locals() else uiTriggerChanged)
     def checkForUpdatesOnStartup(self) -> bool:
         return self.settings.get_check_for_updates()
 
@@ -454,6 +461,56 @@ class AppBackend(QObject):
     def checkForUpdatesOnStartup(self, val: bool) -> None:
         self.settings.set_check_for_updates(val)
         self.refreshUI()
+
+    @pyqtProperty(bool, notify=enableDesktopNotificationsChanged)
+    def enableDesktopNotifications(self) -> bool:
+        return self.settings.get_enable_desktop_notifications()
+
+    @enableDesktopNotifications.setter
+    def enableDesktopNotifications(self, val: bool) -> None:
+        self.settings.set_enable_desktop_notifications(val)
+
+    def _init_system_tray(self) -> None:
+        """PyQt6 QSystemTrayIcon sistemini güvenle başlatır."""
+        try:
+            if QSystemTrayIcon.isSystemTrayAvailable():
+                self._tray_icon = QSystemTrayIcon(self)
+                root_dir = Path(__file__).resolve().parent.parent.parent
+                icon_path = root_dir / "icon.png"
+                if not icon_path.exists():
+                    icon_path = root_dir / "icon.ico"
+                if icon_path.exists():
+                    self._tray_icon.setIcon(QIcon(str(icon_path)))
+                self._tray_icon.show()
+            else:
+                self.logger.info("[AppBackend] QSystemTrayIcon is not available on this platform/environment.")
+        except Exception as e:
+            self.logger.warning(f"[AppBackend] Could not initialize QSystemTrayIcon: {e}")
+
+    @pyqtSlot(str, str)
+    @pyqtSlot(str, str, bool)
+    def send_desktop_notification(
+        self, title_key_or_text: str, message_key_or_text: str, is_error: bool = False
+    ) -> None:
+        """Kullanıcının aktif arayüz diline göre yerelleştirilmiş masaüstü bildirimi gönderir."""
+        if not self.enableDesktopNotifications:
+            return
+
+        title = self._t(title_key_or_text, title_key_or_text)
+        message = self._t(message_key_or_text, message_key_or_text)
+
+        try:
+            if self._tray_icon and QSystemTrayIcon.isSystemTrayAvailable():
+                icon_type = (
+                    QSystemTrayIcon.MessageIcon.Critical
+                    if is_error
+                    else QSystemTrayIcon.MessageIcon.Information
+                )
+                self._tray_icon.showMessage(title, message, icon_type, 5000)
+            else:
+                self.logger.info(f"[Desktop Notification] [{title}] {message}")
+        except Exception as e:
+            self.logger.warning(f"[AppBackend] Failed to send desktop notification: {e}")
 
     @pyqtProperty(bool, notify=enableRpycReaderChanged)
     def enableRpycReader(self) -> bool:
@@ -1202,12 +1259,22 @@ class AppBackend(QObject):
             self.completionSummary.emit(
                 "✅ TL Retranslation Tamamlandı", msg, tl_path, "", 0
             )
+            self.send_desktop_notification(
+                "desktop_notify_complete_title",
+                "desktop_notify_complete_msg",
+                is_error=False,
+            )
             self._is_translating = False
             self.translationFinished.emit(True, msg)
 
         except Exception as exc:
             self.logger.exception("[AppBackend] _run_tl_retranslation error")
             self.logMessage.emit("error", f"❌ TL retranslation error: {exc}")
+            self.send_desktop_notification(
+                "desktop_notify_error_title",
+                "desktop_notify_error_msg",
+                is_error=True,
+            )
             self._is_translating = False
             self.translationFinished.emit(False, str(exc))
 
@@ -1248,9 +1315,19 @@ class AppBackend(QObject):
             if stats and "diagnostic_path" in stats:
                 diag_path = stats["diagnostic_path"]
             self.completionSummary.emit(title, message, output_path, diag_path, 0)
+            self.send_desktop_notification(
+                "desktop_notify_complete_title",
+                "desktop_notify_complete_msg",
+                is_error=False,
+            )
         else:
             error_detail = getattr(result, "error", "") or message
             self.logMessage.emit("error", f"❌ Translation failed: {error_detail}")
+            self.send_desktop_notification(
+                "desktop_notify_error_title",
+                "desktop_notify_error_msg",
+                is_error=True,
+            )
 
         self.translationFinished.emit(success, message)
 

@@ -501,6 +501,8 @@ class AppSettings:
     unren_auto_download: bool = True
     # Path to Ren'Py SDK directory (for engine lint). Leave empty for auto-detection.
     renpy_sdk_path: str = ""
+    # Desktop notifications for translation completion and error events
+    enable_desktop_notifications: bool = True
 
     def __post_init__(self):
         """Validate enum/allowlist fields."""

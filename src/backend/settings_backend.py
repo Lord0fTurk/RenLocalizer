@@ -67,6 +67,7 @@ class SettingsBackend:
             "aggressive_retry": [],
             "use_cache": [],
             "check_for_updates": [],
+            "enable_desktop_notifications": [],
             "rpyc_reader": [],
             "deep_scan": [],
             "selected_engine": [],
@@ -194,6 +195,13 @@ class SettingsBackend:
     def set_check_for_updates(self, val: bool) -> None:
         self.config.app_settings.check_for_updates = bool(val)
         self._emit("check_for_updates")
+
+    def get_enable_desktop_notifications(self) -> bool:
+        return getattr(self.config.app_settings, "enable_desktop_notifications", True)
+
+    def set_enable_desktop_notifications(self, val: bool) -> None:
+        self.config.app_settings.enable_desktop_notifications = bool(val)
+        self._emit("enable_desktop_notifications")
 
     def get_enable_rpyc_reader(self) -> bool:
         return self.config.translation_settings.enable_rpyc_reader

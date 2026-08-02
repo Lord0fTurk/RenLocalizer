@@ -13,8 +13,18 @@ import logging
 import tempfile
 import subprocess
 import stat
+import faulthandler
 from pathlib import Path
 from types import TracebackType
+
+# Enable native crash fault handler to capture C/C++ access violations
+try:
+    crash_dir = Path(__file__).parent / "logs"
+    crash_dir.mkdir(parents=True, exist_ok=True)
+    crash_log_file = open(crash_dir / "crash_report.log", "a", encoding="utf-8")
+    faulthandler.enable(file=crash_log_file, all_threads=True)
+except Exception:
+    faulthandler.enable()
 
 # ── Temel ortam ayarları (Qt importlarından ÖNCE) ─────────────────────────
 os.environ["QT_QPA_PLATFORM_THEME"] = ""
@@ -30,10 +40,16 @@ if sys.platform == "darwin" and not os.environ.get("QT_MAC_WANTS_LAYER"):
 if sys.platform == "win32" and os.environ.get("RENLOCALIZER_FORCE_DPI_API", "0") == "1":
     try:
         import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        from ctypes import wintypes
+        shcore = ctypes.windll.shcore
+        shcore.SetProcessDpiAwareness.argtypes = [ctypes.c_int]
+        shcore.SetProcessDpiAwareness.restype = wintypes.HRESULT
+        shcore.SetProcessDpiAwareness(2)
     except Exception:
         try:
-            ctypes.windll.user32.SetProcessDPIAware()
+            user32 = ctypes.windll.user32
+            user32.SetProcessDPIAware.restype = wintypes.BOOL
+            user32.SetProcessDPIAware()
         except Exception:
             pass
 
@@ -41,9 +57,11 @@ if sys.platform == "win32" and os.environ.get("RENLOCALIZER_FORCE_DPI_API", "0")
 if sys.platform == "win32":
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "LordOfTurk.RenLocalizer.V1"
-        )
+        from ctypes import wintypes
+        shell32 = ctypes.windll.shell32
+        shell32.SetCurrentProcessExplicitAppUserModelID.argtypes = [wintypes.LPCWSTR]
+        shell32.SetCurrentProcessExplicitAppUserModelID.restype = wintypes.HRESULT
+        shell32.SetCurrentProcessExplicitAppUserModelID("RenLocalizer")
     except Exception:
         pass
 
@@ -57,7 +75,7 @@ try:
 except Exception:
     pass
 
-sys.setrecursionlimit(5000)
+sys.setrecursionlimit(3000)
 
 # ── Çalışma dizinini ayarla ───────────────────────────────────────────────
 def _get_base_dir() -> Path:
@@ -70,7 +88,7 @@ os.chdir(WORK_DIR)
 sys.path.insert(0, str(WORK_DIR))
 
 # ── Sürüm ─────────────────────────────────────────────────────────────────
-VERSION = "2.8.10"
+VERSION = "2.8.11"
 try:
     from src.version import VERSION as _v
     VERSION = f"{_v}"
@@ -232,8 +250,10 @@ def main() -> int:
 
         app = QApplication(sys.argv)
         app.setApplicationName("RenLocalizer")
+        app.setApplicationDisplayName("RenLocalizer")
         app.setApplicationVersion(VERSION)
-        app.setOrganizationName("LordOfTurk")
+        app.setOrganizationName("RenLocalizer")
+        app.setOrganizationDomain("lord0fturk.github.io/RenLocalizer")
 
         # ── Splash ────────────────────────────────────────────────────────
         splash_src = resolve_asset("icon.png")
@@ -359,13 +379,33 @@ def main() -> int:
             def _apply_win_icon() -> None:
                 try:
                     import ctypes
+                    from ctypes import wintypes
                     user32 = ctypes.windll.user32
                     hwnd = int(root_window.winId())
                     if not hwnd:
                         return
                     ico_str = str(ico_path)
+
+                    user32.LoadImageW.argtypes = [
+                        wintypes.HINSTANCE,
+                        wintypes.LPCWSTR,
+                        wintypes.UINT,
+                        ctypes.c_int,
+                        ctypes.c_int,
+                        wintypes.UINT,
+                    ]
+                    user32.LoadImageW.restype = wintypes.HANDLE
+
+                    user32.SendMessageW.argtypes = [
+                        wintypes.HWND,
+                        wintypes.UINT,
+                        wintypes.WPARAM,
+                        wintypes.LPARAM,
+                    ]
+                    user32.SendMessageW.restype = wintypes.LPARAM
+
                     h_small = user32.LoadImageW(None, ico_str, 1, 16, 16, 0x10)
-                    h_big   = user32.LoadImageW(None, ico_str, 1, 32, 32, 0x10)
+                    h_big = user32.LoadImageW(None, ico_str, 1, 32, 32, 0x10)
                     if h_small:
                         user32.SendMessageW(hwnd, 0x80, 0, h_small)
                     if h_big:

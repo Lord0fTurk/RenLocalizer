@@ -1,4 +1,4 @@
-// Main.qml — RenLocalizer v2.8.10 (Pro Card-based Dashboard UI Overhaul)
+// Main.qml — RenLocalizer v2.8.11 (Pro Card-based Dashboard UI Overhaul)
 // Yeniden tasarlandı: Sol Kenar Çubuğu (Sidebar Navigation), Glass/Carbon Kartlar,
 // Mikro-animasyonlar, Tam Sayfa Ayarlar ve Konsol Sekmeleri, Evrensel ComboBox Bugfix.
 import QtQuick
@@ -902,7 +902,7 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.leftMargin: 24; Layout.rightMargin: 24
-                        Layout.preferredHeight: 110
+                        Layout.preferredHeight: 160
                         radius: 16; color: clrCard; border.color: clrCardBorder; border.width: 1
 
                         ColumnLayout {
@@ -924,6 +924,19 @@ ApplicationWindow {
                                     popup: Popup { y: uiLanguageCombo.height; width: uiLanguageCombo.width; implicitHeight: 240; padding: 4; contentItem: ListView { clip: true; model: uiLanguageCombo.delegateModel; ScrollBar.vertical: ScrollBar {} } background: Rectangle { color: clrCard; radius: 8; border.color: clrCardBorder; border.width: 1 } }
                                 }
                                 Item { Layout.fillWidth: true }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 16
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 2
+                                    Label { text: appBackend.uiTrigger, "🔔 " + appBackend.getTextWithDefault("enable_desktop_notifications_label", "Masaüstü Bildirimleri"); color: clrTxt; font.bold: true; font.pixelSize: 13 }
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("enable_desktop_notifications_tooltip", "Çeviri tamamlandığında veya hata oluştuğunda masaüstü bildirimi göster."); color: clrTxt2; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                }
+                                Switch {
+                                    checked: appBackend.enableDesktopNotifications
+                                    onToggled: appBackend.enableDesktopNotifications = checked
+                                }
                             }
                         }
                     }

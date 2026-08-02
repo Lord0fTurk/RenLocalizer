@@ -1,4 +1,18 @@
+
 # RenLocalizer Changelog
+
+#### [2.8.11] - 2026-08-02
+
+> **Cross-Platform Desktop Notification System, Windows Crash Prevention & Locales Integration**
+
+> **🔔 Desktop Notification System Restoration:** Re-introduced the native desktop notification system using PyQt6 `QSystemTrayIcon`. Gracefully initializes tray icon and OS notification capabilities across Windows, Linux, and macOS environments with automatic fallback on headless or tray-less systems.
+> - **Localized Notifications:** Title and body text for completion ("Translation Complete") and error events ("Translation Error") are dynamically fetched from the user's active UI language dictionary across all 9 supported locales (`tr`, `en`, `de`, `es`, `fr`, `ru`, `fa`, `zh-CN`, `ja`).
+> - **Settings Control:** Added `enable_desktop_notifications` toggle in `AppSettings` (`config.py`), exposed via `SettingsBackend` and `AppBackend`, with a dedicated UI switch added to the General UI Settings card in `Main.qml`.
+> - **Automated Triggers:** Translation completion (`_on_pipeline_finished`, `_run_tl_retranslation`) and pipeline error handlers now trigger desktop notifications automatically when enabled.
+> - **Windows 10 Native Crash Prevention & `faulthandler`:** Enrolled Python `faulthandler` in `run.py` to capture C/C++ access violations into `logs/crash_report.log`. Typed Win32 API calls (`SetCurrentProcessExplicitAppUserModelID`, `LoadImageW`, `SendMessageW`) with `ctypes.wintypes` (`LPCWSTR`, `HWND`, `HANDLE`) to prevent 64-bit pointer truncation crashes on Windows 10.
+> - **App & Domain Identity:** Configured `QApplication` metadata with `app.setOrganizationDomain("lord0fturk.github.io/RenLocalizer")` for clean Windows notification card identity.
+> - **Recursion Safety:** Adjusted `sys.setrecursionlimit` to 3000 to prevent C-level stack overflow on 1MB Windows thread stacks.
+> - **Test Suite:** Added comprehensive test coverage in `tests/test_desktop_notifications.py`. All 936 tests passing cleanly.
 
 #### [2.8.10] - 2026-07-26
 
