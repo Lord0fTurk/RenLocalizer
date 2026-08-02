@@ -294,7 +294,7 @@ class ProxyManager:
             return None
 
         # Check if auto-refresh is needed (thread-safe, non-blocking)
-        if time.time() - self.last_proxy_update > self.proxy_update_interval:
+        if self.last_proxy_update > 0 and (time.time() - self.last_proxy_update > self.proxy_update_interval):
             self._schedule_background_refresh()
 
         # Filter working proxies (personal proxies always pass)
