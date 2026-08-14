@@ -33,6 +33,7 @@ from src.core.syntax_guard import (
     inject_missing_placeholders,
 )
 from src.utils.constants import (
+    AI_DEFAULT_TEMPERATURE,
     AI_DEFAULT_TIMEOUT,
     AI_LOCAL_TIMEOUT,
     AI_DEFAULT_MAX_TOKENS,
@@ -73,6 +74,82 @@ _SUPPORTED_LANGUAGES: Dict[str, str] = {
     "da": "Danish", "fi": "Finnish", "hu": "Hungarian", "cs": "Czech",
     "ro": "Romanian", "uk": "Ukrainian", "vi": "Vietnamese", "th": "Thai",
 }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Profiles — family-specific prompting/sampling.
+#
+# "hy_mt2": Tencent Hy-MT / Hunyuan-MT translation models (1.8B / 7B / 30B-A3B,
+# GGUF or otherwise). Translation-specialized models trained on short user-role
+# instructions; the authors state the models have NO default system prompt.
+# Official instruction templates and sampling recipe come from the model card:
+# https://huggingface.co/tencent/Hy-MT2-7B-GGUF
+# ─────────────────────────────────────────────────────────────────────────────
+
+_HY_MT2_RE = re.compile(r"(?:hy|hunyuan)[-_ ]?mt", re.IGNORECASE)
+
+
+def detect_model_profile(model_name: Optional[str]) -> Optional[str]:
+    """Return "hy_mt2" when the model name belongs to the Hy-MT family, else None.
+
+    Matches: "Hy-MT2-7B-GGUF", "hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M",
+             "tencent/Hy-MT1.5-1.8B", "hunyuan-mt-7b", "hy_mt2", "Hy MT2".
+    Does NOT match: "llama3.2", "gpt-4o-mini", "mistral-7b", "qwen2-mt-7b"
+    (different "-mt" family).
+    """
+    if not model_name:
+        return None
+    return "hy_mt2" if _HY_MT2_RE.search(model_name) else None
+
+
+# Hy-MT2 supports 33 languages; supplement _SUPPORTED_LANGUAGES (which drives
+# UI dropdowns and must stay unchanged) with the remaining codes for prompts.
+_HY_MT2_EXTRA_LANGUAGES: Dict[str, str] = {
+    "he": "Hebrew", "hi": "Hindi", "bn": "Bengali", "fa": "Persian",
+    "fil": "Filipino", "ms": "Malay", "id": "Indonesian",
+    "ta": "Tamil", "te": "Telugu", "ur": "Urdu", "my": "Burmese",
+    "km": "Khmer", "lo": "Lao", "mn": "Mongolian", "kk": "Kazakh",
+    "ug": "Uyghur", "bo": "Tibetan",
+    "zh-CN": "Chinese", "zh-TW": "Traditional Chinese", "yue": "Cantonese",
+}
+
+
+def _resolve_language_name(code: Optional[str]) -> str:
+    """Map a language code to its full English name for Hy-MT2 prompts.
+
+    Hy-MT2 instructions expect full language names, not codes.
+    """
+    if not code or code == "auto":
+        return "the original language"
+    name = _SUPPORTED_LANGUAGES.get(code)
+    if name and name != "Auto-detect":
+        return name
+    name = _HY_MT2_EXTRA_LANGUAGES.get(code)
+    if name:
+        return name
+    return code  # Last resort: pass the raw code through
+
+
+def resolve_model_profile(config_manager, model_name: Optional[str]) -> Optional[str]:
+    """Resolve the effective model profile from config + autodetection.
+
+    config.translation_settings.ai_model_profile:
+      "auto"    -> detect from model_name
+      "generic" -> force no profile
+      "hy_mt2"  -> force the Hy-MT2 profile
+    """
+    cfg_profile = "auto"
+    if config_manager and hasattr(config_manager, "translation_settings"):
+        cfg_profile = (
+            getattr(config_manager.translation_settings, "ai_model_profile", "auto")
+            or "auto"
+        )
+    cfg_profile = str(cfg_profile).strip().lower()
+    if cfg_profile == "generic":
+        return None
+    if cfg_profile == "hy_mt2":
+        return "hy_mt2"
+    return detect_model_profile(model_name)
 
 
 def _build_xml_batch(texts: List[str]) -> str:
@@ -353,6 +430,29 @@ class AsyncBaseAITranslator(BaseTranslator):
         self._client: Optional[AsyncOpenAI] = None
         self._semaphore: Optional[asyncio.Semaphore] = None
 
+        # Resolve model-family profile (config override + autodetection).
+        # None = generic behaviour; "hy_mt2" = Tencent Hy-MT optimized path.
+        self._model_profile: Optional[str] = resolve_model_profile(
+            config_manager, self._model
+        )
+        if self._model_profile == "hy_mt2":
+            self.logger.info(
+                f"[{self.__class__.__name__}] Hy-MT model profile active for "
+                f"'{self._model}' — official instruction templates, no system "
+                "prompt, model-card sampling."
+            )
+            if config_manager and hasattr(config_manager, "translation_settings"):
+                csp = getattr(
+                    config_manager.translation_settings,
+                    "ai_custom_system_prompt", "",
+                ) or ""
+                if csp.strip():
+                    self.logger.info(
+                        f"[{self.__class__.__name__}] Hy-MT models have no system "
+                        "prompt — ai_custom_system_prompt is ignored. Set "
+                        "ai_model_profile='generic' to use a custom prompt."
+                    )
+
     def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
             kwargs: Dict[str, Any] = {
@@ -421,10 +521,102 @@ class AsyncBaseAITranslator(BaseTranslator):
             self._semaphore = asyncio.Semaphore(self._semaphore_count)
         return self._semaphore
 
+    # Hy-MT2 model-card sampling recipe (1.8B / 7B).
+    HY_MT2_TEMPERATURE = 0.7
+    HY_MT2_TOP_P = 0.6
+    HY_MT2_EXTRA_BODY: Dict[str, Any] = {"top_k": 20, "repetition_penalty": 1.05}
+
+    def _is_hy_mt2(self) -> bool:
+        return self._model_profile == "hy_mt2"
+
+    def _get_sampling_kwargs(self) -> Dict[str, Any]:
+        """Engine-specific sampling kwargs passed through to _call_api.
+
+        Hy-MT2 uses the model-card recipe (top_p 0.6, top_k 20,
+        repetition_penalty 1.05). extra_body carries the non-standard fields;
+        _call_api drops them automatically if a server rejects them (400).
+        Generic models keep today's behaviour (temperature only).
+        """
+        if self._is_hy_mt2():
+            return {
+                "top_p": self.HY_MT2_TOP_P,
+                "extra_body": dict(self.HY_MT2_EXTRA_BODY),
+            }
+        return {}
+
     def _get_temperature(self) -> float:
+        if self._is_hy_mt2():
+            # Model-card recommendation is 0.7. Honour an explicit user change
+            # of the ai_temperature setting, otherwise apply the recipe.
+            cfg_val = None
+            if self.config_manager:
+                cfg_val = getattr(
+                    self.config_manager.translation_settings,
+                    "ai_temperature", None,
+                )
+            if cfg_val is not None and float(cfg_val) != AI_DEFAULT_TEMPERATURE:
+                return float(cfg_val)
+            return self.HY_MT2_TEMPERATURE
         if self.config_manager:
-            return getattr(self.config_manager.translation_settings, "ai_temperature", 0.3)
-        return 0.3
+            return getattr(self.config_manager.translation_settings, "ai_temperature", AI_DEFAULT_TEMPERATURE)
+        return AI_DEFAULT_TEMPERATURE
+
+    # ── Hy-MT2 prompt builders (official model-card instruction templates) ──
+
+    def _build_hy_mt2_single_prompt(
+        self,
+        tgt_lang_name: str,
+        protected_text: str,
+        placeholders: Dict[str, str],
+        xml_mode: bool = True,
+    ) -> str:
+        """Official default-translation instruction + delimiter preservation.
+
+        Hy-MT2 is trained on a short user-role instruction and has no system
+        prompt, so everything goes into the user message (fewer prompt tokens
+        = faster prefill, better adherence).
+        """
+        # Everything up to the final ":" + blank line is the instruction;
+        # only the source text may follow it. Hy-MT2 was trained on this
+        # exact shape — any instruction sentence placed AFTER the colon is
+        # treated as text and gets translated/echoed into the output.
+        instruction = (
+            f"Translate the following text into {tgt_lang_name}. Note that you "
+            "should only output the translated result without any additional "
+            "explanation"
+        )
+        if placeholders:
+            if xml_mode:
+                # placeholders keys are the bare ids of <ph id="N">...</ph> tags
+                tokens = [f'<ph id="{k}">' for k in sorted(placeholders.keys())][:6]
+            else:
+                tokens = sorted(set(placeholders.keys()))[:6]
+            token_list = ", ".join(tokens)
+            instruction += (
+                ". You must retain the exact same number of delimiters and "
+                f"placeholder tokens ({token_list}) in the translated output; "
+                "never omit, escape, translate, or reorder them"
+            )
+        return instruction + ":\n\n" + protected_text
+
+    def _build_hy_mt2_batch_prompt(self, src_lang_name: str, tgt_lang_name: str) -> str:
+        """Official structured-data (format-locked) instruction for JSON batches.
+
+        Names generic token formats instead of per-item tokens: the instruction
+        is per-chunk while placeholders differ per item, and per-item integrity
+        is enforced afterwards by validate_translation_integrity anyway.
+        """
+        return (
+            f"The following is structured data containing text segments to "
+            f"translate from {src_lang_name} into {tgt_lang_name}. Translate "
+            "only the visible user-facing text inside the \"text\" field of "
+            "each item. Preserve the data structure exactly: keep all keys and "
+            "\"id\" values unchanged; never translate or modify placeholders "
+            "like <ph id=\"N\">...</ph>, __PH_N__, [var], {tag}, {{var}}, "
+            "${var}, %s, %d. Keep the exact same number of items.\n"
+            "Return a JSON object with this exact structure, nothing else:\n"
+            "{\"translations\": [{\"id\": integer, \"translated_text\": string}]}"
+        )
 
     def _get_max_tokens(self) -> int:
         if self.config_manager:
@@ -438,25 +630,38 @@ class AsyncBaseAITranslator(BaseTranslator):
 
     async def _call_api(
         self,
-        system_prompt: str,
+        system_prompt: Optional[str],
         user_content: str,
         use_json_schema: bool = False,
+        top_p: Optional[float] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
-        """Makes a single API call with retry + jitter backoff. Returns response text or None."""
+        """Makes a single API call with retry + jitter backoff. Returns response text or None.
+
+        system_prompt=None omits the system message entirely (required by
+        translation-specialized models such as Tencent Hy-MT that are trained
+        without a system prompt). top_p/extra_body are only forwarded when set.
+        """
         client = self._get_client()
         retries = self._get_retry_count()
 
         for attempt in range(retries + 1):
             try:
+                messages: List[Dict[str, str]] = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": user_content})
+
                 kwargs: Dict[str, Any] = {
                     "model": self._model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content},
-                    ],
+                    "messages": messages,
                     "temperature": self._get_temperature(),
                     "max_tokens": self._get_max_tokens(),
                 }
+                if top_p is not None:
+                    kwargs["top_p"] = top_p
+                if extra_body is not None:
+                    kwargs["extra_body"] = extra_body
                 if use_json_schema:
                     kwargs["response_format"] = {
                         "type": "json_schema",
@@ -480,12 +685,33 @@ class AsyncBaseAITranslator(BaseTranslator):
                 return content
 
             except Exception as exc:
-                if use_json_schema and _OPENAI_AVAILABLE and isinstance(exc, APIStatusError) and exc.status_code == 400:
-                    self.logger.warning(
-                        f"[{self.__class__.__name__}] Custom engine failed on response_format json_schema (400). "
-                        "Retrying request immediately without JSON Schema constraints."
-                    )
-                    return await self._call_api(system_prompt, user_content, use_json_schema=False)
+                if _OPENAI_AVAILABLE and isinstance(exc, APIStatusError) and exc.status_code == 400:
+                    # Layered compatibility fallback for local servers
+                    # (LM Studio / Ollama / llama.cpp variants):
+                    # 1) extra_body fields (top_k, repetition_penalty) may be
+                    #    rejected by servers that validate unknown keys.
+                    if extra_body is not None:
+                        self.logger.warning(
+                            f"[{self.__class__.__name__}] Server rejected extra_body fields (400). "
+                            "Retrying request immediately without extra_body."
+                        )
+                        return await self._call_api(
+                            system_prompt, user_content,
+                            use_json_schema=use_json_schema,
+                            top_p=top_p,
+                            extra_body=None,
+                        )
+                    # 2) Then drop JSON Schema constraints (existing behaviour).
+                    if use_json_schema:
+                        self.logger.warning(
+                            f"[{self.__class__.__name__}] Custom engine failed on response_format json_schema (400). "
+                            "Retrying request immediately without JSON Schema constraints."
+                        )
+                        return await self._call_api(
+                            system_prompt, user_content,
+                            use_json_schema=False,
+                            top_p=top_p,
+                        )
 
                 if _OPENAI_AVAILABLE and isinstance(exc, APIStatusError):
                     status = exc.status_code
@@ -577,37 +803,55 @@ class AsyncBaseAITranslator(BaseTranslator):
         else:
             mapped_protected, ascii_map = self._map_unicode_to_ascii_placeholders(protected, placeholders)
 
-        src = _SUPPORTED_LANGUAGES.get(request.source_lang, request.source_lang)
-        if request.source_lang == "auto":
-            src = "the original language"
-        tgt = _SUPPORTED_LANGUAGES.get(request.target_lang, request.target_lang)
-        
-        custom_prompt = None
-        if self.config_manager:
-            custom_prompt = getattr(self.config_manager.translation_settings, "ai_custom_system_prompt", None)
-            
-        if custom_prompt and custom_prompt.strip():
-            system_prompt = (
-                custom_prompt.strip() +
-                "\n\nImportant: You must strictly preserve all placeholders like __PH_0__, __PH_1__ exactly as they appear."
+        if self._is_hy_mt2():
+            # Official Hy-MT instruction lives in the user message; Hy-MT
+            # models have no system prompt (model card). Shorter prompt = faster.
+            src = _resolve_language_name(request.source_lang)
+            tgt = _resolve_language_name(request.target_lang)
+            system_prompt = None
+            if xml_mode:
+                delimiter_map = placeholders
+            else:
+                # Token mode sends ASCII __PH_N__ tokens to the model
+                delimiter_map = dict(ascii_map) if ascii_map else placeholders
+            user_content = self._build_hy_mt2_single_prompt(
+                tgt, mapped_protected, delimiter_map, xml_mode=xml_mode
             )
         else:
-            system_prompt = (
-                "You are a professional game translator. "
-                f"Translate game dialogue and UI text from {src} to {tgt}. "
-                "Preserve ALL special placeholders exactly: tokens like __PH_0__, __PH_1__, "
-                "[variable], {tag}, {color=#fff}. "
-                "Maintain the tone, register and style of the original. "
-                "Return only the translated text, no explanations.\n\n"
-                "Examples with placeholders:\n"
-                "- Input: \"Hello __PH_0__, welcome to __PH_1__.\"\n"
-                "- Output: \"Merhaba __PH_0__, __PH_1__ sitesine hoş geldiniz.\"\n"
-                "- Input: \"Press {i}Enter{/i} to start [game_name].\"\n"
-                "- Output: \"{i}Enter{/i} tuşuna basarak [game_name] oyununu başlatın.\""
-            )
- 
+            src = _SUPPORTED_LANGUAGES.get(request.source_lang, request.source_lang)
+            if request.source_lang == "auto":
+                src = "the original language"
+            tgt = _SUPPORTED_LANGUAGES.get(request.target_lang, request.target_lang)
+
+            custom_prompt = None
+            if self.config_manager:
+                custom_prompt = getattr(self.config_manager.translation_settings, "ai_custom_system_prompt", None)
+
+            if custom_prompt and custom_prompt.strip():
+                system_prompt = (
+                    custom_prompt.strip() +
+                    "\n\nImportant: You must strictly preserve all placeholders like __PH_0__, __PH_1__ exactly as they appear."
+                )
+            else:
+                system_prompt = (
+                    "You are a professional game translator. "
+                    f"Translate game dialogue and UI text from {src} to {tgt}. "
+                    "Preserve ALL special placeholders exactly: tokens like __PH_0__, __PH_1__, "
+                    "[variable], {tag}, {color=#fff}. "
+                    "Maintain the tone, register and style of the original. "
+                    "Return only the translated text, no explanations.\n\n"
+                    "Examples with placeholders:\n"
+                    "- Input: \"Hello __PH_0__, welcome to __PH_1__.\"\n"
+                    "- Output: \"Merhaba __PH_0__, __PH_1__ sitesine hoş geldiniz.\"\n"
+                    "- Input: \"Press {i}Enter{/i} to start [game_name].\"\n"
+                    "- Output: \"{i}Enter{/i} tuşuna basarak [game_name] oyununu başlatın.\""
+                )
+            user_content = mapped_protected
+
         async with self._get_semaphore():
-            response = await self._call_api(system_prompt, mapped_protected)
+            response = await self._call_api(
+                system_prompt, user_content, **self._get_sampling_kwargs()
+            )
  
         if response is None:
             # Graceful recovery: return original
@@ -707,45 +951,61 @@ class AsyncBaseAITranslator(BaseTranslator):
 
             src_lang = chunk[0][1].source_lang
             tgt_lang_code = chunk[0][1].target_lang
-            src_label = _SUPPORTED_LANGUAGES.get(src_lang, src_lang)
-            if src_lang == "auto":
-                src_label = "the original language"
-            tgt_lang = _SUPPORTED_LANGUAGES.get(tgt_lang_code, tgt_lang_code)
-
-            # Check for custom system prompt
-            custom_prompt = None
-            if self.config_manager:
-                custom_prompt = getattr(self.config_manager.translation_settings, "ai_custom_system_prompt", None)
 
             use_json = True
-            if custom_prompt and custom_prompt.strip():
-                system_prompt = (
-                    custom_prompt.strip() +
-                    "\n\nImportant: You must strictly return your response in the requested JSON structure matching the schema: "
-                    "{'translations': [{'id': integer, 'translated_text': string}]}. "
-                    "Do not add any conversational text or markdown wrappers. "
-                    "You must strictly preserve all placeholders like __PH_0__, __PH_1__ exactly as they appear."
+            if self._is_hy_mt2():
+                # Official structured-data instruction in the user message;
+                # no system prompt for Hy-MT models.
+                src_label = _resolve_language_name(src_lang)
+                tgt_lang = _resolve_language_name(tgt_lang_code)
+                system_prompt = None
+                user_content = (
+                    self._build_hy_mt2_batch_prompt(src_label, tgt_lang)
+                    + "\n\n"
+                    + _build_json_batch(protected_list)
                 )
             else:
-                system_prompt = (
-                    "You are a professional game translator. "
-                    f"Translate game dialogue/UI text from {src_label} to {tgt_lang}. "
-                    "Rules: 1) Preserve ALL special tokens/tags exactly (like __PH_0__, __PH_1__, [var], {tag}). "
-                    "2) Maintain tone, register, style. "
-                    "3) Respond ONLY with a JSON object matching this schema: "
-                    "{'translations': [{'id': integer, 'translated_text': string}]}. "
-                    "Do NOT add any conversational prefix, suffix, or markdown code block formatting.\n\n"
-                    "Examples with placeholders:\n"
-                    "- Input: \"Hello __PH_0__, welcome to __PH_1__.\"\n"
-                    "- Output: \"Merhaba __PH_0__, __PH_1__ sitesine hoş geldiniz.\"\n"
-                    "- Input: \"Press {i}Enter{/i} to start [game_name].\"\n"
-                    "- Output: \"{i}Enter{/i} tuşuna basarak [game_name] oyununu başlatın.\""
-                )
+                src_label = _SUPPORTED_LANGUAGES.get(src_lang, src_lang)
+                if src_lang == "auto":
+                    src_label = "the original language"
+                tgt_lang = _SUPPORTED_LANGUAGES.get(tgt_lang_code, tgt_lang_code)
 
-            batch_input = _build_json_batch(protected_list)
+                # Check for custom system prompt
+                custom_prompt = None
+                if self.config_manager:
+                    custom_prompt = getattr(self.config_manager.translation_settings, "ai_custom_system_prompt", None)
+
+                if custom_prompt and custom_prompt.strip():
+                    system_prompt = (
+                        custom_prompt.strip() +
+                        "\n\nImportant: You must strictly return your response in the requested JSON structure matching the schema: "
+                        "{'translations': [{'id': integer, 'translated_text': string}]}. "
+                        "Do not add any conversational text or markdown wrappers. "
+                        "You must strictly preserve all placeholders like __PH_0__, __PH_1__ exactly as they appear."
+                    )
+                else:
+                    system_prompt = (
+                        "You are a professional game translator. "
+                        f"Translate game dialogue/UI text from {src_label} to {tgt_lang}. "
+                        "Rules: 1) Preserve ALL special tokens/tags exactly (like __PH_0__, __PH_1__, [var], {tag}). "
+                        "2) Maintain tone, register, style. "
+                        "3) Respond ONLY with a JSON object matching this schema: "
+                        "{'translations': [{'id': integer, 'translated_text': string}]}. "
+                        "Do NOT add any conversational prefix, suffix, or markdown code block formatting.\n\n"
+                        "Examples with placeholders:\n"
+                        "- Input: \"Hello __PH_0__, welcome to __PH_1__.\"\n"
+                        "- Output: \"Merhaba __PH_0__, __PH_1__ sitesine hoş geldiniz.\"\n"
+                        "- Input: \"Press {i}Enter{/i} to start [game_name].\"\n"
+                        "- Output: \"{i}Enter{/i} tuşuna basarak [game_name] oyununu başlatın.\""
+                    )
+                user_content = _build_json_batch(protected_list)
 
             async with sem:
-                response = await self._call_api(system_prompt, batch_input, use_json_schema=use_json)
+                response = await self._call_api(
+                    system_prompt, user_content,
+                    use_json_schema=use_json,
+                    **self._get_sampling_kwargs(),
+                )
 
             if response is None:
                 # Graceful recovery for whole chunk
@@ -929,7 +1189,9 @@ class LocalLLMTranslator(OpenAITranslator):
     Local LLM translator via Ollama / LM Studio OpenAI-compatible API.
 
     Connects to a local inference server (default: Ollama at localhost:11434).
-    Uses lower concurrency since local GPUs run single-threaded inference.
+    Concurrency defaults to 2 but honours the ai_concurrency setting — local
+    servers with parallel slots (LM Studio, llama.cpp --parallel) benefit from
+    higher values.
     """
 
     def __init__(
@@ -958,8 +1220,17 @@ class LocalLLMTranslator(OpenAITranslator):
             model=model,
             base_url=base_url,
         )
-        # Local LLMs run single GPU inference — low concurrency avoids thrashing
-        self._semaphore_count = 2
+        # Local GPUs default to modest concurrency, but respect the user's
+        # ai_concurrency setting (servers with parallel slots can use more).
+        concurrency = 2
+        if config_manager:
+            concurrency = getattr(
+                config_manager.translation_settings, "ai_concurrency", 2
+            ) or 2
+        try:
+            self._semaphore_count = max(1, int(concurrency))
+        except (TypeError, ValueError):
+            self._semaphore_count = 2
         self._semaphore = None
         self._timeout = AI_LOCAL_TIMEOUT
         self._batch_size = 10  # Smaller batches for slower local models

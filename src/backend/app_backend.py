@@ -132,6 +132,8 @@ class AppBackend(QObject):
     aiRequestDelayChanged = pyqtSignal()
     enableParallelBatchChanged = pyqtSignal()
     aiCustomSystemPromptChanged = pyqtSignal()
+    aiModelProfileChanged = pyqtSignal()
+    hyMt2StatusChanged = pyqtSignal()
     outputModeChanged = pyqtSignal()
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
@@ -209,6 +211,7 @@ class AppBackend(QObject):
         self.settings.on("gemini_model", lambda: self.geminiModelChanged.emit())
         self.settings.on("local_llm_url", lambda: self.localLlmUrlChanged.emit())
         self.settings.on("local_llm_model", lambda: self.localLlmModelChanged.emit())
+        self.settings.on("local_llm_model", lambda: self.hyMt2StatusChanged.emit())
         self.settings.on("libretranslate_url", lambda: self.libretranslateUrlChanged.emit())
         self.settings.on("libretranslate_api_key", lambda: self.libretranslateApiKeyChanged.emit())
         self.settings.on("custom_endpoint_url", lambda: self.customEndpointUrlChanged.emit())
@@ -222,6 +225,8 @@ class AppBackend(QObject):
         self.settings.on("ai_request_delay", lambda: self.aiRequestDelayChanged.emit())
         self.settings.on("enable_parallel_batch", lambda: self.enableParallelBatchChanged.emit())
         self.settings.on("ai_custom_system_prompt", lambda: self.aiCustomSystemPromptChanged.emit())
+        self.settings.on("ai_model_profile", lambda: self.aiModelProfileChanged.emit())
+        self.settings.on("ai_model_profile", lambda: self.hyMt2StatusChanged.emit())
         self.settings.on("output_mode", lambda: self.outputModeChanged.emit())
         self.settings.on("language", lambda lang_code: self.languageChanged.emit(lang_code))
         self.settings.on("theme", lambda theme: self.themeChanged.emit(theme))
@@ -261,7 +266,7 @@ class AppBackend(QObject):
                 proxy_manager=self.proxy_manager,
                 config_manager=self.config,
             )
-            self.translation_manager.add_translator(TranslationEngine.GOOGLE, google)
+            self._replace_translator(TranslationEngine.GOOGLE, google)
             self.logger.info("[AppBackend] Google Translate hazır.")
         except Exception as exc:
             self.logger.error("[AppBackend] Google Translate kurulamadı: %s", exc)
@@ -285,9 +290,7 @@ class AppBackend(QObject):
                 proxy_manager=self.proxy_manager,
                 config_manager=self.config,
             )
-            self.translation_manager.add_translator(
-                TranslationEngine.LIBRETRANSLATE, lt
-            )
+            self._replace_translator(TranslationEngine.LIBRETRANSLATE, lt)
             self.logger.info(f"[AppBackend] LibreTranslate hazır: {base_url}")
         except Exception as exc:
             self.logger.error("[AppBackend] LibreTranslate kurulamadı: %s", exc)
@@ -314,7 +317,7 @@ class AppBackend(QObject):
                 proxy_manager=self.proxy_manager,
                 config_manager=self.config,
             )
-            self.translation_manager.add_translator(TranslationEngine.CUSTOM, ct)
+            self._replace_translator(TranslationEngine.CUSTOM, ct)
             self.logger.info(f"[AppBackend] Custom endpoint hazır: {base_url}")
         except Exception as exc:
             self.logger.error("[AppBackend] Custom endpoint kurulamadı: %s", exc)
@@ -332,6 +335,38 @@ class AppBackend(QObject):
             "custom": TranslationEngine.CUSTOM,
         }
         return mapping.get(engine_str.lower(), TranslationEngine.GOOGLE)
+
+    def _replace_translator(self, engine: TranslationEngine, translator) -> None:
+        """Register *translator*, best-effort closing the instance it replaces."""
+        previous = self.translation_manager.translators.get(engine)
+        if previous is not None and previous is not translator and hasattr(previous, "close"):
+            try:
+                import asyncio
+                asyncio.run(previous.close())
+            except Exception:
+                pass  # Old instance will be GC'd; never block translation on this
+        self.translation_manager.add_translator(engine, translator)
+
+    def _refresh_active_translator(self) -> None:
+        """Rebuild the active engine's translator from the CURRENT config.
+
+        Synchronous on purpose: constructors perform no network I/O, and a
+        background setup thread could race the pipeline startup.
+        """
+        engine = self._selected_engine
+        try:
+            if engine in (
+                TranslationEngine.OPENAI,
+                TranslationEngine.LOCAL_LLM,
+                TranslationEngine.GEMINI,
+            ):
+                self._setup_ai_translator(engine)
+            elif engine == TranslationEngine.LIBRETRANSLATE:
+                self._setup_libretranslate()
+            elif engine == TranslationEngine.CUSTOM:
+                self._setup_custom_endpoint()
+        except Exception as exc:
+            self.logger.warning(f"[AppBackend] Translator refresh failed: {exc}")
 
     def _setup_ai_translator(self, engine: Optional[TranslationEngine] = None) -> None:
         """Builds and registers the selected AI translator in the translation manager."""
@@ -375,7 +410,7 @@ class AppBackend(QObject):
                 self.logger.info("[AppBackend] Gemini translator hazır.")
             else:
                 return
-            self.translation_manager.add_translator(engine, translator)
+            self._replace_translator(engine, translator)
         except ImportError as exc:
             self.logger.error("[AppBackend] AI paket eksik: %s", exc)
             self.logMessage.emit("error", str(exc))
@@ -594,6 +629,26 @@ class AppBackend(QObject):
     @localLlmModel.setter
     def localLlmModel(self, val: str) -> None:
         self.settings.set_local_llm_model(val)
+
+    # ── AI Model Profile (Hy-MT2) Properties ──────────────────────────────
+
+    @pyqtProperty(str, notify=aiModelProfileChanged)
+    def aiModelProfile(self) -> str:
+        return self.settings.get_ai_model_profile()
+
+    @aiModelProfile.setter
+    def aiModelProfile(self, val: str) -> None:
+        self.settings.set_ai_model_profile(val)
+
+    @pyqtProperty(bool, notify=hyMt2StatusChanged)
+    def hyMt2Detected(self) -> bool:
+        """True when the configured local LLM model name matches the Hy-MT family."""
+        return self.settings.is_hy_mt2_model_detected()
+
+    @pyqtProperty(bool, notify=hyMt2StatusChanged)
+    def hyMt2Active(self) -> bool:
+        """True when the Hy-MT2 profile is effectively in use (forced or detected)."""
+        return self.settings.is_hy_mt2_active()
 
     # ── LibreTranslate Properties ─────────────────────────────────────────
 
@@ -1025,6 +1080,13 @@ class AppBackend(QObject):
     def _start_pipeline_translation(self) -> None:
         """Normal pipeline tabanlı çeviriyi başlatır."""
         try:
+            # Rebuild the selected engine's translator from the CURRENT config.
+            # Translator instances are created at app startup and cached in the
+            # TranslationManager; without this refresh, settings edited in the
+            # UI (model name, URL, concurrency, Hy-MT2 profile, ...) would not
+            # apply until the app is restarted.
+            self._refresh_active_translator()
+
             # Pipeline oluştur ve yapılandır
             self.pipeline = TranslationPipeline(self.config, self.translation_manager)
             self.pipeline.configure(
@@ -1352,6 +1414,89 @@ class AppBackend(QObject):
         except Exception as exc:
             self.logger.exception("[AppBackend] saveSettings error")
             self.logMessage.emit("error", f"❌ Settings save failed: {exc}")
+
+    @pyqtSlot()
+    def persistSettingsOnExit(self) -> None:
+        """Best-effort persistence of in-memory settings when the app quits.
+
+        Most setters only update the in-memory ConfigManager, so without this
+        hook edits made in the UI (model name, server URL, concurrency,
+        Hy-MT2 profile, temperature, ...) would be lost on restart.
+        """
+        try:
+            self.config.save_config()
+        except Exception:
+            self.logger.exception("[AppBackend] persistSettingsOnExit failed")
+
+    @pyqtSlot(result=str)
+    def getDataDir(self) -> str:
+        """Absolute path where config, caches, logs and glossary are stored."""
+        return str(self.config.data_dir)
+
+    @pyqtSlot(result=bool)
+    def factoryReset(self) -> bool:
+        """Restore the first-launch state: default settings + wiped user data."""
+        if self._is_translating:
+            self.logMessage.emit(
+                "warning",
+                self._t(
+                    "factory_reset_busy",
+                    "Stop the running translation before factory reset.",
+                ),
+            )
+            return False
+        try:
+            self.settings.factory_reset()
+
+            # Sync runtime engine state back to the default engine
+            self._selected_engine = TranslationEngine.GOOGLE
+            self.settings._selected_engine = TranslationEngine.GOOGLE
+            self.config.translation_settings.selected_engine = "google"
+
+            # Clear the in-memory translation cache as well
+            self.translation_manager._cache.clear()
+            self.translation_manager.cache_hits = 0
+            self.translation_manager.cache_misses = 0
+
+            # Re-register the default translator with default settings
+            self._setup_google_translator()
+
+            self.refreshUI()
+            self.logMessage.emit(
+                "success",
+                self._t(
+                    "log_factory_reset_done",
+                    "🔄 Factory reset complete. Restart the app for a clean start.",
+                ),
+            )
+            return True
+        except Exception as exc:
+            self.logger.exception("[AppBackend] factoryReset error")
+            self.logMessage.emit("error", f"❌ Factory reset failed: {exc}")
+            return False
+
+    @pyqtSlot()
+    def restartApplication(self) -> None:
+        """Relaunch the application (used after factory reset)."""
+        import subprocess
+
+        try:
+            if getattr(sys, "frozen", False):
+                subprocess.Popen([sys.executable])
+            else:
+                repo_root = Path(__file__).resolve().parent.parent
+                subprocess.Popen(
+                    [sys.executable, str(repo_root / "run.py")],
+                    cwd=str(repo_root),
+                )
+            from PyQt6.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
+        except Exception as exc:
+            self.logger.exception("[AppBackend] restartApplication error")
+            self.logMessage.emit("error", f"❌ Restart failed: {exc}")
 
     @pyqtSlot(bool)
     def checkForUpdates(self, manual: bool = False) -> None:
