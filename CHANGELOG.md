@@ -1,9 +1,9 @@
 
 # RenLocalizer Changelog
 
-#### [2.8.12] - 2026-08-04
+#### [2.8.12] - 2026-08-15
 
-> **Ren'Py Non-Identifier Speaker Formatting & Stateful Lexer Engine**
+> **Non-Identifier Speaker Formatting, Stateful Lexer, Hy-MT2 Profile, Settings Persistence & Factory Reset**
 
 > **🗣️ Ren'Py String Speaker Formatting Fix:** Added `format_renpy_speaker()` helper in `output_formatter.py` to prevent Ren'Py `expected statement` syntax crashes caused by non-identifier string speakers (e.g. `???`, `Old Man`, `123`).
 > - **Speaker Identifier Guard:** Validates speaker names using Python identifier rules (`isidentifier()` for single and dotted attributes like `Student.npc`). Valid Python identifiers (`e`, `m`, `Student.npc`) remain unquoted character objects. Non-identifier string literal speakers (`???`, `Old Man`) and quoted strings are automatically formatted in double quotes (`"???"`, `"Old Man"`).
@@ -14,8 +14,7 @@
 > - **State Machine Lexer:** Tracks line-by-line states (`NORMAL`, `IN_PYTHON_BLOCK`, multiline triple-quotes `"""`, escape sequences `\"`, indentation levels, speaker quotes, UI keywords, and menu choices).
 > - **Zero-Risk Feature Toggle:** Exposed `enable_stateful_lexer: bool = False` (disabled by default) in `TranslationSettings` (`config.py`), `SettingsBackend`, `AppBackend`, and added a dedicated UI switch card in `Main.qml`.
 > - **Fail-Safe Fallback Guard:** Integrated in `src/core/parser.py` with try/except exception handling. If the lexer encounters any uncaught exception on non-standard developer code, it gracefully falls back to the standard regex parser.
-> - **Test Suite:** Added `tests/test_speaker_formatting.py`, `tests/test_renpy_lexer.py`, and `tests/test_v2812_features.py` covering valid identifiers, dotted attributes, non-identifiers, quoted speakers, end-to-end pipeline structure, and fallback recovery. All 950 tests passing cleanly.
-> **Hy-MT2 (Tencent) Specialized Translation Profile**
+> - **Test Suite:** Added `tests/test_speaker_formatting.py`, `tests/test_renpy_lexer.py`, and `tests/test_v2812_features.py` covering valid identifiers, dotted attributes, non-identifiers, quoted speakers, end-to-end pipeline structure, and fallback recovery. All 1005 tests passing cleanly.
 
 > **🎯 Hy-MT Model Profile:** Added a dedicated optimization profile for the Tencent Hy-MT / Hunyuan-MT translation model family (Hy-MT1.5/2, 1.8B / 7B / 30B-A3B, GGUF via LM Studio, Ollama or llama.cpp) in `src/core/ai_translator.py`.
 > - **Auto-detection:** `detect_model_profile()` recognizes Hy-MT model names (e.g. `tencent/Hy-MT2-7B-GGUF`, `hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M`) and activates the profile automatically; other models (llama, gpt, qwen2-mt, …) are unaffected.
@@ -33,6 +32,12 @@
 > - **Settings persistence on exit:** Most settings setters only updated the in-memory config, so UI edits were lost when the app closed. `aboutToQuit` now persists the config via `persistSettingsOnExit`.
 
 > **🔄 Factory Reset:** New "Factory Reset" section in Settings (Cache & Data Management card) restores the first-launch state in one click: confirmation dialog, then `SettingsBackend.factory_reset()` resets every setting to defaults and deletes the glossary, critical-terms and never-translate files, per-project translation caches, external TM files, logs and migration markers, finally persisting the default config. The UI shows the active data directory (`getDataDir`), and a completion dialog offers "Restart Now" (`restartApplication`). Localized in `en`/`tr`; 2 new tests.
+
+> **🧹 Language Init Consolidation:** Removed dead `output_formatter.py` methods (`format_translation_file`, `save_translation_file`, `organize_output_files`, `_find_game_directory`, `_create_language_init_file`) and consolidated language activation to a single source of truth in `saving.py: create_language_init_file` (3-phase force: `config.language` + `change_language` + `persistent`). Added `tests/test_language_init.py`.
+
+> **🧹 Repo Cleanup:** Removed ~443 MB of build artifacts (`build/`, `dist/`, `tmp/`, `opencode.exe`), Python caches, one-off debug scripts, empty placeholder files (`google_fonts_metadata.json`) and superseded `docs/OLD_wiki/`.
+
+> **🔧 Build Fix:** Un-ignored `constraints-release.txt`, `RenLocalizer.sh`, `RenLocalizerCLI.sh` and `run.bat` in `.gitignore` so GitHub Actions release builds can locate them.
 
 #### [2.8.11] - 2026-08-02
 

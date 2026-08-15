@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=RenLocalizer
-Comment=Professional Ren'Py Game Translation Tool
-Exec=RenLocalizer
-Icon=renlocalizer
-Type=Application
-Categories=Development;Translation;Utility;
-Terminal=false
-StartupWMClass=RenLocalizer

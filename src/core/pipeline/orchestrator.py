@@ -1734,7 +1734,10 @@ class TranslationPipeline(QObject):
                 if detected_lang:
                     api_source_lang = detected_lang
                     self.log_message.emit("info", self.config.get_log_text(
-                        'smart_detect_success', f"[Smart Detect] \u2713 Kaynak dil tespit edildi: {detected_lang.upper()}"))
+                        'smart_detect_success',
+                        "[Smart Detect] Source language detected: {detected_lang}",
+                        detected_lang=detected_lang.upper(),
+                    ))
                 else:
                     self.log_message.emit("warning", self.config.get_log_text(
                         'smart_detect_fallback', "[Smart Detect] Guven esigi gecilemedi, 'auto' modunda devam ediliyor."))

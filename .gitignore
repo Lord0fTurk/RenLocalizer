@@ -29,7 +29,6 @@ dist/
 build/
 *.spec
 !RenLocalizer.spec
-constraints-release.txt
 *.log
 build_log.txt
 
@@ -55,9 +54,6 @@ $RECYCLE.BIN/
 # ── User Data ─────────────────────────────────────────────────────────
 config.json
 glossary.json
-RenLocalizer.sh
-RenLocalizerCLI.sh
-run.bat
 
 # ── Development ───────────────────────────────────────────────────────
 # Internal docs (not needed in repo)
