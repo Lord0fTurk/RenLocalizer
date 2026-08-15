@@ -110,6 +110,7 @@ class AppBackend(QObject):
     themeChanged = pyqtSignal(str)
     enableRpycReaderChanged = pyqtSignal()
     enableDeepScanChanged = pyqtSignal()
+    enableStatefulLexerChanged = pyqtSignal()
     enableDesktopNotificationsChanged = pyqtSignal()
     selectedEngineChanged = pyqtSignal(str)
     openaiApiKeyChanged = pyqtSignal()
@@ -203,6 +204,7 @@ class AppBackend(QObject):
         self.settings.on("enable_desktop_notifications", lambda: self.enableDesktopNotificationsChanged.emit())
         self.settings.on("rpyc_reader", lambda: self.enableRpycReaderChanged.emit())
         self.settings.on("deep_scan", lambda: self.enableDeepScanChanged.emit())
+        self.settings.on("stateful_lexer", lambda: self.enableStatefulLexerChanged.emit())
         self.settings.on("selected_engine", lambda engine_str: self.selectedEngineChanged.emit(engine_str))
         self.settings.on("openai_api_key", lambda: self.openaiApiKeyChanged.emit())
         self.settings.on("openai_model", lambda: self.openaiModelChanged.emit())
@@ -562,6 +564,14 @@ class AppBackend(QObject):
     @enableDeepScan.setter
     def enableDeepScan(self, val: bool) -> None:
         self.settings.set_enable_deep_scan(val)
+
+    @pyqtProperty(bool, notify=enableStatefulLexerChanged)
+    def enableStatefulLexer(self) -> bool:
+        return self.settings.get_enable_stateful_lexer()
+
+    @enableStatefulLexer.setter
+    def enableStatefulLexer(self, val: bool) -> None:
+        self.settings.set_enable_stateful_lexer(val)
 
     # ── AI Engine Settings Properties ────────────────────────────────────
 

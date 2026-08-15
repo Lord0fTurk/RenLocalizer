@@ -258,6 +258,8 @@ class TranslationSettings:
     enable_deep_scan: bool = True  # Varsayılan artık açık (gizli string taraması)
     # RPYC Reader: Derlenmiş .rpyc dosyalarını AST ile doğrudan oku
     enable_rpyc_reader: bool = True  # Varsayılan artık açık (derlenmiş .rpyc okuma)
+    # Stateful Lexer Engine v2.8.12 (Deneysel Durum Makinesi Tabana Dayalı Parser)
+    enable_stateful_lexer: bool = False  # Varsayılan kapalı (güvenli fallback)
     # Unrpyc Decompile: .rpyc → .rpy decompile edip regex parser ile de tara (complementary)
     # Mevcut rpyc_reader'ın yanında çalışır; daha fazla metin yakalanır.
     # Gereksinim: unrpyc (pip install git+https://github.com/CensoredUsername/unrpyc.git)

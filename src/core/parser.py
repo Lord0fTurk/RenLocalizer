@@ -1033,6 +1033,44 @@ class RenPyParser:
         except Exception as e:
             self.logger.debug(f"TokenStream extraction unavailable or failed: {e}")
 
+        # 1c. Stateful Lexer extraction (when enable_stateful_lexer=True)
+        if self.config and hasattr(self.config, 'translation_settings') and getattr(self.config.translation_settings, 'enable_stateful_lexer', False):
+            try:
+                from src.core.renpy_lexer import RenPyLexer
+                lexer = RenPyLexer()
+                lexer_tokens = lexer.tokenize(content, file_path=str(file_path))
+                for token in lexer_tokens:
+                    text_value = token.text or ''
+                    if not self.is_meaningful_text(text_value):
+                        continue
+                    ctx_line = token.raw_line or ''
+                    if ctx_line and ('define ' in ctx_line or 'default ' in ctx_line):
+                        m_var = re.match(r'^\s*(?:define|default)\s+(?P<var_name>[a-zA-Z0-9_.]+)\s*=', ctx_line)
+                        if m_var:
+                            if not self._is_deep_feature_enabled('deep_extraction_bare_defines'):
+                                continue  # Feature disabled → skip bare define/default strings
+                            var_name = m_var.group('var_name')
+                            if not self._deep_var_analyzer.is_likely_translatable(var_name):
+                                continue
+                    ctx = token.context_path or []
+                    key = (text_value, token.character or '', tuple(ctx))
+                    if key not in seen_texts:
+                        entry = self._record_entry(
+                            text=text_value,
+                            raw_text=text_value,
+                            line_number=token.line_number or 0,
+                            context_line=token.raw_line,
+                            text_type=token.text_type or 'dialogue',
+                            context_path=list(ctx),
+                            character=token.character or '',
+                            file_path=str(file_path),
+                        )
+                        if entry:
+                            entries.append(entry)
+                            seen_texts.add(key)
+            except Exception as e:
+                self.logger.warning("StatefulLexer pass failed for %s (%s), continuing with standard passes", file_path, e)
+
         # 2. Regex ile context-aware extraction (UI, screen, python _() fonksiyonları)
         context_stack: List[ContextNode] = []
         
@@ -2708,6 +2746,10 @@ class RenPyParser:
         if text_lower in self.renpy_technical_terms:
             return False
             
+        # Reject audio commands wrapped in angle brackets (e.g., <silence 0.4>, <from 2.0>)
+        if re.match(r'^\s*<[a-zA-Z0-9_.\s]+>\s*$', text_strip):
+            return False
+
         # Reject internal Ren'Py names (starting with _) or internal files (starting with 00)
         if text_strip.startswith('_') and ' ' not in text_strip:
             return False

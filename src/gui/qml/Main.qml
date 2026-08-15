@@ -1166,6 +1166,21 @@ ApplicationWindow {
                                     }
                                 }
                             }
+
+                            Rectangle { Layout.fillWidth: true; height: 1; color: clrCardBorder }
+
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 16
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 8
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("stateful_lexer_title", "Stateful Lexer Engine (Experimental)"); color: clrTxt; font.bold: true; font.pixelSize: 13 }
+                                        Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("stateful_lexer_desc", "State-machine parser for script parsing. Enable to test stateful lexer pass."); color: clrTxt2; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    }
+                                    Switch { checked: appBackend.enableStatefulLexer; onToggled: appBackend.enableStatefulLexer = checked }
+                                }
+                            }
                         }
                     }
 

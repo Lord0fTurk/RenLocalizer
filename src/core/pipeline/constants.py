@@ -95,6 +95,18 @@ IMAGE_ONLY_BLOCK_RE = re.compile(r'^\s*(?P<kind>imagebutton|hotspot)\b')
 TEXTUAL_UI_HINT_RE = re.compile(
     r'\b(?:tooltip|alt)\b|^\s*(?:text|textbutton|label|caption)\b|\bText\s*\('
 )
+RENPY_KEYWORDS_TO_SKIP = {
+    'label', 'scene', 'show', 'hide', 'with', 'call', 'jump', 'return',
+    'play', 'stop', 'queue', 'pause', 'pass', 'define', 'default', 'init',
+    'style', 'image', 'transform', 'python', 'if', 'elif', 'else', 'while',
+    'for', 'renpy', 'nvl', 'voice', 'camera', 'window', 'frame', 'screen',
+    'bar', 'vbar', 'viewport', 'add', 'use', 'has', 'on', 'key', 'timer',
+    'input', 'sound', 'music', 'audio', 'showif', 'as', 'at', 'behind',
+    'onlayer', 'zorder', 'parallel', 'block', 'contains', 'repeat', 'function',
+    'layeredimage', 'group', 'attribute', 'auto', 'always', 'offer', 'side',
+    'vpgrid', 'grid', 'fixed', 'hstack', 'vstack', 'drag', 'draggroup',
+    'hotspot', 'hotbar', 'dismiss', 'transclude', 'testcase', 'menu'
+}
 HELPER_PROPERTY_RE = re.compile(
     r'^\s*(?:idle|hover|selected|selected_idle|selected_hover|background|foreground|add)\b'
 )

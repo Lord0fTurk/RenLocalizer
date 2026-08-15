@@ -1,8 +1,20 @@
 
 # RenLocalizer Changelog
 
-#### [Unreleased]
+#### [2.8.12] - 2026-08-04
 
+> **Ren'Py Non-Identifier Speaker Formatting & Stateful Lexer Engine**
+
+> **🗣️ Ren'Py String Speaker Formatting Fix:** Added `format_renpy_speaker()` helper in `output_formatter.py` to prevent Ren'Py `expected statement` syntax crashes caused by non-identifier string speakers (e.g. `???`, `Old Man`, `123`).
+> - **Speaker Identifier Guard:** Validates speaker names using Python identifier rules (`isidentifier()` for single and dotted attributes like `Student.npc`). Valid Python identifiers (`e`, `m`, `Student.npc`) remain unquoted character objects. Non-identifier string literal speakers (`???`, `Old Man`) and quoted strings are automatically formatted in double quotes (`"???"`, `"Old Man"`).
+> - **Pipeline Integration:** Updated `output_formatter.py` (`generate_character_translation`) and `src/core/pipeline/extraction.py` (`generate_tl_structure`) to route all dialogue speaker output through `format_renpy_speaker()`.
+> - **Duplicate Line Cleanup:** Fixed `generate_tl_structure` in `extraction.py` to prevent generating redundant empty translation lines when cached translations are available.
+
+> **🧠 Stateful Lexer Engine & Feature Toggle (Experimental):** Built a high-speed, state-machine lexer (`RenPyLexer` in `src/core/renpy_lexer.py`) for `.rpy` script parsing to eliminate monolithic regex brittleness.
+> - **State Machine Lexer:** Tracks line-by-line states (`NORMAL`, `IN_PYTHON_BLOCK`, multiline triple-quotes `"""`, escape sequences `\"`, indentation levels, speaker quotes, UI keywords, and menu choices).
+> - **Zero-Risk Feature Toggle:** Exposed `enable_stateful_lexer: bool = False` (disabled by default) in `TranslationSettings` (`config.py`), `SettingsBackend`, `AppBackend`, and added a dedicated UI switch card in `Main.qml`.
+> - **Fail-Safe Fallback Guard:** Integrated in `src/core/parser.py` with try/except exception handling. If the lexer encounters any uncaught exception on non-standard developer code, it gracefully falls back to the standard regex parser.
+> - **Test Suite:** Added `tests/test_speaker_formatting.py`, `tests/test_renpy_lexer.py`, and `tests/test_v2812_features.py` covering valid identifiers, dotted attributes, non-identifiers, quoted speakers, end-to-end pipeline structure, and fallback recovery. All 950 tests passing cleanly.
 > **Hy-MT2 (Tencent) Specialized Translation Profile**
 
 > **🎯 Hy-MT Model Profile:** Added a dedicated optimization profile for the Tencent Hy-MT / Hunyuan-MT translation model family (Hy-MT1.5/2, 1.8B / 7B / 30B-A3B, GGUF via LM Studio, Ollama or llama.cpp) in `src/core/ai_translator.py`.

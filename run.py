@@ -457,4 +457,8 @@ def main() -> int:
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\n[INFO] RenLocalizer application terminated by user (Ctrl+C).")
+        sys.exit(0)

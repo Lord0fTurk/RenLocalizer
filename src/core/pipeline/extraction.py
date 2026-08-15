@@ -19,9 +19,10 @@ from pathlib import Path
 from .constants import (
     RENPY_TO_API_LANG, COVERAGE_AUDIT_EXCLUDE_DIRS, QUOTED_LITERAL_RE,
     TEXTUAL_UI_HINT_RE, HELPER_PROPERTY_RE, IMAGE_ONLY_BLOCK_RE,
-    DYNAMIC_UI_LINE_RE,
+    DYNAMIC_UI_LINE_RE, RENPY_KEYWORDS_TO_SKIP,
 )
 from .validating import has_rpyc_files, has_rpy_files, is_generated_export_file
+from src.core.output_formatter import format_renpy_speaker
 
 logger = logging.getLogger(__name__)
 
@@ -598,11 +599,11 @@ def generate_all_strings_file(
 def generate_native_tlid_content(
     entries: List[dict],
     game_dir: str,
-    target_language: str,
-    source_language: str,
-    engine,
-    translation_manager,
-    config,
+    target_language: str = "turkish",
+    source_language: str = "english",
+    engine=None,
+    translation_manager=None,
+    config=None,
     lang_name: str = None,
 ) -> str:
     """
@@ -655,11 +656,13 @@ def generate_native_tlid_content(
                 or ' en ' in who or ' ja ' in who or ' och ' in who
                 or ' \u00e9s ' in who or ' dan ' in who or ' & ' in who
                 or len(re.findall(r'\[', who)) >= 2
+                or who.strip('"\'').lower() in RENPY_KEYWORDS_TO_SKIP
             ):
                 string_entries.append(entry)
                 continue
 
-            source_line = f'{who} "{text}"' if who else f'"{text}"'
+            fmt_who = format_renpy_speaker(who)
+            source_line = f'{fmt_who} "{text}"' if fmt_who else f'"{text}"'
             escaped_source = source_line.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
 
             # Real Ren'Py identifier from the compiled .rpyc AST (Translate/
@@ -682,6 +685,9 @@ def generate_native_tlid_content(
                         label = p.replace('label:', '').replace('Label:', '')
                         break
 
+            # Sanitize label to contain only valid Ren'Py identifier chars
+            label = re.sub(r'[^a-zA-Z0-9_]', '_', label)
+
             if real_id:
                 base_tlid = real_id
             else:
@@ -692,6 +698,9 @@ def generate_native_tlid_content(
                 hash_source = f'{who} "{encoded_text}"' if who else f'"{encoded_text}"'
                 tlid_hash = hashlib.md5((hash_source + '\r\n').encode('utf-8')).hexdigest()[:8]
                 base_tlid = f'{label}_{tlid_hash}'
+
+            # Ensure TLID is a valid Ren'Py identifier without illegal characters (e.g. dots)
+            base_tlid = re.sub(r'[^a-zA-Z0-9_]', '_', base_tlid)
 
             if base_tlid in seen_tlids:
                 seen_tlids[base_tlid] += 1
@@ -710,7 +719,6 @@ def generate_native_tlid_content(
             lines.append(f"translate {target_lang} {tlid}:")
             lines.append("")
             lines.append(f'    # {escaped_source}')
-            lines.append(f'    {who or "mc"} ""' if who else '    ""')
 
             cached = ""
             if translation_manager:
@@ -722,7 +730,9 @@ def generate_native_tlid_content(
                     cached = escape_rpy_string(cached_res.translated_text)
 
             if cached:
-                lines.append(f'    {who or "mc"} "{cached}"' if who else f'    "{cached}"')
+                lines.append(f'    {fmt_who} "{cached}"' if fmt_who else f'    "{cached}"')
+            else:
+                lines.append(f'    {fmt_who} ""' if fmt_who else '    ""')
 
             lines.append("")
             entries_added += 1
