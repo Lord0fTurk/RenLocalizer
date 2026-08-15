@@ -96,6 +96,7 @@ class SettingsBackend:
             "ai_concurrency": [],
             "ai_request_delay": [],
             "ai_custom_system_prompt": [],
+            "ai_model_profile": [],
             # Output mode
             "output_mode": [],
             # UI / theme / language
@@ -289,6 +290,104 @@ class SettingsBackend:
     def set_local_llm_model(self, val: str) -> None:
         self.config.translation_settings.local_llm_model = val.strip()
         self._emit("local_llm_model")
+
+    # ── AI Model Profile (Hy-MT2 / generic) ───────────────────────────────
+
+    _VALID_AI_MODEL_PROFILES = ("auto", "generic", "hy_mt2")
+
+    def get_ai_model_profile(self) -> str:
+        profile = getattr(
+            self.config.translation_settings, "ai_model_profile", "auto"
+        )
+        return profile if profile in self._VALID_AI_MODEL_PROFILES else "auto"
+
+    def set_ai_model_profile(self, val: str) -> None:
+        profile = str(val or "auto").strip().lower()
+        if profile not in self._VALID_AI_MODEL_PROFILES:
+            profile = "auto"
+        self.config.translation_settings.ai_model_profile = profile
+        self._emit("ai_model_profile")
+
+    def is_hy_mt2_model_detected(self) -> bool:
+        """True when the configured local LLM model name is a Hy-MT family model."""
+        try:
+            from src.core.ai_translator import detect_model_profile
+        except Exception:
+            return False
+        model = self.get_local_llm_model()
+        return detect_model_profile(model) == "hy_mt2"
+
+    def is_hy_mt2_active(self) -> bool:
+        """True when the Hy-MT2 profile is effectively in use (forced or detected)."""
+        profile = self.get_ai_model_profile()
+        if profile == "generic":
+            return False
+        if profile == "hy_mt2":
+            return True
+        return self.is_hy_mt2_model_detected()
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  Factory Reset
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def factory_reset(self) -> bool:
+        """Restore the first-launch state.
+
+        Resets every setting to its default and removes all persisted user
+        data inside the data directory: glossary / critical-terms /
+        never-translate files, per-project translation caches, external TM
+        files, logs and migration markers. The default config is then saved
+        so the next launch starts clean.
+        """
+        import shutil
+        from pathlib import Path
+
+        data_dir = Path(self.config.data_dir)
+        removed: List[str] = []
+
+        # 1) Standalone user-data files
+        for filename in (
+            "glossary.json",
+            "critical_terms.json",
+            "never_translate.json",
+            ".migrated_286",
+        ):
+            p = data_dir / filename
+            if p.exists():
+                try:
+                    p.unlink()
+                    removed.append(filename)
+                except Exception:
+                    self.logger.warning("factory_reset: could not remove %s", p)
+
+        # 2) Data directories (recreated empty below)
+        for dirname in ("cache", "tm", "logs"):
+            d = data_dir / dirname
+            if d.is_dir():
+                try:
+                    shutil.rmtree(d)
+                    removed.append(dirname + "/")
+                except Exception:
+                    self.logger.warning("factory_reset: could not remove %s", d)
+
+        # 3) Reset in-memory settings and persist the defaults
+        self.config.reset_to_defaults()
+        self.config.glossary = {}
+        self.config.critical_terms = []
+        self.config.never_translate_rules = {}
+        self.config.save_config()
+
+        # 4) Recreate the required empty directories
+        try:
+            from src.utils.path_manager import ensure_data_directories
+            ensure_data_directories(data_dir)
+        except Exception:
+            self.logger.warning("factory_reset: could not recreate data directories")
+
+        self.logger.info(
+            "factory_reset complete: removed %s", ", ".join(removed) or "nothing"
+        )
+        return True
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  LibreTranslate Settings

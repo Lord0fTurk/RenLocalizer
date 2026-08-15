@@ -318,6 +318,11 @@ class TranslationSettings:
     ai_custom_system_prompt: str = (
         ""  # User-defined system prompt (empty = use built-in)
     )
+    # AI Model Profile (v2.8.12): model-family specific prompting/sampling.
+    # "auto"    -> detect from model name (e.g. Tencent Hy-MT family)
+    # "generic" -> force generic behaviour (system prompt, default sampling)
+    # "hy_mt2"  -> force the Hy-MT2 profile regardless of model name
+    ai_model_profile: str = "auto"
     # Aggressive Translation Retry: Retry unchanged translations with Lingva/alt endpoints (slower but more thorough)
     aggressive_retry_translation: bool = (
         False  # Default off for speed (user can enable)
@@ -434,6 +439,8 @@ class TranslationSettings:
             "STANDARD",
         ):
             self.gemini_safety_settings = "BLOCK_NONE"
+        if self.ai_model_profile not in ("auto", "generic", "hy_mt2"):
+            self.ai_model_profile = "auto"
         extraction_mode = str(self.extraction_mode).strip().lower() or "balanced"
         if extraction_mode not in EXTRACTION_MODE_THRESHOLDS:
             extraction_mode = "balanced"

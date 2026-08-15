@@ -1069,6 +1069,28 @@ ApplicationWindow {
                                     contentItem: Label { text: parent.text; color: "white"; font.bold: true; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 }
                             }
+
+                            Rectangle { Layout.fillWidth: true; height: 1; color: clrCardBorder }
+
+                            // KATMAN 3: FABRİKA AYARLARINA SIFIRLAMA
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 16
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 3
+                                    Label { text: appBackend.uiTrigger, "🔄 " + appBackend.getTextWithDefault("factory_reset_title", "Fabrika Ayarlarına Sıfırla"); color: clrTxt; font.bold: true; font.pixelSize: 13 }
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("factory_reset_desc", "Tüm ayarları, API anahtarlarını, sözlüğü ve çeviri önbelleklerini siler; programı ilk kurulduğu haline döndürür."); color: clrTxt2; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("factory_reset_datadir", "Veri konumu:") + " " + appBackend.getDataDir(); color: clrTxt2; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                }
+
+                                Button {
+                                    Layout.preferredWidth: 220; height: 40
+                                    text: appBackend.uiTrigger, "🔄 " + appBackend.getTextWithDefault("factory_reset_btn", "Sıfırla")
+                                    onClicked: factoryResetDialog.open()
+                                    background: Rectangle { radius: 8; color: parent.hovered ? "#991B1B" : "#7F1D1D"; border.color: "#B91C1C"; border.width: 1 }
+                                    contentItem: Label { text: parent.text; color: "white"; font.bold: true; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                }
+                            }
                         }
                     }
 
@@ -1265,6 +1287,82 @@ ApplicationWindow {
                                             Layout.fillWidth: true; height: 40; text: appBackend.localLlmModel; placeholderText: "qwen2.5-coder:7b-instruct, llama3..."
                                             onEditingFinished: appBackend.localLlmModel = text
                                             background: Rectangle { radius: 8; color: clrInput; border.color: clrCardBorder; border.width: 1 }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Hy-MT2 (Tencent) Özel Çeviri Profili
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 12
+                                visible: appBackend.selectedEngine === "local_llm"
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: hyMt2Inner.implicitHeight + 28
+                                    radius: 12
+                                    color: Qt.rgba(0, 242, 254, 0.04)
+                                    border.color: appBackend.hyMt2Active ? clrAccent : clrCardBorder
+                                    border.width: 1
+
+                                    ColumnLayout {
+                                        id: hyMt2Inner
+                                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                                        anchors.margins: 14; spacing: 12
+
+                                        RowLayout {
+                                            Layout.fillWidth: true; spacing: 10
+                                            Label { text: appBackend.uiTrigger, "🎯 " + appBackend.getTextWithDefault("hy_mt2_title", "Hy-MT2 (Tencent) — Specialized Translation Profile"); color: clrAccent; font.bold: true; font.pixelSize: 14 }
+                                            Item { Layout.fillWidth: true }
+                                            Rectangle {
+                                                radius: 10
+                                                color: appBackend.hyMt2Active ? Qt.rgba(0, 0.8, 0.4, 0.18) : Qt.rgba(0.5, 0.5, 0.5, 0.15)
+                                                Layout.preferredHeight: 22; Layout.preferredWidth: hyMt2BadgeTxt.implicitWidth + 20
+                                                Label { id: hyMt2BadgeTxt; anchors.centerIn: parent; text: appBackend.uiTrigger, appBackend.hyMt2Active ? appBackend.getTextWithDefault("hy_mt2_active_badge", "ACTIVE") : appBackend.getTextWithDefault("hy_mt2_inactive_badge", "OFF"); font.pixelSize: 11; font.bold: true; color: appBackend.hyMt2Active ? clrAccent : clrTxt2 }
+                                            }
+                                        }
+
+                                        Label {
+                                            text: appBackend.uiTrigger, appBackend.getTextWithDefault("hy_mt2_info", "Optimized for Tencent Hy-MT translation models: uses official instruction templates (no system prompt), delimiter preservation and the model-card sampling recipe (temp 0.7, top_p 0.6, top_k 20, rep.pen 1.05) for maximum speed and quality.")
+                                            color: clrTxt2; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                        }
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true; spacing: 5
+                                            Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("hy_mt2_profile_label", "Profile Mode:"); color: clrTxt; font.bold: true; font.pixelSize: 13 }
+                                            ComboBox {
+                                                id: hyMt2ProfileCombo
+                                                Layout.fillWidth: true; height: 40
+                                                function profileModel() {
+                                                    appBackend.uiTrigger
+                                                    return [
+                                                        {"id": "auto", "name": appBackend.getTextWithDefault("hy_mt2_profile_auto", "Auto-detect from model name (recommended)")},
+                                                        {"id": "hy_mt2", "name": appBackend.getTextWithDefault("hy_mt2_profile_force", "Force Hy-MT2 profile")},
+                                                        {"id": "generic", "name": appBackend.getTextWithDefault("hy_mt2_profile_off", "Off (generic behaviour)")}
+                                                    ]
+                                                }
+                                                model: profileModel()
+                                                textRole: "name"; valueRole: "id"
+                                                Component.onCompleted: currentIndex = indexOfValue(appBackend.aiModelProfile || "auto")
+                                                onActivated: appBackend.aiModelProfile = currentValue
+                                                background: Rectangle { radius: 8; color: clrInput; border.color: parent.hovered ? clrAccent : clrCardBorder; border.width: 1 }
+                                                contentItem: Label { leftPadding: 14; text: hyMt2ProfileCombo.displayText; color: clrTxt; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                                                delegate: ItemDelegate {
+                                                    width: hyMt2ProfileCombo.width
+                                                    contentItem: Label { text: modelData.name; color: clrTxt; font.pixelSize: 12; leftPadding: 14 }
+                                                    background: Rectangle { color: hovered ? Qt.rgba(0, 242, 254, 0.12) : "transparent" }
+                                                }
+                                                popup: Popup { y: hyMt2ProfileCombo.height; width: hyMt2ProfileCombo.width; implicitHeight: Math.min(contentItem.implicitHeight, 220); padding: 4; contentItem: ListView { clip: true; implicitHeight: contentHeight; model: hyMt2ProfileCombo.delegateModel; ScrollBar.vertical: ScrollBar {} } background: Rectangle { color: clrCard; radius: 8; border.color: clrCardBorder; border.width: 1 } }
+                                            }
+                                        }
+
+                                        Label {
+                                            text: appBackend.uiTrigger, appBackend.hyMt2Active
+                                                ? appBackend.getTextWithDefault("hy_mt2_detected", "✓ Hy-MT2 profile is active — official instructions and sampling will be used.")
+                                                : appBackend.getTextWithDefault("hy_mt2_not_detected", "No Hy-MT model detected in the model name. Choose 'Force Hy-MT2 profile' to enable it anyway.")
+                                            color: appBackend.hyMt2Active ? clrAccent : clrTxt2
+                                            font.pixelSize: 12; font.bold: appBackend.hyMt2Active
+                                            Layout.fillWidth: true; wrapMode: Text.WordWrap
                                         }
                                     }
                                 }
@@ -1810,6 +1908,49 @@ ApplicationWindow {
         standardButtons: Dialog.Ok | Dialog.Cancel
         contentItem: Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("update_available_msg", "New Version: ") + updateDialog.latestVersion + "\n" + appBackend.getTextWithDefault("update_available_click", "Press OK to download."); color: clrTxt; wrapMode: Text.Wrap }
         onAccepted: if(releaseUrl) Qt.openUrlExternally(releaseUrl)
+    }
+
+    Dialog {
+        id: factoryResetDialog
+        anchors.centerIn: parent; width: Math.min(520, root.width * 0.85)
+        title: appBackend.uiTrigger, appBackend.getTextWithDefault("factory_reset_title", "Fabrika Ayarlarına Sıfırla"); modal: true
+        standardButtons: Dialog.Yes | Dialog.No
+        contentItem: Label {
+            text: appBackend.uiTrigger, appBackend.getTextWithDefault("factory_reset_confirm", "Tüm ayarlar, API anahtarları, sözlük ve çeviri önbellekleri kalıcı olarak silinecek ve program ilk kurulduğu haline dönecek.\n\nEmin misiniz?")
+            color: clrTxt; wrapMode: Text.Wrap
+        }
+        onAccepted: if (appBackend.factoryReset()) factoryResetDoneDialog.open()
+    }
+
+    Dialog {
+        id: factoryResetDoneDialog
+        anchors.centerIn: parent; width: Math.min(480, root.width * 0.8)
+        title: appBackend.uiTrigger, appBackend.getTextWithDefault("factory_reset_done_title", "✅ Sıfırlama Tamamlandı"); modal: true
+        standardButtons: Dialog.NoButton
+        contentItem: ColumnLayout {
+            spacing: 14
+            Label {
+                text: appBackend.uiTrigger, appBackend.getTextWithDefault("factory_reset_done_msg", "Program ilk kurulduğu haline döndü. Temiz bir başlangıç için uygulamayı yeniden başlatın; bundan sonra yaptığınız ayarlar otomatik kaydedilecektir.")
+                color: clrTxt; wrapMode: Text.Wrap; Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 12
+                Button {
+                    Layout.fillWidth: true; height: 40
+                    text: appBackend.uiTrigger, "🔁 " + appBackend.getTextWithDefault("factory_restart_now", "Şimdi Yeniden Başlat")
+                    onClicked: appBackend.restartApplication()
+                    background: Rectangle { radius: 8; color: parent.hovered ? clrAccent : clrCardBorder }
+                    contentItem: Label { text: parent.text; color: "white"; font.bold: true; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
+                Button {
+                    Layout.fillWidth: true; height: 40
+                    text: appBackend.uiTrigger, appBackend.getTextWithDefault("factory_restart_later", "Daha Sonra")
+                    onClicked: factoryResetDoneDialog.close()
+                    background: Rectangle { radius: 8; color: clrInput; border.color: clrCardBorder; border.width: 1 }
+                    contentItem: Label { text: parent.text; color: clrTxt; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
+            }
+        }
     }
 
     // ── Glossary Dialogs ─────────────────────────────────────────────────

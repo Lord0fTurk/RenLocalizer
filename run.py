@@ -325,6 +325,9 @@ def main() -> int:
 
         app.lastWindowClosed.connect(_schedule_teardown)
         app.aboutToQuit.connect(_schedule_teardown)
+        # Persist in-memory settings (model name, URL, concurrency, profile...)
+        # on quit; connected before teardown so it runs while backend is alive.
+        app.aboutToQuit.connect(backend.persistSettingsOnExit)
 
         # Context property
         engine.rootContext().setContextProperty("appBackend", backend)

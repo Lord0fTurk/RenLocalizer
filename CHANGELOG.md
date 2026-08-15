@@ -15,6 +15,24 @@
 > - **Zero-Risk Feature Toggle:** Exposed `enable_stateful_lexer: bool = False` (disabled by default) in `TranslationSettings` (`config.py`), `SettingsBackend`, `AppBackend`, and added a dedicated UI switch card in `Main.qml`.
 > - **Fail-Safe Fallback Guard:** Integrated in `src/core/parser.py` with try/except exception handling. If the lexer encounters any uncaught exception on non-standard developer code, it gracefully falls back to the standard regex parser.
 > - **Test Suite:** Added `tests/test_speaker_formatting.py`, `tests/test_renpy_lexer.py`, and `tests/test_v2812_features.py` covering valid identifiers, dotted attributes, non-identifiers, quoted speakers, end-to-end pipeline structure, and fallback recovery. All 950 tests passing cleanly.
+> **Hy-MT2 (Tencent) Specialized Translation Profile**
+
+> **🎯 Hy-MT Model Profile:** Added a dedicated optimization profile for the Tencent Hy-MT / Hunyuan-MT translation model family (Hy-MT1.5/2, 1.8B / 7B / 30B-A3B, GGUF via LM Studio, Ollama or llama.cpp) in `src/core/ai_translator.py`.
+> - **Auto-detection:** `detect_model_profile()` recognizes Hy-MT model names (e.g. `tencent/Hy-MT2-7B-GGUF`, `hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M`) and activates the profile automatically; other models (llama, gpt, qwen2-mt, …) are unaffected.
+> - **Official instruction templates:** Implements the model-card "Hy-MT2 Translation Task Instruction Examples" — default-translation instruction with delimiter preservation for single segments, and the format-locked structured-data instruction for JSON batches. Hy-MT models have **no system prompt**, so the request omits the system message entirely (faster prefill, better adherence).
+> - **Model-card sampling:** temperature 0.7, top_p 0.6, top_k 20, repetition_penalty 1.05 (1.8B/7B recipe). `top_k`/`repetition_penalty` travel via `extra_body`; a layered 400-fallback strips them (then the JSON-schema constraint) automatically for servers that reject unknown fields.
+> - **New setting `ai_model_profile`:** `"auto"` (detect from model name) | `"generic"` (force classic behaviour) | `"hy_mt2"` (force profile). A user-changed `ai_temperature` still takes precedence over the recipe.
+> - **GUI section:** New "Hy-MT2 (Tencent) — Specialized Translation Profile" card in the Settings page (visible for the Local LLM engine) with profile-mode selector, live ACTIVE/OFF badge and detection status. Localized in `en`/`tr`.
+> - **Test suite:** 36 new tests in `tests/test_ai_translator.py` (detection matrix, language-name resolution, sampling, prompt builders, system-message omission). All 61 AI-translator tests passing.
+
+> **🐛 Local LLM Concurrency Fix:** `LocalLLMTranslator` no longer hard-codes batch concurrency to 2 — it now honours the `ai_concurrency` setting (default stays 2), so local servers with parallel slots (LM Studio, llama.cpp `--parallel`) actually receive the configured number of simultaneous requests.
+
+> **🐛 Hy-MT2 Single-Prompt Structure Fix:** The delimiter-preservation sentence was appended *after* the instruction's final colon. Hy-MT2 treats everything after `instruction:\n\n` as source text, so it translated/echoed the instruction itself into the output ("Çevrilen çıktıda aynı sayıda ayırıcı ... korumanız gerekir"). The delimiter note is now part of the instruction before the colon; only the source text follows the separator. Added a regression test asserting nothing but the text appears after the separator.
+
+> **🐛 Settings-Not-Applied Fix:** Engine translator instances were created once at app startup and cached in the `TranslationManager`, so settings edited in the UI (Local LLM model name, server URL, AI concurrency, Hy-MT2 profile, ...) never reached the running translation until restart. The pipeline now rebuilds the active engine's translator from the current config right before each translation starts (`_refresh_active_translator`), replacing old instances with best-effort connection cleanup (`_replace_translator`).
+> - **Settings persistence on exit:** Most settings setters only updated the in-memory config, so UI edits were lost when the app closed. `aboutToQuit` now persists the config via `persistSettingsOnExit`.
+
+> **🔄 Factory Reset:** New "Factory Reset" section in Settings (Cache & Data Management card) restores the first-launch state in one click: confirmation dialog, then `SettingsBackend.factory_reset()` resets every setting to defaults and deletes the glossary, critical-terms and never-translate files, per-project translation caches, external TM files, logs and migration markers, finally persisting the default config. The UI shows the active data directory (`getDataDir`), and a completion dialog offers "Restart Now" (`restartApplication`). Localized in `en`/`tr`; 2 new tests.
 
 #### [2.8.11] - 2026-08-02
 
