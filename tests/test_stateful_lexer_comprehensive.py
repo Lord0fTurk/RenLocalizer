@@ -214,6 +214,12 @@ def test_generate_tl_structure_tlid_sanitization(tmp_path):
 def test_parser_stateful_lexer_full_pipeline_pass(tmp_path):
     config = ConfigManager()
     config.translation_settings.enable_stateful_lexer = True
+    # Isolate the lexer pass: deep extraction (bare define/default strings) is
+    # enabled by default on fresh installs and would otherwise add
+    # `default quick_save = "Hızlı kaydetme"` to the output, making this test
+    # depend on the machine's saved config.json.
+    config.translation_settings.enable_deep_extraction = False
+    config.translation_settings.enable_deep_scan = False
 
     rpy = tmp_path / "complex_script.rpy"
     rpy.write_text("""
