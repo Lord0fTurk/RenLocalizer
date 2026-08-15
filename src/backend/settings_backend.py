@@ -217,6 +217,13 @@ class SettingsBackend:
         self.config.translation_settings.enable_deep_scan = bool(val)
         self._emit("deep_scan")
 
+    def get_enable_stateful_lexer(self) -> bool:
+        return getattr(self.config.translation_settings, "enable_stateful_lexer", False)
+
+    def set_enable_stateful_lexer(self, val: bool) -> None:
+        self.config.translation_settings.enable_stateful_lexer = bool(val)
+        self._emit("stateful_lexer")
+
     # ═══════════════════════════════════════════════════════════════════════════
     #  Engine Selection
     # ═══════════════════════════════════════════════════════════════════════════

@@ -5,6 +5,7 @@ opencode.jsonc
 
 # Session logs
 session-*.md
+.omo/
 
 # Backup files
 *.bak
@@ -27,8 +28,10 @@ env/
 dist/
 build/
 *.spec
+!RenLocalizer.spec
 constraints-release.txt
 *.log
+build_log.txt
 
 # ── IDE & Editor ──────────────────────────────────────────────────────
 .vscode/
@@ -52,6 +55,9 @@ $RECYCLE.BIN/
 # ── User Data ─────────────────────────────────────────────────────────
 config.json
 glossary.json
+RenLocalizer.sh
+RenLocalizerCLI.sh
+run.bat
 
 # ── Development ───────────────────────────────────────────────────────
 # Internal docs (not needed in repo)
@@ -70,6 +76,7 @@ analyze_mommysquest.py
 # Old drafts
 eski_forum.txt
 forum.md
+index.html
 opencode.exe
 
 # Test game files (large binaries)

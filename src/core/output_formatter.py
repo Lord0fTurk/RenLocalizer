@@ -26,6 +26,37 @@ def _preserve_case(src: str, dst: str) -> str:
     return dst
 
 
+def format_renpy_speaker(who: Optional[str]) -> str:
+    """Format character/speaker name for Ren'Py script dialogue.
+    
+    If who is empty, returns empty string.
+    If who is already enclosed in quotes, returns who as-is.
+    If who is a valid Python identifier or dotted identifier (e.g., 'e', 'm', 'Student.npc'),
+    and not a reserved Ren'Py keyword, returns who unquoted.
+    Otherwise (e.g., '???', 'Old Man', '123', 'define'), wraps who in double quotes.
+    """
+    if not who:
+        return ""
+    who_str = str(who).strip()
+    if not who_str:
+        return ""
+    if len(who_str) >= 2 and who_str[0] == who_str[-1] and who_str[0] in ('"', "'"):
+        return who_str
+    renpy_keywords = {
+        'label', 'scene', 'show', 'hide', 'with', 'call', 'jump', 'return',
+        'play', 'stop', 'queue', 'pause', 'pass', 'define', 'default', 'init',
+        'style', 'image', 'transform', 'python', 'if', 'elif', 'else', 'while',
+        'for', 'renpy', 'nvl', 'voice', 'camera', 'window', 'frame', 'screen',
+        'bar', 'vbar', 'viewport', 'add', 'use', 'has', 'on', 'key', 'timer',
+        'input', 'sound', 'music', 'audio'
+    }
+    if who_str.lower() in renpy_keywords:
+        return f'"{who_str}"'
+    if all(part.isidentifier() for part in who_str.split('.')):
+        return who_str
+    return f'"{who_str}"'
+
+
 class RenPyOutputFormatter:
     def apply_glossary(self, text: str, glossary: dict, original_text: str = None) -> str:
         """
@@ -81,28 +112,36 @@ class RenPyOutputFormatter:
         'zoom', 'alpha', 'xalign', 'yalign', 'xpos', 'ypos', 'xanchor', 'yanchor',
         'xzoom', 'yzoom', 'rotate', 'around', 'align', 'pos', 'anchor',
         'rgba', 'rgb', 'hex', 'matrix', 'linear', 'ease', 'easein', 'easeout',
-        # Engine Keywords
+        'xsize', 'ysize', 'xminimum', 'yminimum', 'xmaximum', 'ymaximum',
+        'xfill', 'yfill', 'xoffset', 'yoffset', 'spacing', 'padding', 'margin',
+        'crop', 'corner1', 'corner2', 'subpixel', 'rotate_pad', 'matrixcolor',
+        'blur', 'nearest', 'fit', 'tile', 'xtile', 'ytile', 'events', 'zpos', 'depth',
+        'line_leading', 'line_spacing', 'text_align', 'textalign', 'justify',
+        'kerning', 'hinting', 'antialias', 'adjust_spacing', 'vertical',
+        # Engine Keywords & Screen Language
         'ascii', 'eval', 'exec', 'latin', 'western', 'greedy', 'freetype',
         'narrator', 'fixed', 'grid', 'viewport', 'vpgrid', 'canvas',
-        # Added from Research
         'layeredimage', 'transform', 'camera', 'expression', 'assert',
         'hotspot', 'hotbar', 'areapicker', 'drag', 'draggroup', 'showif',
         'after_load', 'after_warp', 'before_main_menu', 'splashscreen',
-        'config', 'preferences', 'gui', 'persistent',  # style already above
-        # Ren'Py statement keywords (v2.7.3 — crash-causing when translated)
+        'config', 'preferences', 'gui', 'persistent',
         'scene', 'with', 'at', 'behind', 'as', 'onlayer', 'zorder',
         'parallel', 'block', 'contains', 'pause', 'repeat', 'function',
-        # Ren'Py core statement keywords — MUST stay untranslated
         'return', 'screen', 'label', 'menu', 'init', 'call', 'jump',
-        'python', 'define', 'image',
-        # Ren'Py screen language elements — purely technical, never user text
+        'python', 'define', 'image', 'sound', 'music', 'audio', 'voice',
         'textbutton', 'imagebutton', 'mousearea', 'nearrect',
         'hbox', 'vbox', 'vbar', 'transclude', 'testcase',
-        'nvl', 'elif',
-        'kerning', 'line_leading', 'outlines', 'antialias', 'hinting',
-        'vscroller', 'hscroller', 'button',  # viewport, input, ascii already above
+        'nvl', 'elif', 'outlines',
+        'vscroller', 'hscroller', 'button',
         'zsync', 'zsyncmake', 'rpu', 'ecdsa', 'rsa', 'bbcode', 'markdown',
         'utf8', 'latin1',
+        # Built-in Actions & Special Properties
+        'showscreen', 'hidescreen', 'togglescreen', 'setvariable', 'togglevariable',
+        'setscreenvariable', 'togglescreenvariable', 'filesave', 'fileload',
+        'filedelete', 'filepage', 'fileaction', 'filepagenext', 'filepageprevious',
+        'quicksave', 'quickload', 'mainmenu', 'quit', 'openurl', 'nullaction',
+        'selectedif', 'sensitiveif', 'showtransient', 'hidetransient',
+        'group', 'attribute', 'always', 'offer', 'side', 'hstack', 'vstack',
     }
     
     # Pre-compiled regex patterns for performance (class-level caching)
@@ -130,6 +169,7 @@ class RenPyOutputFormatter:
     _FILE_PATH_SLASH_RE = re.compile(r'^[a-zA-Z0-9_/.\-]+$')
     _FILE_PATH_BACKSLASH_RE = re.compile(r'^[a-zA-Z0-9_\\\.\-]+$')
     _ANGLE_PLACEHOLDER_RE = re.compile(r'[\u27e6\u27e7]')  # ⟦placeholder⟧ gibi
+    _ANGLE_AUDIO_CMD_RE = re.compile(r'^\s*<[a-zA-Z0-9_.\s]+>\s*$')  # <silence 0.4>, <from 2.0> gibi
     _QMARK_PLACEHOLDER_RE = re.compile(r'\?[A-Za-z]\d{3}\?')  # ?V000? ?T000? vb.
     # v2.7.3: Python condition pattern — 'var_name' in obj.attr (multi-word support)
     # Now handles: 'reactor activated' in GAME.mc.done (spaces inside quotes)
@@ -445,8 +485,8 @@ class RenPyOutputFormatter:
         if self._KEYVAL_RE.match(text_strip):
             return True
 
-        # Skip angled placeholder markers like ⟦V000⟧
-        if self._ANGLE_PLACEHOLDER_RE.search(text_strip):
+        # Skip angled placeholder markers like ⟦V000⟧ or audio commands like <silence 0.4>
+        if self._ANGLE_PLACEHOLDER_RE.search(text_strip) or self._ANGLE_AUDIO_CMD_RE.match(text_strip):
             return True
 
         # Skip strings that are likely file system patterns or technical globs.
@@ -748,19 +788,20 @@ class RenPyOutputFormatter:
         
         escaped_original = self.escape_renpy_string(original_text)
         escaped_translated = self.escape_renpy_string(translated_text)
+        fmt_char = format_renpy_speaker(character_name)
         
         if mode == "old_new":
             # String-based format - INDIVIDUAL ENTRY (for building larger block)
             block = (
-                f"    old {character_name} \"{escaped_original}\"\n"
-                f"    new {character_name} \"{escaped_translated}\"\n\n"
+                f"    old {fmt_char} \"{escaped_original}\"\n"
+                f"    new {fmt_char} \"{escaped_translated}\"\n\n"
             )
         else:
             # Simple format - original text in comment, direct translation line
             comment_original = escaped_original.replace('\n', '\\n')
             block = (
-                f"    # {character_name} \"{comment_original}\"\n"
-                f"    {character_name} \"{escaped_translated}\"\n\n"
+                f"    # {fmt_char} \"{comment_original}\"\n"
+                f"    {fmt_char} \"{escaped_translated}\"\n\n"
             )
         
         return block
@@ -796,351 +837,3 @@ class RenPyOutputFormatter:
         
         block += "\n"
         return block
-    
-    def format_translation_file(self,
-                              translation_results: List,
-                              language_code: str,
-                              source_file: Path = None,
-                              include_header: bool = True,
-                              output_format: str = "old_new",
-                              glossary: dict = None) -> str:
-        """Format complete translation file with SEPARATE blocks for each translation."""
-        
-        output_lines = []
-        
-        if include_header:
-            header = self.generate_file_header(language_code, source_file)
-            output_lines.append(header)
-        
-        # CRITICAL FIX: Create ONE translate strings block for ALL translations
-        # This is the CORRECT Ren'Py format
-        
-        seen_translations = set()
-        string_translations = []
-        
-        # Add the opening translate strings block
-        string_translations.append(f"translate {language_code} strings:")
-        string_translations.append("")
-        
-        for result in translation_results:
-            if not result.success or not result.translated_text:
-                continue
-
-            original_text = result.original_text
-            translated_text = result.translated_text
-            metadata = getattr(result, 'metadata', {}) or {}
-            ctx_path = metadata.get('context_path') or []
-            if isinstance(ctx_path, str):
-                ctx_path = [ctx_path]
-            file_path = metadata.get('file_path', '')
-            line_number = metadata.get('line_number', 0)
-            translation_id = metadata.get('translation_id') or getattr(result, 'translation_id', None)
-            if not translation_id:
-                translation_id = self.make_hash_id(original_text, ctx_path, file_path, line_number)
-
-            # GLOSSARY uygula (sadece çeviri metnine)
-            if glossary:
-                translated_text = self.apply_glossary(translated_text, glossary, original_text=original_text)
-
-            # CRITICAL: Skip technical content that should not be translated
-            if self._should_skip_translation(original_text):
-                self.logger.debug(f"Skipping technical content: {original_text[:50]}...")
-                continue
-
-            # Avoid duplicates - use translation_id primarily, fallback to text pair
-            key = translation_id or f"{original_text}_{translated_text}"
-            if key in seen_translations:
-                continue
-            seen_translations.add(key)
-
-            text_type = getattr(result, 'text_type', None)
-            
-            # Add source file/line comment for translator reference (if available)
-            source_info = ""
-            if hasattr(result, 'metadata') and result.metadata:
-                file_path = result.metadata.get('file_path', '')
-                line_number = result.metadata.get('line_number', '')
-                if file_path and line_number:
-                    # Extract just filename for cleaner output
-                    import os
-                    filename = os.path.basename(file_path)
-                    source_info = f"    # {filename}:{line_number}\n"
-            
-            # Check if this is a paragraph text (_p() function)
-            is_paragraph = (
-                text_type == 'paragraph' or 
-                '\n\n' in original_text or  # Contains paragraph breaks
-                len(original_text) > 200  # Long text likely from _p()
-            )
-            
-            if is_paragraph:
-                # Use _p() format for paragraph text
-                escaped_original = self._escape_for_old_string(original_text)
-                formatted_translated = self._format_p_function_output(translated_text)
-                
-                if output_format == "old_new":
-                    if source_info:
-                        string_translations.append(source_info.rstrip())
-                    string_translations.append(f"    # id: {translation_id}")
-                    string_translations.append(f'    old "{escaped_original}"')
-                    string_translations.append(f'    new {formatted_translated}')
-                    string_translations.append("")
-                else:
-                    # Simple format - just old/new without meta-comments
-                    string_translations.append(f'    old "{escaped_original}"')
-                    string_translations.append(f'    new {formatted_translated}')
-                    string_translations.append("")
-            else:
-                # Standard string format
-                escaped_original = self.escape_renpy_string(original_text)
-                escaped_translated = self.escape_renpy_string(translated_text)
-                
-                if output_format == "old_new":
-                    if source_info:
-                        string_translations.append(source_info.rstrip())
-                    string_translations.append(f"    # id: {translation_id}")
-                    string_translations.append(f'    old "{escaped_original}"')
-                    string_translations.append(f'    new "{escaped_translated}"')
-                    string_translations.append("")
-                else:
-                    # Simple format - just old/new without meta-comments
-                    string_translations.append(f'    old "{escaped_original}"')
-                    string_translations.append(f'    new "{escaped_translated}"')
-                    string_translations.append("")
-        
-        # Combine header and strings
-        output_lines.extend(string_translations)
-        
-        # Join sections with real newlines
-        return "\n".join(output_lines)
-    
-    def _escape_for_old_string(self, text: str) -> str:
-        """
-        Escape text for use in 'old' string.
-        Ren'Py expects paragraph breaks as literal \\n\\n in old strings.
-        """
-        # Protect Ren'Py variables and tags first
-        variable_pattern = re.compile(r'\[[^\[\]]+\]')
-        tag_pattern = re.compile(r'\{[^{}]*\}')
-        
-        variables = variable_pattern.findall(text)
-        tags = tag_pattern.findall(text)
-        
-        temp_text = text
-        protection_map = {}
-        
-        for i, var in enumerate(variables):
-            placeholder = f"__VAR_{i}__"
-            protection_map[placeholder] = var
-            temp_text = temp_text.replace(var, placeholder, 1)
-        
-        for i, tag in enumerate(tags):
-            placeholder = f"__TAG_{i}__"
-            protection_map[placeholder] = tag
-            temp_text = temp_text.replace(tag, placeholder, 1)
-        
-        # Escape quotes and backslashes
-        temp_text = temp_text.replace('\\', '\\\\')
-        temp_text = temp_text.replace('"', '\\"')
-        
-        # Convert newlines to escaped form for old string
-        temp_text = temp_text.replace('\n', '\\n')
-        
-        # Restore protected content
-        for placeholder, original_content in protection_map.items():
-            temp_text = temp_text.replace(placeholder, original_content)
-        
-        return temp_text
-    
-    def _format_p_function_output(self, text: str) -> str:
-        """
-        Format translated text as _p() function for Ren'Py.
-        Example output:
-        _p(\"\"\"
-            First paragraph line one
-            first paragraph line two.
-
-            Second paragraph.
-            \"\"\")
-        """
-        # Split by paragraph breaks
-        paragraphs = text.split('\n\n')
-        
-        # Format with proper indentation for _p() 
-        lines = ['_p("""']
-        
-        for i, para in enumerate(paragraphs):
-            # Each paragraph on its own line with indentation
-            para_lines = para.split('\n')
-            for line in para_lines:
-                lines.append(f"    {line.strip()}")
-            
-            # Add blank line between paragraphs (except after last)
-            if i < len(paragraphs) - 1:
-                lines.append("")
-        
-        lines.append('    """)')
-        
-        return '\n'.join(lines)
-    
-    def generate_file_header(self, language_code: str, source_file: Path = None) -> str:
-        """Generate file header with metadata."""
-        from datetime import datetime
-        from src.version import VERSION
-        
-        header = f"""# Ren'Py Translation File
-# Language: {language_code}
-# Generated by: RenLocalizer v{VERSION}
-# Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        
-        if source_file:
-            header += f"# Source file: {source_file}\\n"
-        
-        header += """
-# This file contains automatic translations.
-# Please review and edit as needed.
-
-"""
-        return header
-    
-    def save_translation_file(self,
-                            translation_results: List,
-                            output_path: Path,
-                            language_code: str,
-                            source_file: Path = None,
-                            output_format: str = "simple") -> bool:
-        """Save translations to file."""
-        try:
-            # Ensure output directory exists
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Generate content
-            content = self.format_translation_file(
-                translation_results,
-                language_code,
-                source_file,
-                output_format=output_format
-            )
-            
-            # Write file with UTF-8 encoding (with BOM for Windows compatibility)
-            # Using utf-8-sig ensures Ren'Py correctly reads the file on all systems
-            with open(output_path, 'w', encoding='utf-8-sig', newline='\n') as f:
-                f.write(content)
-            
-            self.logger.info(f"Saved translation file: {output_path}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error saving translation file {output_path}: {e}")
-            return False
-    
-    def organize_output_files(self,
-                            translation_results: List,
-                            output_base_dir: Path,
-                            language_code: str,
-                            source_files: List[Path] = None,
-                            output_format: str = "old_new",
-                            create_renpy_structure: bool = True) -> List[Path]:
-        """Organize translations into language-specific directories."""
-        
-        output_files = []
-        
-        # Determine if this is a Ren'Py project and create proper structure
-        if create_renpy_structure:
-            # Check if we're in a Ren'Py project (has game folder)
-            game_dir = self._find_game_directory(output_base_dir)
-            if game_dir:
-                # Create Ren'Py translation structure: game/tl/[language]/
-                lang_dir = game_dir / "tl" / language_code
-                self.logger.info(f"Creating Ren'Py translation structure: {lang_dir}")
-                
-                # Create language initialization file for Ren'Py - do it immediately
-                self._create_language_init_file(game_dir, language_code)
-            else:
-                # Not a Ren'Py project, create standard structure
-                lang_dir = output_base_dir / language_code
-                self.logger.info(f"Creating standard translation structure: {lang_dir}")
-        else:
-            # Create language directory
-            lang_dir = output_base_dir / language_code
-        
-        lang_dir.mkdir(parents=True, exist_ok=True)
-        
-        # CRITICAL FIX: Create ONE translation file for all strings
-        # This prevents duplicate string errors in Ren'Py
-        
-        # Global deduplication - remove EXACT duplicates only
-        # NOTE: Case-sensitive! "Cafeteria" and "cafeteria" are DIFFERENT strings in Ren'Py
-        seen_strings = set()
-        unique_results = []
-        
-        for result in translation_results:
-            # Case-sensitive key - Ren'Py treats "Cafeteria" and "cafeteria" as different strings
-            string_key = result.original_text.strip()
-            if string_key not in seen_strings:
-                seen_strings.add(string_key)
-                unique_results.append(result)
-            else:
-                self.logger.debug(f"Skipping duplicate string: {result.original_text[:50]}...")
-        
-        # Create single master translation file
-        # Use 'strings.rpy' for Ren'Py compatibility (same as _run_translate_command)
-        output_filename = f"strings.rpy"
-        output_path = lang_dir / output_filename
-        
-        if self.save_translation_file(
-            unique_results, 
-            output_path, 
-            language_code, 
-            None,  # No specific source file
-            output_format=output_format
-        ):
-            output_files.append(output_path)
-            self.logger.info(f"Created master translation file: {output_path} with {len(unique_results)} unique strings")
-        
-        return output_files
-    
-    def _find_game_directory(self, base_path: Path) -> Path:
-        """Find the game directory in a Ren'Py project."""
-        # Check current directory and parent directories for 'game' folder
-        current = Path(base_path).resolve()
-        
-        # Check if current path contains 'game' folder
-        if (current / "game").exists() and (current / "game").is_dir():
-            return current / "game"
-        
-        # Check parent directories
-        for parent in current.parents:
-            game_dir = parent / "game"
-            if game_dir.exists() and game_dir.is_dir():
-                # Verify it's a Ren'Py game directory by checking for common files
-                if any((game_dir / file).exists() for file in ["options.rpy", "script.rpy", "gui.rpy"]):
-                    return game_dir
-        
-        # Check if current directory itself is the game directory
-        if any((current / file).exists() for file in ["options.rpy", "script.rpy", "gui.rpy"]):
-            return current
-        
-        return None
-    
-    def _create_language_init_file(self, game_dir: Path, language_code: str):
-        """RenPy dökümantasyonuna tam uyumlu, akıllı başlatıcı dosya üretimi."""
-        try:
-            init_file_path = game_dir / f"zzz_{language_code}_language.rpy"
-            content = (
-                f"# Auto-generated language initializer by RenLocalizer\n"
-                f"init 1500 python:\n"
-                f"    # Ensure the game switches to this language upon first install or change\n"
-                f"    # Using late init (1500) to overwrite other scripts safely\n"
-                f"    if getattr(persistent, 'renlocalizer_target_lang', None) != \"{language_code}\":\n"
-                f"        persistent.renlocalizer_target_lang = \"{language_code}\"\n"
-                f"        _preferences.language = \"{language_code}\"\n"
-                f"\n"
-                f"define config.default_language = \"{language_code}\"\n"
-            )
-            with open(init_file_path, 'w', encoding='utf-8-sig', newline='\n') as f:
-                f.write(content)
-            self.logger.info(f"Created smart language file: {init_file_path}")
-        except Exception as e:
-            self.logger.error(f"Error creating language init file: {e}")
