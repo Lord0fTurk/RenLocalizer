@@ -1053,7 +1053,11 @@ class RenPyParser:
                             if not self._deep_var_analyzer.is_likely_translatable(var_name):
                                 continue
                     ctx = token.context_path or []
-                    key = (text_value, token.character or '', tuple(ctx))
+                    character = (token.character or '').strip()
+                    if len(character) >= 2 and character[0] == character[-1] and character[0] in ('"', "'"):
+                        character = character[1:-1]
+                    canonical_text = self._safe_unescape(text_value)
+                    key = (canonical_text, character, tuple(ctx))
                     if key not in seen_texts:
                         entry = self._record_entry(
                             text=text_value,
@@ -1062,7 +1066,7 @@ class RenPyParser:
                             context_line=token.raw_line,
                             text_type=token.text_type or 'dialogue',
                             context_path=list(ctx),
-                            character=token.character or '',
+                            character=character,
                             file_path=str(file_path),
                         )
                         if entry:
@@ -2595,22 +2599,33 @@ class RenPyParser:
 
     @staticmethod
     def _safe_unescape(s: str) -> str:
-        """Safely unescape standard Ren'Py/Python string escapes without corrupting non-ASCII.
-        
-        Unlike codecs.decode('unicode_escape'), this handles only standard escapes
-        (\\n, \\t, \\\", \\', \\\\) and preserves non-ASCII text (Cyrillic, CJK, Turkish, etc.)
-        intact. Uses single-pass regex to avoid ordering issues with backslash sequences.
+        """Mirror Ren'Py's lexer ``dequote`` (lexer.py:978-1003) for string escapes.
+
+        Used both for canonical dedup keys AND for the ``text`` field sent to
+        translation engines (via ``_extract_string_content``), so both match the
+        player-visible text Ren'Py produces. ``raw_text`` keeps the source literal
+        intact for reconstruction.
         """
         import re as _re
-        _ESCAPE_MAP = {
-            '\\n': '\n', '\\t': '\t', '\\\\': '\\',
-            '\\"': '"', "\\\'" : "'",
-            '\\r': '\r', '\\a': '\a', '\\b': '\b',
-            '\\f': '\f', '\\v': '\v',
-        }
-        def _replace(m):
-            return _ESCAPE_MAP.get(m.group(0), m.group(0))
-        return _re.sub(r'\\[nt\\"\'\'rabfv]', _replace, s)
+
+        def _dequote(m):
+            c = m.group(1)
+            if c == "{":
+                return "{{"
+            if c == "[":
+                return "[["
+            if c == "%":
+                return "%%"
+            if c == "n":
+                return "\n"
+            if c[0] == "u":
+                hex_digits = m.group(2)
+                if hex_digits:
+                    return chr(int(hex_digits, 16))
+                return ""
+            return c
+
+        return _re.sub(r"\\(u([0-9a-fA-F]{1,4})|.)", _dequote, s)
 
     def _extract_string_content(self, quoted_string: str) -> str:
         if not quoted_string:

@@ -544,6 +544,7 @@
   "parallel_batch_label": "درخواست‌های دسته‌ای موازی",
   "parallel_batch_desc": "بسته‌های ترجمه را به‌صورت همزمان ارسال می‌کند و سرعت را ۸ تا ۱۶ برابر افزایش می‌دهد. برای ترجمه‌های سریع توصیه می‌شود؛ در صورت محدودیت نرخ، آن را غیرفعال کنید.",
   "pipeline_logs": {
+    "ai_batch_json_parse_failed": "هوش مصنوعی پاسخ دسته‌ای نادرستی برگرداند؛ به ترجمه تکی تغییر می‌کند.",
     "rpymc_entry_count": "[DEBUG] تعداد مقادیر .rpymc: {count}",
     "unren_needed": "نیاز به UnRen: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "پوشه زبان دیگر نادیده گرفته شد: {path}",

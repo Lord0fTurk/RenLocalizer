@@ -5,6 +5,8 @@
 
 > **Non-Identifier Speaker Formatting, Stateful Lexer, Hy-MT2 Profile, Settings Persistence & Factory Reset**
 
+> **🔧 Ren'Py Escape Canonicalization Fix:** Rewrote `_safe_unescape` to mirror Ren'Py's lexer `dequote` (lexer.py:978-1003) exactly, since it had used a mismatched Python-style escape dialect for canonical dedup keys. Interpolation brackets are now doubled (`\{`→`{{`, `\[`→`[[`, `\%`→`%%`), `\uXXXX` is expanded and `\u` without hex digits is deleted, and any other escape strips its backslash (`\t`→`t`, `\r`→`r`) instead of decoding control characters. Added `TestUnescapeMatchesRenPyDequote` (7 tests); all 1017 tests pass.
+
 > **🗣️ Ren'Py String Speaker Formatting Fix:** Added `format_renpy_speaker()` helper in `output_formatter.py` to prevent Ren'Py `expected statement` syntax crashes caused by non-identifier string speakers (e.g. `???`, `Old Man`, `123`).
 > - **Speaker Identifier Guard:** Validates speaker names using Python identifier rules (`isidentifier()` for single and dotted attributes like `Student.npc`). Valid Python identifiers (`e`, `m`, `Student.npc`) remain unquoted character objects. Non-identifier string literal speakers (`???`, `Old Man`) and quoted strings are automatically formatted in double quotes (`"???"`, `"Old Man"`).
 > - **Pipeline Integration:** Updated `output_formatter.py` (`generate_character_translation`) and `src/core/pipeline/extraction.py` (`generate_tl_structure`) to route all dialogue speaker output through `format_renpy_speaker()`.
@@ -14,7 +16,13 @@
 > - **State Machine Lexer:** Tracks line-by-line states (`NORMAL`, `IN_PYTHON_BLOCK`, multiline triple-quotes `"""`, escape sequences `\"`, indentation levels, speaker quotes, UI keywords, and menu choices).
 > - **Zero-Risk Feature Toggle:** Exposed `enable_stateful_lexer: bool = False` (disabled by default) in `TranslationSettings` (`config.py`), `SettingsBackend`, `AppBackend`, and added a dedicated UI switch card in `Main.qml`.
 > - **Fail-Safe Fallback Guard:** Integrated in `src/core/parser.py` with try/except exception handling. If the lexer encounters any uncaught exception on non-standard developer code, it gracefully falls back to the standard regex parser.
-> - **Test Suite:** Added `tests/test_speaker_formatting.py`, `tests/test_renpy_lexer.py`, and `tests/test_v2812_features.py` covering valid identifiers, dotted attributes, non-identifiers, quoted speakers, end-to-end pipeline structure, and fallback recovery. All 1005 tests passing cleanly.
+> - **Test Suite:** Added `tests/test_speaker_formatting.py`, `tests/test_renpy_lexer.py`, and `tests/test_v2812_features.py` covering valid identifiers, dotted attributes, non-identifiers, quoted speakers, end-to-end pipeline structure, and fallback recovery. All 1010 tests passing cleanly.
+
+> **🔧 Stateful Lexer Maturation (Corpus-Driven Fixes):** Hardened `RenPyLexer` against real-game syntax after comparing it against three full Ren'Py games via a new read-only shadow harness.
+> - **Shadow Comparison Harness:** Added `scripts/compare_lexers.py` to diff Regex vs Stateful extraction (text / character / text_type / context / duplicate) without changing production output.
+> - **Python Block Continuation Fix:** Multi-line `from ... import (...)` statements with the closing `)` at column 0 no longer end the Python block early — previously leaked docstrings, `raise` strings and parameter names as dialogue.
+> - **Screen/UI Extraction Fix:** UI statements now extract their own text instead of action arguments (`textbutton "Settings" action ShowMenu("preferences")` yields "Settings", not "preferences"); screen-code keywords (`properties`, `action`, `hovered`, …) are skipped.
+> - **Canonical Dedup Key:** Lexer dedup key now strips speaker quotes and unescapes text to match the regex parser, eliminating duplicate quoted-speaker entries.
 
 > **🎯 Hy-MT Model Profile:** Added a dedicated optimization profile for the Tencent Hy-MT / Hunyuan-MT translation model family (Hy-MT1.5/2, 1.8B / 7B / 30B-A3B, GGUF via LM Studio, Ollama or llama.cpp) in `src/core/ai_translator.py`.
 > - **Auto-detection:** `detect_model_profile()` recognizes Hy-MT model names (e.g. `tencent/Hy-MT2-7B-GGUF`, `hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M`) and activates the profile automatically; other models (llama, gpt, qwen2-mt, …) are unaffected.

@@ -544,6 +544,7 @@
   "parallel_batch_label": "Параллельные пакетные запросы",
   "parallel_batch_desc": "Отправляет пакеты перевода одновременно для ускорения в 8–16 раз. Рекомендуется для быстрых переводов; отключите при ограничении частоты.",
   "pipeline_logs": {
+    "ai_batch_json_parse_failed": "ИИ вернул некорректный пакетный ответ; переход к поштучному переводу.",
     "rpymc_entry_count": "[DEBUG] Количество записей .rpymc: {count}",
     "unren_needed": "Требуется UnRen: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Папка другого языка пропущена: {path}",

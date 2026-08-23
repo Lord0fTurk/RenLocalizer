@@ -542,6 +542,7 @@
   "lite_clear_cache_btn": "Vider la mémoire de traduction (TM)",
   "parallel_batch_label": "Requêtes par lots parallèles",
   "pipeline_logs": {
+    "ai_batch_json_parse_failed": "L'IA a renvoyé une réponse par lots mal formée ; bascule en traduction individuelle.",
     "rpymc_entry_count": "[DEBUG] Nombre d'entrées .rpymc : {count}",
     "unren_needed": "UnRen requis : rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Autre dossier de langue ignoré : {path}",

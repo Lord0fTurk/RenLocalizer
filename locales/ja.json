@@ -567,6 +567,7 @@
   "parallel_batch_label": "並列バッチリクエスト",
   "parallel_batch_desc": "翻訳バッチを同時に送信し、8〜16倍の速度向上を実現します。高速翻訳に推奨。レート制限がある場合は無効にしてください。",
   "pipeline_logs": {
+    "ai_batch_json_parse_failed": "AIが不正なバッチ応答を返しました。個別翻訳にフォールバックします。",
     "rpymc_entry_count": "[RPYMC] .rpymcエントリ数：{count}",
     "unren_needed": "UnRen必要：rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "他言語フォルダをスキップ：{path}",

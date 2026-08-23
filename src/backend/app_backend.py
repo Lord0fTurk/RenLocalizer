@@ -1258,20 +1258,29 @@ class AppBackend(QObject):
                     continue
 
                 # Batch translate
-                texts = [e.original_text for e in untranslated_entries]
-                try:
-                    results = google.translate_batch(
-                        texts,
+                from src.core.translator import (
+                    TranslationEngine,
+                    TranslationRequest,
+                )
+
+                requests = [
+                    TranslationRequest(
+                        text=e.original_text,
                         source_lang="auto",
                         target_lang=lang,
+                        engine=TranslationEngine.GOOGLE,
                     )
+                    for e in untranslated_entries
+                ]
+                try:
+                    results = self._run_translate_batch_sync(google, requests)
                 except Exception as exc:
                     self.logMessage.emit(
                         "warning",
                         f"⚠️ Translation error ({os.path.basename(tl_file.file_path)}): {exc}",
                     )
-                    total_failed += len(texts)
-                    processed += len(texts)
+                    total_failed += len(untranslated_entries)
+                    processed += len(untranslated_entries)
                     self.progressChanged.emit(
                         processed,
                         untranslated,
@@ -1294,7 +1303,7 @@ class AppBackend(QObject):
                     else:
                         total_skipped += 1
 
-                processed += len(texts)
+                processed += len(untranslated_entries)
                 self.progressChanged.emit(
                     processed,
                     untranslated,
@@ -1715,6 +1724,28 @@ class AppBackend(QObject):
             target=self._translate_empty_glossary_thread, daemon=True
         ).start()
 
+    def _run_translate_batch_sync(self, translator, requests):
+        """Run an async ``translate_batch`` from a worker thread.
+
+        Creates a dedicated event loop and drops any aiohttp session bound to a
+        previous (now-dead) loop, then closes the session afterwards. Without
+        this, calling ``translate_batch`` synchronously returns a coroutine, and
+        reusing a stale session raises 'Event loop is closed'.
+        """
+        import asyncio
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(translator.close())
+            return loop.run_until_complete(translator.translate_batch(requests))
+        finally:
+            try:
+                loop.run_until_complete(translator.close())
+            except Exception:
+                pass
+            loop.close()
+
     def _translate_empty_glossary_thread(self) -> None:
         try:
             if not hasattr(self.config, "glossary"):
@@ -1729,20 +1760,32 @@ class AppBackend(QObject):
             self.logMessage.emit(
                 "info", f"🌐 Translating {len(empty_keys)} empty terms via Google..."
             )
-            from src.core.translator import GoogleTranslator
+            from src.core.translator import (
+                GoogleTranslator,
+                TranslationEngine,
+                TranslationRequest,
+            )
 
             translator = GoogleTranslator(self.config)
             count = 0
             for key in empty_keys:
                 try:
-                    batch_result = translator.translate_batch([key], "en", "tr")
-                    if batch_result and batch_result[0]:
-                        translated = batch_result[0][0]
+                    request = TranslationRequest(
+                        text=key,
+                        source_lang="en",
+                        target_lang="tr",
+                        engine=TranslationEngine.GOOGLE,
+                    )
+                    results = self._run_translate_batch_sync(translator, [request])
+                    if results:
+                        translated = results[0].translated_text
                         if translated and translated != key:
                             self.config.glossary[key] = translated
                             count += 1
                 except Exception:
-                    self.logger.warning("Failed to import glossary entry for key=%r", key)
+                    self.logger.warning(
+                        "Failed to translate glossary entry for key=%r", key
+                    )
                 if count % 10 == 0 and count > 0:
                     self.logMessage.emit(
                         "info", f"🌐 Translated: {count}/{len(empty_keys)}"

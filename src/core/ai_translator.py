@@ -15,6 +15,7 @@ All engines share a common base that handles:
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import re
 import xml.etree.ElementTree as ET
@@ -40,6 +41,8 @@ from src.utils.constants import (
     AI_MAX_RETRIES,
     AI_LOCAL_URL,
 )
+
+logger = logging.getLogger(__name__)
 
 # ── Optional dependency guard ─────────────────────────────────────────────────
 try:
@@ -216,8 +219,12 @@ def _parse_json_batch(json_text: str, count: int) -> List[Optional[str]]:
             val = item.get("translated_text")
             if idx is not None and val is not None:
                 results[int(idx)] = val
-    except Exception:
-        pass
+    except Exception as exc:
+        preview = (json_text or "").strip().replace("\n", " ")[:200]
+        logger.warning(
+            "Failed to parse AI JSON batch response (%s): %s | preview=%r",
+            type(exc).__name__, exc, preview,
+        )
     return results
 
 
@@ -1021,6 +1028,15 @@ class AsyncBaseAITranslator(BaseTranslator):
 
             # Fallback to XML if JSON parsing yielded nothing
             if all(x is None for x in parsed):
+                cfg = self.config_manager
+                if cfg is not None:
+                    self.emit_log(
+                        "warning",
+                        cfg.get_log_text(
+                            "ai_batch_json_parse_failed",
+                            "AI returned a malformed batch response; falling back to individual translation.",
+                        ),
+                    )
                 parsed = _parse_xml_batch(response, len(chunk))
 
             for i, (orig_idx, req) in enumerate(chunk):

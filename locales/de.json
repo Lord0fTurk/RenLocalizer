@@ -543,6 +543,7 @@
   "parallel_batch_label": "Parallele Batch-Anfragen",
   "settings_section_perf": "Leistungs- & Verbindungsparameter",
   "pipeline_logs": {
+    "ai_batch_json_parse_failed": "Die KI hat eine fehlerhafte Stapelantwort zurückgegeben; Fallback auf Einzelübersetzung.",
     "rpymc_entry_count": "[DEBUG] .rpymc Eintrag-Anzahl: {count}",
     "unren_needed": "UnRen benötigt: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Anderer Sprachordner übersprungen: {path}",

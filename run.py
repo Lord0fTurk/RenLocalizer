@@ -88,12 +88,10 @@ os.chdir(WORK_DIR)
 sys.path.insert(0, str(WORK_DIR))
 
 # ── Sürüm ─────────────────────────────────────────────────────────────────
-VERSION = "2.8.11"
 try:
-    from src.version import VERSION as _v
-    VERSION = f"{_v}"
+    from src.version import VERSION
 except ImportError:
-    pass
+    VERSION = "0.0.0"
 
 # ── Asset yolu çözücü ─────────────────────────────────────────────────────
 def resolve_asset(path: str | Path) -> Path:

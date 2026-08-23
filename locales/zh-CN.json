@@ -544,6 +544,7 @@
   "parallel_batch_label": "并行批量请求",
   "parallel_batch_desc": "同时发送翻译批次，速度提升 8-16 倍。推荐用于快速翻译；若遇到限流请关闭。",
   "pipeline_logs": {
+    "ai_batch_json_parse_failed": "AI 返回了格式错误的批量响应；回退到逐条翻译。",
     "rpymc_entry_count": "[DEBUG] .rpymc 条目数：{count}",
     "unren_needed": "需要 UnRen：rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "已跳过其他语言文件夹：{path}",

@@ -569,6 +569,7 @@
   "lite_cache_title": "Çeviri Belleği (TM Cache) Kullan",
   "lite_clear_cache_btn": "Çeviri Belleğini (TM) Temizle",
   "pipeline_logs": {
+    "ai_batch_json_parse_failed": "AI geçersiz bir toplu yanıt döndürdü; tek tek çeviriye geçiliyor.",
     "rpymc_entry_count": "[DEBUG] .rpymc giriş sayısı: {count}",
     "unren_needed": "UnRen gerekli: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Başka dil klasörü atlandı: {path}",

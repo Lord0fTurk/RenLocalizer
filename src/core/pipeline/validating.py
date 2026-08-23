@@ -107,7 +107,8 @@ def needs_re_extraction(game_dir: str, tl_dir: str, config, log_emit, rpyc_enabl
                 if payload.get('signature') != expected_sig:
                     log_emit('info', 'RPYC extraction signature outdated. Forcing one-time re-extraction to refresh coverage.')
                     return True
-            except Exception:
+            except Exception as e:
+                log_emit('info', f'RPYC extraction signature unreadable ({e}); forcing re-extraction to refresh coverage.')
                 return True
 
         tl_mtime = 0

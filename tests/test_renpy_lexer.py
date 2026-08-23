@@ -106,3 +106,79 @@ label start:
     assert "play" not in characters
     assert "default" not in characters
 
+
+def test_renpy_lexer_keeps_python_block_across_multiline_import():
+    content = '''init -100 python in _helper:
+    import store
+    from store import (
+    NoRollback,
+    Fixed,
+    Solid
+)
+
+    class _Glitch:
+        __author__ = "Vladya"
+
+        def __init__(self):
+            """Technical docstring"""
+            return None
+
+    setattr(store, "Glitch", _Glitch)
+'''
+    lexer = RenPyLexer()
+    tokens = lexer.tokenize(content, "script.rpy")
+    texts = [token.text for token in tokens]
+
+    assert "Vladya" not in texts
+    assert "Technical docstring" not in texts
+    assert "Glitch" not in texts
+    assert "NoRollback" not in texts
+
+
+def test_renpy_lexer_ui_statement_extracts_text_not_action():
+    content = '''
+screen preferences:
+    textbutton "Settings" action ShowMenu("preferences")
+'''
+    lexer = RenPyLexer()
+    tokens = lexer.tokenize(content, "screens.rpy")
+    texts = [token.text for token in tokens]
+    types = [token.text_type for token in tokens]
+
+    assert "Settings" in texts
+    assert "preferences" not in texts
+    assert "button" in types
+
+
+def test_renpy_lexer_skips_screen_style_properties():
+    content = '''
+style button:
+    properties gui.button_properties("button")
+    hover_underline True
+'''
+    lexer = RenPyLexer()
+    tokens = lexer.tokenize(content, "screens.rpy")
+    texts = [token.text for token in tokens]
+
+    assert "button" not in texts
+
+
+def test_parser_dedups_quoted_speaker_between_lexer_and_regex(tmp_path):
+    config = ConfigManager()
+    config.translation_settings.enable_stateful_lexer = True
+    config.translation_settings.enable_deep_extraction = False
+    config.translation_settings.enable_deep_scan = False
+
+    rpy = tmp_path / "script.rpy"
+    rpy.write_text(
+        'label start:\n'
+        '    "???" "Who goes there?"\n',
+        encoding="utf-8",
+    )
+
+    parser = RenPyParser(config_manager=config)
+    entries = parser.extract_text_entries(rpy)
+    texts = [entry["text"] for entry in entries]
+
+    assert texts.count("Who goes there?") == 1
+

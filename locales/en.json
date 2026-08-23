@@ -575,6 +575,7 @@
   "lite_cache_title": "Use Translation Memory (TM Cache)",
   "lite_clear_cache_btn": "Clear Translation Memory (TM)",
   "pipeline_logs": {
+    "ai_batch_json_parse_failed": "AI returned a malformed batch response; falling back to individual translation.",
     "rpymc_entry_count": "[DEBUG] .rpymc entry count: {count}",
     "unren_needed": "UnRen needed: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Other language folder skipped: {path}",

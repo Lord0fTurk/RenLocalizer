@@ -267,3 +267,40 @@ class TestLanguageNormalization(unittest.TestCase):
         self.assertEqual(cm.normalize_renpy_language_code('es'), 'spanish')
         self.assertEqual(cm.normalize_renpy_language_code('zh-CN'), 'chinese_s')
         self.assertEqual(cm.normalize_renpy_language_code('turkish'), 'turkish')
+
+
+class TestUnescapeMatchesRenPyDequote(unittest.TestCase):
+    def test_interpolation_brackets_are_doubled(self):
+        self.assertEqual(RenPyParser._safe_unescape(r'a\{b'), 'a{{b')
+        self.assertEqual(RenPyParser._safe_unescape(r'a\[b'), 'a[[b')
+        self.assertEqual(RenPyParser._safe_unescape(r'a\%b'), 'a%%b')
+
+    def test_newline_is_expanded(self):
+        self.assertEqual(RenPyParser._safe_unescape(r'a\nb'), 'a\nb')
+
+    def test_unicode_escape_1_to_4_hex(self):
+        self.assertEqual(RenPyParser._safe_unescape(r'\u00e9'), 'é')
+        self.assertEqual(RenPyParser._safe_unescape(r'\ub'), chr(0xb))
+        self.assertEqual(RenPyParser._safe_unescape(r'a\u0041b'), 'aAb')
+
+    def test_unicode_escape_without_hex_is_deleted(self):
+        self.assertEqual(RenPyParser._safe_unescape(r'a\uz'), 'az')
+        self.assertEqual(RenPyParser._safe_unescape(r'a\u'), 'a')
+
+    def test_other_escapes_strip_backslash(self):
+        # dequote drops the backslash: \t -> 't' (not a tab), \r -> 'r' (not CR).
+        self.assertEqual(RenPyParser._safe_unescape(r'a\tb'), 'atb')
+        self.assertEqual(RenPyParser._safe_unescape(r'a\rb'), 'arb')
+        self.assertEqual(RenPyParser._safe_unescape(r'a\ab'), 'aab')
+        self.assertEqual(RenPyParser._safe_unescape(r'a\bb'), 'abb')
+        self.assertEqual(RenPyParser._safe_unescape(r'a\fb'), 'afb')
+        self.assertEqual(RenPyParser._safe_unescape(r'a\vb'), 'avb')
+
+    def test_quote_and_backslash_escapes(self):
+        self.assertEqual(RenPyParser._safe_unescape(r'\\'), '\\')
+        self.assertEqual(RenPyParser._safe_unescape(r'\"'), '"')
+        self.assertEqual(RenPyParser._safe_unescape(r"\'"), "'")
+
+    def test_non_ascii_is_preserved(self):
+        self.assertEqual(RenPyParser._safe_unescape('Türkçe — test'), 'Türkçe — test')
+        self.assertEqual(RenPyParser._safe_unescape('Привет 世界'), 'Привет 世界')

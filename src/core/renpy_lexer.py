@@ -15,6 +15,29 @@ import re
 from src.core.output_formatter import format_renpy_speaker
 
 
+def _bracket_delta(line: str) -> int:
+    delta = 0
+    quote = None
+    escaped = False
+    for char in line:
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in ('"', "'"):
+            quote = char
+        elif char == "#":
+            break
+        elif char in "([{":
+            delta += 1
+        elif char in ")]}":
+            delta -= 1
+    return delta
+
+
 @dataclass
 class LexerToken:
     """Represents an extracted translatable token from the Ren'Py lexer."""
@@ -39,7 +62,10 @@ class RenPyLexer:
         'onlayer', 'zorder', 'parallel', 'block', 'contains', 'repeat', 'function',
         'layeredimage', 'group', 'attribute', 'auto', 'always', 'offer', 'side',
         'vpgrid', 'grid', 'fixed', 'hstack', 'vstack', 'drag', 'draggroup',
-        'hotspot', 'hotbar', 'dismiss', 'transclude', 'testcase', 'menu'
+        'hotspot', 'hotbar', 'dismiss', 'transclude', 'testcase', 'menu',
+        'properties', 'action', 'hovered', 'unhovered', 'selected',
+        'selected_idle', 'selected_hover', 'selected_insensitive', 'insensitive',
+        'alternate', 'activate_sound', 'hover_sound', 'focus'
     }
 
     UI_KEYWORDS = {
@@ -59,6 +85,7 @@ class RenPyLexer:
         self.current_label: Optional[str] = None
         self.in_python_block: bool = False
         self.python_indent: int = 0
+        self._bracket_depth: int = 0
 
     def tokenize(self, content: str, file_path: str = "") -> List[LexerToken]:
         """Tokenize .rpy script content into translatable LexerTokens."""
@@ -103,9 +130,13 @@ class RenPyLexer:
 
             # Python block state tracking
             if self.in_python_block:
-                if indent <= self.python_indent and stripped and not stripped.startswith('#'):
-                    self.in_python_block = False
-                else:
+                depth_before = self._bracket_depth
+                self._bracket_depth += _bracket_delta(line)
+                if indent > self.python_indent or depth_before > 0 or self._bracket_depth > 0:
+                    continue
+                self._bracket_depth = 0
+                self.in_python_block = False
+                if stripped.startswith('#'):
                     continue
 
             # Skip pure comments
@@ -120,6 +151,7 @@ class RenPyLexer:
             if stripped.startswith(('python:', 'init python:', 'python early:', 'init -', 'init python')):
                 self.in_python_block = True
                 self.python_indent = indent
+                self._bracket_depth = 0
                 continue
 
             # Check label definition
@@ -197,6 +229,18 @@ class RenPyLexer:
                 return None
             if '=' in prefix and first_word in ('define', 'default', 'let', 'var', 'set'):
                 return None
+            if first_word in self.UI_KEYWORDS:
+                body = quotes[0][1:-1]
+                if not body.strip():
+                    return None
+                return LexerToken(
+                    text_type=self.UI_KEYWORDS[first_word],
+                    text=body,
+                    character="",
+                    line_number=line_num,
+                    raw_line=line,
+                    context_path=context_path,
+                )
 
         if len(quotes) >= 2:
             # Two quoted strings: e.g. "???" "Who goes there?"

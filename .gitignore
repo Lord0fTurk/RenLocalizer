@@ -86,3 +86,8 @@ temp/
 # ── Docs (external) ──────────────────────────────────────────────────
 # Old version backup — kept for reference
 # Old-Version/ is intentionally tracked
+
+# ── Ren'Py SDK reference (not part of the project) ───────────────────
+# Full Ren'Py engine source + sample games, kept locally for lexer/parser
+# reference. 87 MB + copyrighted assets — never commit.
+renpy/
