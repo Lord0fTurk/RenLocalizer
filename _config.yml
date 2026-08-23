@@ -1,0 +1,24 @@
+# Jekyll configuration for GitHub Pages
+# Prevents Liquid syntax errors from technical markdown files
+
+exclude:
+  - CHANGELOG.md
+  - AGENTS.md
+  - BUILD.md
+  - CONTRIBUTING.md
+  - CODE_OF_CONDUCT.md
+  - requirements.txt
+  - requirements-dev.txt
+  - tox.ini
+  - "*.spec"
+  - "*.bat"
+  - "*.sh"
+  - src/
+  - tests/
+  - scripts/
+  - build/
+  - Old-Version/
+  - TestOyun/
+  - locales/
+  - examples/
+  - docs/
