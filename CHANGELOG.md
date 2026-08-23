@@ -1,4 +1,8 @@
 
+---
+render_with_liquid: false
+---
+
 # RenLocalizer Changelog
 
 #### [2.8.12] - 2026-08-15
