@@ -185,6 +185,35 @@ coll_cli = COLLECT(
 )
 
 # =========================================================
+# macOS: BUNDLE → produces RenLocalizer.app via PyInstaller
+# Only active on macOS; on other platforms this block is skipped.
+# This is the correct way to create an .app bundle — manual
+# post-processing causes "Failed to load Python shared library"
+# because the bootloader detects the .app path and expects
+# Contents/Frameworks/Python which only PyInstaller's own
+# bundle step sets up properly.
+# =========================================================
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        coll,
+        name='RenLocalizer.app',
+        icon=os.path.join(project_dir, 'icon.png'),
+        bundle_identifier='com.lord0fturk.renlocalizer',
+        version=open(os.path.join(project_dir, 'src', 'version.py')).read().split('"')[1]
+            if os.path.exists(os.path.join(project_dir, 'src', 'version.py')) else '1.0',
+        info_plist={
+            'CFBundleName': 'RenLocalizer',
+            'CFBundleDisplayName': 'RenLocalizer',
+            'CFBundleShortVersionString': open(os.path.join(project_dir, 'src', 'version.py')).read().split('"')[1]
+                if os.path.exists(os.path.join(project_dir, 'src', 'version.py')) else '1.0',
+            'NSHighResolutionCapable': True,
+            'NSRequiresAquaSystemAppearance': False,
+            'LSMinimumSystemVersion': '11.0',
+            'LSApplicationCategoryType': 'public.app-category.utilities',
+        },
+    )
+
+# =========================================================
 # Post-build: Copy CLI binary into main GUI distribution folder
 # =========================================================
 import shutil
