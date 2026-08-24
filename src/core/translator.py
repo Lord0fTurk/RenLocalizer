@@ -27,10 +27,15 @@ from .syntax_guard import (
 
 from src.core.constants import (
     GOOGLE_ENDPOINTS,
+    GOOGLE_BROWSER_HEADERS,
+    GOOGLE_CLIENTS5_ENDPOINT,
     LINGVA_INSTANCES,
     USER_AGENTS,
     MIRROR_MAX_FAILURES,
     MIRROR_BAN_TIME,
+    RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD,
+    RATE_LIMIT_LONG_COOLDOWN,
+    RATE_LIMIT_PRIMARY_PROBE_INTERVAL,
 )
 from src.core.exceptions import (
     RateLimitError,
@@ -285,6 +290,41 @@ class GoogleTranslator(BaseTranslator):
         """
         return not any("/translate_a/single" in ep for ep in self.google_endpoints)
 
+    def _compute_global_cooldown(self) -> float:
+        """Shared 429 backoff for the single/batch paths (Google throttles by
+        IP, so all mirrors share one cooldown clock). Escalates exponentially
+        up to 60s; at RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD consecutive 429s the
+        IP is treated as flagged and requests pause for RATE_LIMIT_LONG_COOLDOWN.
+        """
+        if self._consecutive_429_count >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD:
+            return float(RATE_LIMIT_LONG_COOLDOWN)
+        return min(3.0 * (2 ** (self._consecutive_429_count - 1)), 60.0)
+
+    def _apply_global_cooldown(self) -> float:
+        """Increment the 429 counter, set the shared cooldown, and announce the
+        circuit breaker once per episode (arming the primary-probe window so
+        primaries stay silent until RATE_LIMIT_PRIMARY_PROBE_INTERVAL has
+        passed). Returns the cooldown seconds."""
+        self._consecutive_429_count += 1
+        global_wait = self._compute_global_cooldown()
+        self._global_cooldown_until = time.time() + global_wait
+        if self._consecutive_429_count == RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD:
+            self._primary_probe_at = time.time() + RATE_LIMIT_PRIMARY_PROBE_INTERVAL
+            self.logger.warning(
+                f"Google IP rate limit persists after {self._consecutive_429_count} "
+                f"consecutive 429s — switching to alternate endpoint family for "
+                f"{RATE_LIMIT_LONG_COOLDOWN}s. Enable a residential proxy in "
+                f"Settings or wait for the IP flag to decay."
+            )
+        return global_wait
+
+    async def _wait_out_global_cooldown(self, max_wait: float = 25.0) -> None:
+        """Gate each send attempt on the shared cooldown clock so parallel
+        workers cannot hammer Google while it is active."""
+        remaining = self._global_cooldown_until - time.time()
+        if remaining > 0:
+            await asyncio.sleep(min(remaining, max_wait))
+
     def _prepare_request_protection(
         self, request: TranslationRequest
     ) -> Tuple[str, Dict[str, str], bool]:
@@ -325,6 +365,12 @@ class GoogleTranslator(BaseTranslator):
         self._consecutive_429_count: int = (
             0  # Track consecutive 429s across all mirrors
         )
+        # Next wall-clock time at which a blocked primary endpoint may be
+        # probed again (one request per RATE_LIMIT_PRIMARY_PROBE_INTERVAL).
+        self._primary_probe_at: float = 0.0
+        # Alternate-family (clients5) rescue counter — drives the periodic
+        # user-visible status line while primaries are IP-blocked.
+        self._clients5_rescues: int = 0
 
         # Initialize health tracking for all endpoints
         for ep in self.google_endpoints:
@@ -371,10 +417,21 @@ class GoogleTranslator(BaseTranslator):
         """Random endpoint selection with health checks and ban cooldown."""
         now = time.time()
 
-        # Respect global cooldown (IP-based rate limit from Google)
+        # Breaker active: callers bail instantly via the guard, so honoring
+        # the shared cooldown sleep here would just stall every item for
+        # min(cooldown, 25)s without sending anything.
+        if (
+            self._consecutive_429_count >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD
+            and now < self._primary_probe_at
+        ):
+            return random.choice(self.google_endpoints)
+
+        # Respect global cooldown (IP-based rate limit from Google).
+        # Cap matches _wait_out_global_cooldown so a long circuit-breaker
+        # pause spaces requests out instead of blocking one worker forever.
         if now < self._global_cooldown_until:
             remaining = self._global_cooldown_until - now
-            await asyncio.sleep(min(remaining, 5.0))  # Non-blocking wait
+            await asyncio.sleep(min(remaining, 25.0))
             now = time.time()
 
         # Filter available endpoints (not banned)
@@ -449,6 +506,47 @@ class GoogleTranslator(BaseTranslator):
 
         return None
 
+    @staticmethod
+    def _extract_clients5_text(data) -> Optional[str]:
+        """Normalize /translate_a/t responses: ["tr"] or [["tr", "src"], ...]."""
+        if not isinstance(data, list):
+            return None
+        parts = []
+        for item in data:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, list) and item and isinstance(item[0], str):
+                parts.append(item[0])
+        return "".join(parts) or None
+
+    async def _translate_via_clients5(
+        self, text: str, source: str, target: str
+    ) -> Optional[str]:
+        """Fallback via clients5.google.com /translate_a/t (Chrome dictionary
+        client). This endpoint family keeps serving traffic when the
+        /translate_a/single family is IP-range blocked."""
+        params = {
+            "client": "dict-chrome-ex",
+            "sl": source or "auto",
+            "tl": target,
+            "q": text,
+        }
+        try:
+            session = await self._get_session()
+            async with session.get(
+                GOOGLE_CLIENTS5_ENDPOINT,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=8),
+                headers=GOOGLE_BROWSER_HEADERS,
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+                return self._extract_clients5_text(data)
+        except Exception as e:
+            self.logger.debug(f"clients5 fallback failed: {e}")
+            return None
+
     async def translate_single(self, request: TranslationRequest) -> TranslationResult:
         """Translate single text with multi-endpoint + Lingva fallback."""
         metadata = request.metadata if isinstance(request.metadata, dict) else {}
@@ -487,8 +585,30 @@ class GoogleTranslator(BaseTranslator):
 
         # Try Google endpoints first (parallel race)
         async def try_endpoint(endpoint: str) -> Optional[str]:
+            # Circuit breaker active: /translate_a/single is range-blocked,
+            # skip straight to the alternate-family rescue below. Primaries
+            # are probed once per RATE_LIMIT_PRIMARY_PROBE_INTERVAL so a
+            # decayed IP flag is picked up automatically.
+            entered_as_probe = False
+            if self._consecutive_429_count >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD:
+                now = time.time()
+                if now < self._primary_probe_at:
+                    return None
+                self._primary_probe_at = (
+                    now + RATE_LIMIT_PRIMARY_PROBE_INTERVAL
+                )
+                entered_as_probe = True
             max_attempts = 3
             for attempt in range(1, max_attempts + 1):
+                # Another worker's 429 tripped the breaker mid-flight — stop
+                # burning attempts against a range-blocked host.
+                if (
+                    self._consecutive_429_count
+                    >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD
+                    and not entered_as_probe
+                ):
+                    return None
+                await self._wait_out_global_cooldown()
                 try:
                     query = urllib.parse.urlencode(params, doseq=True, safe="")
                     url = f"{endpoint}?{query}"
@@ -503,7 +623,10 @@ class GoogleTranslator(BaseTranslator):
                             proxy_url_used = proxy
 
                     async with session.get(
-                        url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=8)
+                        url,
+                        proxy=proxy,
+                        timeout=aiohttp.ClientTimeout(total=8),
+                        headers=GOOGLE_BROWSER_HEADERS,
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json(content_type=None)
@@ -535,18 +658,13 @@ class GoogleTranslator(BaseTranslator):
                         elif resp.status == 429:  # Too Many Requests
                             # Google rate-limits by IP — a 429 on one mirror means ALL mirrors
                             # are likely throttled. Apply global cooldown to prevent cascade bans.
-                            self._consecutive_429_count += 1
-                            # Escalating global cooldown: 3s -> 6s -> 12s -> 24s (capped)
-                            global_wait = min(
-                                3.0 * (2 ** (self._consecutive_429_count - 1)), 30.0
-                            )
-                            self._global_cooldown_until = time.time() + global_wait
+                            global_wait = self._apply_global_cooldown()
                             # Also count as fail — 429 is a real failure signal
                             if endpoint in self._endpoint_health:
                                 self._endpoint_health[endpoint]["fails"] += 1
                             if proxy_url_used and self.proxy_manager:
                                 self.proxy_manager.mark_proxy_failed(proxy_url_used)
-                            wait_time = global_wait + random.uniform(0.5, 1.5)
+                            wait_time = min(global_wait, 25.0) + random.uniform(0.5, 1.5)
                             self.logger.warning(
                                 f"Google 429 (Rate Limit) on {endpoint}. Global cooldown {global_wait:.0f}s (#{self._consecutive_429_count})"
                             )
@@ -1016,8 +1134,39 @@ class GoogleTranslator(BaseTranslator):
                     metadata=request.metadata,
                 )
 
-        # All Google endpoints failed, try Lingva fallback (if enabled)
+        # All Google endpoints failed, try alternate endpoint families then
+        # the Lingva fallback (if enabled)
         if self.enable_lingva_fallback:
+            c5_result = await self._translate_via_clients5(
+                protected_text, request.source_lang, request.target_lang
+            )
+            if c5_result:
+                c5_final = restore_renpy_syntax(c5_result, placeholders)
+                if placeholders and validate_translation_integrity(
+                    c5_final, placeholders
+                ):
+                    self.logger.warning(
+                        "Integrity check failed (clients5): Placeholders missing. Using original text."
+                    )
+                elif c5_final.strip() != source_text.strip():
+                    self._clients5_rescues += 1
+                    if self._clients5_rescues == 1 or self._clients5_rescues % 50 == 0:
+                        self.logger.warning(
+                            f"Alternate Google endpoint active: "
+                            f"{self._clients5_rescues} translations rescued while "
+                            f"primary endpoints are IP-blocked."
+                        )
+                    return TranslationResult(
+                        source_text,
+                        c5_final,
+                        request.source_lang,
+                        request.target_lang,
+                        TranslationEngine.GOOGLE,
+                        True,
+                        confidence=0.85,
+                        metadata=request.metadata,
+                    )
+
             self.logger.debug("Google endpoints failed, trying Lingva fallback...")
 
             # Lingva uses same token protection as main request
@@ -1276,26 +1425,66 @@ class GoogleTranslator(BaseTranslator):
             "q": text[:500],  # Limit text length for API efficiency
         }
 
-        try:
-            endpoint = await self._get_next_endpoint()
-            session = await self._get_session()
+        # Breaker active: primaries are range-blocked and _get_next_endpoint
+        # would stall on the shared cooldown — go straight to the clients5
+        # fallback below.
+        breaker_active = (
+            self._consecutive_429_count >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD
+            and time.time() < self._primary_probe_at
+        )
 
+        if not breaker_active:
+            try:
+                endpoint = await self._get_next_endpoint()
+                session = await self._get_session()
+
+                async with session.get(
+                    endpoint,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=5),
+                    ssl=False,
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        # Google returns detected language at index [2]
+                        # Format: [[["translated", "original", null, null, 10]], null, "detected_lang"]
+                        if data and isinstance(data, list) and len(data) > 2:
+                            detected = data[2]
+                            if isinstance(detected, str) and len(detected) >= 2:
+                                return detected.lower()
+            except Exception as e:
+                self.logger.debug(f"Language detection failed for sample: {e}")
+
+        # Fallback: /translate_a/t auto mode returns [["text", "detected_lang"]]
+        # and keeps working when /translate_a/single is blocked.
+        try:
+            session = await self._get_session()
+            params5 = {
+                "client": "dict-chrome-ex",
+                "sl": "auto",
+                "tl": "en",
+                "q": text[:500],
+            }
             async with session.get(
-                endpoint,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=5),
+                GOOGLE_CLIENTS5_ENDPOINT,
+                params=params5,
+                timeout=aiohttp.ClientTimeout(total=6),
                 ssl=False,
+                headers=GOOGLE_BROWSER_HEADERS,
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
-                    # Google returns detected language at index [2]
-                    # Format: [[["translated", "original", null, null, 10]], null, "detected_lang"]
-                    if data and isinstance(data, list) and len(data) > 2:
-                        detected = data[2]
-                        if isinstance(detected, str) and len(detected) >= 2:
-                            return detected.lower()
+                    if (
+                        isinstance(data, list)
+                        and data
+                        and isinstance(data[0], list)
+                        and len(data[0]) > 1
+                        and isinstance(data[0][1], str)
+                        and len(data[0][1]) >= 2
+                    ):
+                        return data[0][1].lower()
         except Exception as e:
-            self.logger.debug(f"Language detection failed for sample: {e}")
+            self.logger.debug(f"clients5 language detection failed: {e}")
 
         return None
 
@@ -1607,8 +1796,26 @@ class GoogleTranslator(BaseTranslator):
 
         async def try_endpoint(endpoint: str) -> Optional[List[str]]:
             """Try a single endpoint with retries, return list of translations or None."""
+            # Circuit breaker active — probe-gated like the single path.
+            entered_as_probe = False
+            if self._consecutive_429_count >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD:
+                now = time.time()
+                if now < self._primary_probe_at:
+                    return None
+                self._primary_probe_at = (
+                    now + RATE_LIMIT_PRIMARY_PROBE_INTERVAL
+                )
+                entered_as_probe = True
             max_attempts = 2  # Fewer retries than translate_single (batch is heavier)
             for attempt in range(1, max_attempts + 1):
+                # Breaker tripped mid-flight by another worker — bail early.
+                if (
+                    self._consecutive_429_count
+                    >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD
+                    and not entered_as_probe
+                ):
+                    return None
+                await self._wait_out_global_cooldown()
                 try:
                     url = f"{endpoint}?{query}"
                     session = await self._get_session()
@@ -1622,15 +1829,14 @@ class GoogleTranslator(BaseTranslator):
                             proxy_url_used = proxy
 
                     async with session.get(
-                        url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=15)
+                        url,
+                        proxy=proxy,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                        headers=GOOGLE_BROWSER_HEADERS,
                     ) as resp:
                         if resp.status == 429:
                             # 429 = IP-level rate limit — apply global cooldown
-                            self._consecutive_429_count += 1
-                            global_wait = min(
-                                3.0 * (2 ** (self._consecutive_429_count - 1)), 30.0
-                            )
-                            self._global_cooldown_until = time.time() + global_wait
+                            global_wait = self._apply_global_cooldown()
                             if endpoint in self._endpoint_health:
                                 self._endpoint_health[endpoint]["fails"] += 1
                                 if (
@@ -1648,7 +1854,9 @@ class GoogleTranslator(BaseTranslator):
                             self.logger.warning(
                                 f"Batch-sep 429 on {endpoint}. Global cooldown {global_wait:.0f}s"
                             )
-                            await asyncio.sleep(global_wait + random.uniform(0.5, 1.0))
+                            await asyncio.sleep(
+                                min(global_wait, 25.0) + random.uniform(0.5, 1.0)
+                            )
                             continue  # Retry after cooldown
 
                         if resp.status != 200:

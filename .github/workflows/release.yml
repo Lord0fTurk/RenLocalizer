@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - '*'
+  # Manual trigger for testing builds WITHOUT publishing a release.
+  # Artifacts are uploaded to the run page only.
+  workflow_dispatch:
 
 jobs:
   # ============================================
@@ -23,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller
+          pip install -c constraints-release.txt pyinstaller
           pip install -c constraints-release.txt -r requirements.txt
 
       - name: Build with PyInstaller
@@ -69,7 +72,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller
+          pip install -c constraints-release.txt pyinstaller
           pip install -c constraints-release.txt -r requirements.txt
 
       - name: Build with PyInstaller
@@ -186,7 +189,7 @@ jobs:
           path: RenLocalizer-Linux-x64.tar.gz
 
   # ============================================
-  # macOS Build → DMG
+  # macOS Build → .app bundle → DMG
   # ============================================
   build-macos:
     runs-on: macos-15
@@ -202,55 +205,77 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller
+          pip install -c constraints-release.txt pyinstaller
           pip install -c constraints-release.txt -r requirements.txt
+
+      - name: Convert icon.png to icon.icns (picked up by spec BUNDLE)
+        run: |
+          mkdir -p icon.iconset
+          sips -z 16   16   icon.png --out icon.iconset/icon_16x16.png
+          sips -z 32   32   icon.png --out icon.iconset/icon_16x16@2x.png
+          sips -z 32   32   icon.png --out icon.iconset/icon_32x32.png
+          sips -z 64   64   icon.png --out icon.iconset/icon_32x32@2x.png
+          sips -z 128  128  icon.png --out icon.iconset/icon_128x128.png
+          sips -z 256  256  icon.png --out icon.iconset/icon_128x128@2x.png
+          sips -z 256  256  icon.png --out icon.iconset/icon_256x256.png
+          sips -z 512  512  icon.png --out icon.iconset/icon_256x256@2x.png
+          sips -z 512  512  icon.png --out icon.iconset/icon_512x512.png
+          sips -z 1024 1024 icon.png --out icon.iconset/icon_512x512@2x.png
+          iconutil -c icns icon.iconset -o icon.icns
+          rm -rf icon.iconset
+          ls -la icon.icns
 
       - name: Build with PyInstaller
         run: |
           python -m PyInstaller RenLocalizer.spec
 
-      - name: Create .app bundle
+      - name: Verify .app bundle was produced
         run: |
-          chmod +x build/macos/create_app_bundle.sh
-          ./build/macos/create_app_bundle.sh dist/RenLocalizer RenLocalizer.app
+          if [ ! -d "dist/RenLocalizer.app" ]; then
+            echo "::error::dist/RenLocalizer.app missing — spec BUNDLE block did not run"
+            ls -la dist/
+            exit 1
+          fi
+          ls -la dist/RenLocalizer.app/Contents/
 
-      - name: Smoke test Qt startup (macOS native)
+      - name: Ad-hoc codesign (.app must be signed or Gatekeeper reports 'damaged')
+        run: |
+          codesign --force --deep --sign - dist/RenLocalizer.app
+          codesign --verify --deep --strict dist/RenLocalizer.app
+          echo "✓ Ad-hoc signature valid"
+
+      - name: Smoke test Qt startup (offscreen)
         run: |
           export RENLOCALIZER_QT_SMOKE_TEST="1"
-          ./RenLocalizer.app/Contents/MacOS/launch
+          export QT_QPA_PLATFORM="offscreen"
+          ./dist/RenLocalizer.app/Contents/MacOS/RenLocalizer
 
-      - name: Smoke test Qt startup (macOS software fallback)
+      - name: Smoke test Qt startup (offscreen + software rendering fallback)
         run: |
           export RENLOCALIZER_QT_SMOKE_TEST="1"
-          export RENLOCALIZER_QT_RENDER_MODE="software"
-          ./RenLocalizer.app/Contents/MacOS/launch
+          export QT_QPA_PLATFORM="offscreen"
+          export QT_QUICK_BACKEND="software"
+          ./dist/RenLocalizer.app/Contents/MacOS/RenLocalizer
 
-      - name: Create DMG
+      - name: Create DMG (.app + Applications symlink for drag-install)
         run: |
-          # Create a temporary DMG directory with the .app
           mkdir -p dmg_contents
-          cp -R RenLocalizer.app dmg_contents/
-
-          # Add a symlink to /Applications for drag-and-drop install
+          cp -R dist/RenLocalizer.app dmg_contents/
           ln -s /Applications dmg_contents/Applications
-
-          # Force sync and wait briefly to avoid "Resource busy" race conditions
           sync
-          sleep 5
-
-          # Create DMG
+          sleep 3
           hdiutil create \
             -volname "RenLocalizer" \
             -srcfolder dmg_contents \
             -ov \
             -format UDZO \
-            RenLocalizer-macOS.dmg
+            RenLocalizer-macOS-arm64.dmg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-build
-          path: RenLocalizer-macOS.dmg
+          path: RenLocalizer-macOS-arm64.dmg
 
   # ============================================
   # Create GitHub Release

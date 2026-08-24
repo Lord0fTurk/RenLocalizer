@@ -27,7 +27,7 @@ class DummySession:
         self.data = data
         self.closed = False
 
-    def get(self, url, proxy=None, timeout=None):
+    def get(self, url, proxy=None, timeout=None, headers=None):
         return DummyResp(self.data)
 
     async def close(self):

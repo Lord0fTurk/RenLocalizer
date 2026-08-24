@@ -11,3 +11,6 @@ rpycdec==0.1.12
 rich==14.3.4
 PyYAML==6.0.3
 fonttools==4.62.1
+# Build tool — pinned for reproducible CI bundles (macOS BUNDLE is sensitive
+# to bootloader changes; bump deliberately and re-test all 3 platforms)
+pyinstaller==6.22.2

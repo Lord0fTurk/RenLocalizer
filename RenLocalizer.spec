@@ -1,11 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import re
 import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 project_dir = os.path.abspath(os.getcwd())
+
+# UPX corrupts ad-hoc signed Mach-O binaries/dylibs on macOS arm64 — the
+# compressed libpython fails dlopen with "Failed to load Python shared
+# library". Never enable it for darwin targets.
+USE_UPX = sys.platform != 'darwin'
 
 # Automatically collect all submodules from src package
 hidden_imports = collect_submodules('src')
@@ -104,7 +110,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=USE_UPX,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -146,7 +152,7 @@ exe_cli = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=USE_UPX,
     console=True,                       # CLI needs console!
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -165,7 +171,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=USE_UPX,
     upx_exclude=[],
     name='RenLocalizer',
 )
@@ -179,21 +185,26 @@ coll_cli = COLLECT(
     a_cli.zipfiles,
     a_cli.datas,
     strip=False,
-    upx=True,
+    upx=USE_UPX,
     upx_exclude=[],
     name='RenLocalizerCLI',
 )
 
 # =========================================================
 # macOS: BUNDLE → produces RenLocalizer.app via PyInstaller
-# Only active on macOS; on other platforms this block is skipped.
-# This is the correct way to create an .app bundle — manual
-# post-processing causes "Failed to load Python shared library"
-# because the bootloader detects the .app path and expects
-# Contents/Frameworks/Python which only PyInstaller's own
-# bundle step sets up properly.
+# Only active on macOS; other platforms skip this block.
+# Requires UPX to be OFF (see USE_UPX) — compressed dylibs
+# break the ad-hoc signature of Contents/Frameworks/Python.
 # =========================================================
 if sys.platform == 'darwin':
+    def _read_version() -> str:
+        vp = os.path.join(project_dir, 'src', 'version.py')
+        try:
+            m = re.search(r'VERSION\s*=\s*"([^"]+)"', open(vp, encoding='utf-8').read())
+            return m.group(1) if m else '1.0'
+        except Exception:
+            return '1.0'
+
     app = BUNDLE(
         coll,
         name='RenLocalizer.app',
@@ -201,13 +212,11 @@ if sys.platform == 'darwin':
             if os.path.exists(os.path.join(project_dir, 'icon.icns'))
             else None,
         bundle_identifier='com.lord0fturk.renlocalizer',
-        version=open(os.path.join(project_dir, 'src', 'version.py')).read().split('"')[1]
-            if os.path.exists(os.path.join(project_dir, 'src', 'version.py')) else '1.0',
+        version=_read_version(),
         info_plist={
             'CFBundleName': 'RenLocalizer',
             'CFBundleDisplayName': 'RenLocalizer',
-            'CFBundleShortVersionString': open(os.path.join(project_dir, 'src', 'version.py')).read().split('"')[1]
-                if os.path.exists(os.path.join(project_dir, 'src', 'version.py')) else '1.0',
+            'CFBundleShortVersionString': _read_version(),
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,
             'LSMinimumSystemVersion': '11.0',

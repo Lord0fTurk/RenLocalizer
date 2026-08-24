@@ -67,6 +67,14 @@ Visual Novel translations often fail because translation tools don't understand 
 5. Click **Translate** (▶) and watch the real-time logs.
 6. Launch your game and select the new language from the preferences menu!
 
+> **macOS:** The DMG is ad-hoc signed (no Apple Developer certificate). If Gatekeeper blocks the app ("cannot be opened" / "damaged"), drag it to Applications, then run once:
+>
+> ```bash
+> xattr -cr /Applications/RenLocalizer.app
+> ```
+>
+> Builds are ARM64 (Apple Silicon). Intel Macs are not supported by the prebuilt DMG — use "Running from Source" below.
+
 ---
 
 ## CLI Usage
