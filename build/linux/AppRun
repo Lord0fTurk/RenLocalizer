@@ -1,0 +1,34 @@
+﻿#!/bin/bash
+# AppRun — RenLocalizer AppImage entry point
+# This script is executed when the AppImage is launched.
+
+set -e
+
+# Resolve the AppImage root directory
+APPDIR="$(dirname "$(readlink -f "$0")")"
+
+# Set Qt environment variables for proper rendering
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+
+# Software rendering fallback support
+if [ "${RENLOCALIZER_QT_RENDER_MODE}" = "software" ]; then
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export QT_QUICK_BACKEND=software
+fi
+
+# Ensure bundled libraries take precedence
+export LD_LIBRARY_PATH="${APPDIR}/usr/bin/RenLocalizer:${LD_LIBRARY_PATH}"
+
+# Qt plugin path
+export QT_PLUGIN_PATH="${APPDIR}/usr/bin/RenLocalizer/PyQt6/Qt6/plugins"
+
+# QML import path
+export QML2_IMPORT_PATH="${APPDIR}/usr/bin/RenLocalizer/PyQt6/Qt6/qml"
+
+# Bundled font support (emoji and system fonts)
+if [ -d "${APPDIR}/usr/bin/RenLocalizer/fonts" ]; then
+    export FONTCONFIG_PATH="${APPDIR}/usr/bin/RenLocalizer/fonts"
+fi
+
+# Launch the main binary
+exec "${APPDIR}/usr/bin/RenLocalizer/RenLocalizer" "$@"

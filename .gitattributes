@@ -1,0 +1,11 @@
+# RenLocalizer .gitattributes
+# Normalize line endings: commit LF, checkout per platform
+* text=auto
+
+# Shell scripts must always use LF
+*.sh text eol=lf
+build/linux/AppRun text eol=lf
+build/linux/*.desktop text eol=lf
+
+# Windows-specific files keep CRLF
+*.bat text eol=crlf

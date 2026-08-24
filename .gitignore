@@ -26,11 +26,13 @@ env/
 
 # ── Build & Distribution ──────────────────────────────────────────────
 dist/
-build/
+# Ignore Python/PyInstaller build artifacts but keep build/linux and build/macos scripts
+build/bdist.*
+build/lib
+build_log.txt
 *.spec
 !RenLocalizer.spec
 *.log
-build_log.txt
 
 # ── IDE & Editor ──────────────────────────────────────────────────────
 .vscode/
