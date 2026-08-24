@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # AppRun — RenLocalizer AppImage entry point
 # This script is executed when the AppImage is launched.
 

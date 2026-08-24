@@ -1,9 +1,13 @@
-﻿#!/bin/bash
+#!/bin/bash
 # create_app_bundle.sh — RenLocalizer macOS .app bundle oluşturucu
 #
 # Usage: ./create_app_bundle.sh <pyinstaller_dist_dir> <output_app_name>
 #   pyinstaller_dist_dir : PyInstaller'ın ürettiği onedir çıktı klasörü (örn. dist/RenLocalizer)
 #   output_app_name      : Oluşturulacak .app adı (örn. RenLocalizer.app)
+#
+# Önemli: PyInstaller onedir binary'si, Python shared library'yi
+# çalışma dizinine göre arar. Bu nedenle tüm onedir içeriği
+# Contents/MacOS/ içine düz (flat) kopyalanır; subdirectory kullanılmaz.
 
 set -e
 
@@ -24,69 +28,68 @@ APP_DIR="${APP_NAME}"
 CONTENTS="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
-FRAMEWORKS_DIR="${CONTENTS}/Frameworks"
 
 echo "→ Creating .app bundle structure at: ${APP_DIR}"
 mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
-mkdir -p "${FRAMEWORKS_DIR}"
 
-# Copy PyInstaller output into MacOS/
-echo "→ Copying PyInstaller build from: ${DIST_DIR}"
+# PyInstaller onedir içeriğini doğrudan Contents/MacOS/ içine kopyala (flat).
+# Subdirectory kullanmıyoruz çünkü PyInstaller bootloader'ı Python shared
+# library'yi binary ile aynı dizinde arar.
+echo "→ Copying PyInstaller build (flat) into: ${MACOS_DIR}/"
 cp -R "${DIST_DIR}/." "${MACOS_DIR}/"
 
-# Copy icon into Resources
+# İkon: Resources/ içine .icns olarak yerleştir
 if [ -f "icon.png" ]; then
     echo "→ Converting icon.png to iconset..."
     mkdir -p RenLocalizer.iconset
-    sips -z 16 16     icon.png --out RenLocalizer.iconset/icon_16x16.png    2>/dev/null || true
-    sips -z 32 32     icon.png --out RenLocalizer.iconset/icon_16x16@2x.png 2>/dev/null || true
-    sips -z 32 32     icon.png --out RenLocalizer.iconset/icon_32x32.png    2>/dev/null || true
-    sips -z 64 64     icon.png --out RenLocalizer.iconset/icon_32x32@2x.png 2>/dev/null || true
-    sips -z 128 128   icon.png --out RenLocalizer.iconset/icon_128x128.png  2>/dev/null || true
-    sips -z 256 256   icon.png --out RenLocalizer.iconset/icon_128x128@2x.png 2>/dev/null || true
-    sips -z 256 256   icon.png --out RenLocalizer.iconset/icon_256x256.png  2>/dev/null || true
-    sips -z 512 512   icon.png --out RenLocalizer.iconset/icon_256x256@2x.png 2>/dev/null || true
-    sips -z 512 512   icon.png --out RenLocalizer.iconset/icon_512x512.png  2>/dev/null || true
+    sips -z 16   16   icon.png --out RenLocalizer.iconset/icon_16x16.png      2>/dev/null || true
+    sips -z 32   32   icon.png --out RenLocalizer.iconset/icon_16x16@2x.png   2>/dev/null || true
+    sips -z 32   32   icon.png --out RenLocalizer.iconset/icon_32x32.png      2>/dev/null || true
+    sips -z 64   64   icon.png --out RenLocalizer.iconset/icon_32x32@2x.png   2>/dev/null || true
+    sips -z 128  128  icon.png --out RenLocalizer.iconset/icon_128x128.png    2>/dev/null || true
+    sips -z 256  256  icon.png --out RenLocalizer.iconset/icon_128x128@2x.png 2>/dev/null || true
+    sips -z 256  256  icon.png --out RenLocalizer.iconset/icon_256x256.png    2>/dev/null || true
+    sips -z 512  512  icon.png --out RenLocalizer.iconset/icon_256x256@2x.png 2>/dev/null || true
+    sips -z 512  512  icon.png --out RenLocalizer.iconset/icon_512x512.png    2>/dev/null || true
     sips -z 1024 1024 icon.png --out RenLocalizer.iconset/icon_512x512@2x.png 2>/dev/null || true
-    iconutil -c icns RenLocalizer.iconset -o "${RESOURCES_DIR}/RenLocalizer.icns" 2>/dev/null || \
-        cp icon.png "${RESOURCES_DIR}/RenLocalizer.png"
+    iconutil -c icns RenLocalizer.iconset -o "${RESOURCES_DIR}/RenLocalizer.icns" 2>/dev/null \
+        || cp icon.png "${RESOURCES_DIR}/RenLocalizer.png"
     rm -rf RenLocalizer.iconset
     echo "→ Icon installed to Resources/"
 fi
 
-# Create the launch wrapper script (Contents/MacOS/launch)
-# This sets up the correct env before running the actual binary
+# launch wrapper: Contents/MacOS/launch
+# Binary doğrudan Contents/MacOS/RenLocalizer olduğundan sadece exec yeterli.
 cat > "${MACOS_DIR}/launch" << 'LAUNCH_EOF'
 #!/bin/bash
 # Launch wrapper for RenLocalizer.app
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Software rendering fallback support
+# Software rendering fallback
 if [ "${RENLOCALIZER_QT_RENDER_MODE}" = "software" ]; then
     export LIBGL_ALWAYS_SOFTWARE=1
     export QT_QUICK_BACKEND=software
 fi
 
-# Ensure Qt can find its plugins from the bundled copy
+# Qt plugin / QML paths (PyInstaller onedir, flat layout)
 export QT_PLUGIN_PATH="${SCRIPT_DIR}/PyQt6/Qt6/plugins"
 export QML2_IMPORT_PATH="${SCRIPT_DIR}/PyQt6/Qt6/qml"
 
-# Launch the actual binary
 exec "${SCRIPT_DIR}/RenLocalizer" "$@"
 LAUNCH_EOF
 chmod +x "${MACOS_DIR}/launch"
 echo "→ Launch wrapper created: ${MACOS_DIR}/launch"
 
-# Determine version from src/version.py if available
+# Versiyon tespiti
 VERSION="1.0"
 if [ -f "src/version.py" ]; then
     EXTRACTED=$(grep -oP '(?<=VERSION = ")[^"]+' src/version.py 2>/dev/null || true)
     [ -n "$EXTRACTED" ] && VERSION="$EXTRACTED"
 fi
-echo "→ Detected version: ${VERSION}"
+echo "→ Version: ${VERSION}"
 
-# Write Info.plist
+# Info.plist
 cat > "${CONTENTS}/Info.plist" << PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -122,4 +125,5 @@ cat > "${CONTENTS}/Info.plist" << PLIST_EOF
 PLIST_EOF
 echo "→ Info.plist written"
 
-echo "✓ .app bundle created successfully: ${APP_DIR}"
+echo "✓ .app bundle created: ${APP_DIR}"
+echo "  Layout: Contents/MacOS/ (flat PyInstaller onedir)"
