@@ -197,7 +197,9 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
         name='RenLocalizer.app',
-        icon=os.path.join(project_dir, 'icon.png'),
+        icon=os.path.join(project_dir, 'icon.icns')
+            if os.path.exists(os.path.join(project_dir, 'icon.icns'))
+            else None,
         bundle_identifier='com.lord0fturk.renlocalizer',
         version=open(os.path.join(project_dir, 'src', 'version.py')).read().split('"')[1]
             if os.path.exists(os.path.join(project_dir, 'src', 'version.py')) else '1.0',
