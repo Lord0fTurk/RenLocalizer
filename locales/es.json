@@ -1,4 +1,5 @@
 {
+  "ai_batch_json_parse_failed": "La IA devolvió una respuesta por lotes mal formada; se pasa a la traducción individual.",
   "status_ready": "Listo",
   "about": "Acerca de",
   "about_content": "<h3>RenLocalizer</h3><p>Herramienta avanzada de traducción multimotor para juegos Ren'Py.</p><p><b>Características:</b></p><ul><li>Soporte para múltiples motores de traducción</li><li>Rotación automática de proxies</li><li>Procesamiento por lotes</li><li>Interfaz de usuario moderna</li><li>Salida en formato Ren'Py UTF-8</li></ul><p><b>Versión:</b> {version}</p><p><b>Framework:</b> {framework}</p><p>© {year} {team}</p>",
@@ -428,6 +429,7 @@
   "guard_reason_html_leakage": "el marcado HTML se filtró en la salida",
   "guard_reason_length_inflation": "el texto traducido se expandió demasiado respecto al original",
   "guard_reason_placeholder_set_mismatch": "la estructura de los placeholders cambió",
+  "guard_reason_printf_set_mismatch": "los especificadores de formato printf cambiaron",
   "guard_reason_renpy_tag_set_mismatch": "las etiquetas de texto de Ren'Py cambiaron",
   "guard_reason_unknown": "salida sospechosa del traductor",
   "log_guard_reverted_translation": "La capa de protección mantuvo el texto original tras una salida sospechosa del traductor ({reason}) en {path}:{line}",
@@ -543,7 +545,6 @@
   "lite_clear_cache_btn": "Limpiar memoria de traducción (TM)",
   "parallel_batch_label": "Solicitudes por lotes paralelas",
   "pipeline_logs": {
-    "ai_batch_json_parse_failed": "La IA devolvió una respuesta por lotes mal formada; se pasa a la traducción individual.",
     "rpymc_entry_count": "[DEBUG] conteo entrada .rpymc: {count}",
     "unren_needed": "UnRen necesario: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Carpeta de otro idioma omitida: {path}",

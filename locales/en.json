@@ -1,4 +1,5 @@
 {
+  "ai_batch_json_parse_failed": "AI returned a malformed batch response; falling back to individual translation.",
   "tip_desc": "Is a simplified fast translation interface. For advanced fine-tuning, bulk glossary management, font tools, and custom extraction options, use the full RenLocalizer version.",
   "status_ready": "Ready",
   "ai_settings_title": "🤖 AI Engine Settings",
@@ -455,6 +456,7 @@
   "guard_reason_html_leakage": "HTML markup leaked into the output",
   "guard_reason_length_inflation": "translated text expanded far beyond the source",
   "guard_reason_placeholder_set_mismatch": "placeholder structure changed",
+  "guard_reason_printf_set_mismatch": "printf-style format specifiers changed",
   "guard_reason_renpy_tag_set_mismatch": "Ren'Py text tags changed",
   "guard_reason_unknown": "suspicious translator output",
   "log_guard_reverted_translation": "Guard kept original text after suspicious translator output ({reason}) in {path}:{line}",
@@ -575,7 +577,6 @@
   "lite_cache_title": "Use Translation Memory (TM Cache)",
   "lite_clear_cache_btn": "Clear Translation Memory (TM)",
   "pipeline_logs": {
-    "ai_batch_json_parse_failed": "AI returned a malformed batch response; falling back to individual translation.",
     "rpymc_entry_count": "[DEBUG] .rpymc entry count: {count}",
     "unren_needed": "UnRen needed: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Other language folder skipped: {path}",

@@ -1,4 +1,5 @@
 {
+  "ai_batch_json_parse_failed": "AIが不正なバッチ応答を返しました。個別翻訳にフォールバックします。",
   "tip_desc": "一部のゲームは実行時にUIテキストを構築します（クエスト + \"(?)\"ボタン、NPCスケジュール、Python f-strings）。ネイティブTLIDは静的テキストのみをキャプチャします。インターフェースの一部が翻訳されない場合は、標準モードに切り替えてください。",
   "status_ready": "準備完了",
   "ai_settings_title": "🤖 AIエンジン設定",
@@ -451,6 +452,7 @@
   "guard_reason_html_leakage": "HTMLマークアップが出力に漏れています",
   "guard_reason_length_inflation": "翻訳テキストがソースを大幅に超えて拡張されました",
   "guard_reason_placeholder_set_mismatch": "プレースホルダー構造が変更されました",
+  "guard_reason_printf_set_mismatch": "printf形式のプレースホルダーが変更されました",
   "guard_reason_renpy_tag_set_mismatch": "Ren'Pyテキストタグが変更されました",
   "guard_reason_unknown": "不審な翻訳者出力",
   "log_guard_reverted_translation": "ガードが不審な翻訳者出力（{reason}）の後、{path}:{line}で元のテキストを保持しました",
@@ -567,7 +569,6 @@
   "parallel_batch_label": "並列バッチリクエスト",
   "parallel_batch_desc": "翻訳バッチを同時に送信し、8〜16倍の速度向上を実現します。高速翻訳に推奨。レート制限がある場合は無効にしてください。",
   "pipeline_logs": {
-    "ai_batch_json_parse_failed": "AIが不正なバッチ応答を返しました。個別翻訳にフォールバックします。",
     "rpymc_entry_count": "[RPYMC] .rpymcエントリ数：{count}",
     "unren_needed": "UnRen必要：rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "他言語フォルダをスキップ：{path}",

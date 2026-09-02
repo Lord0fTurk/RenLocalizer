@@ -59,6 +59,16 @@ GOOGLE_BROWSER_HEADERS = {
 #   sl=auto -> [["translation", "detected_lang"]]
 GOOGLE_CLIENTS5_ENDPOINT = "https://clients5.google.com/translate_a/t"
 
+# Third Google-family route: TranslateWebserverUi RPC layer (rpcid MkEWBc).
+# Fully separate pipeline from both /translate_a/single and clients5;
+# verified live 2026-08-24 from an actively blocked IP. Supports true
+# multi-text payloads via the f.req array. Response is a length-prefixed
+# envelope body; translation lives in inner[1][0][0][5] sentences,
+# detected language at inner[0][2].
+GOOGLE_BATCHEXECUTE_ENDPOINT = (
+    "https://translate.google.com/_/TranslateWebserverUi/data/batchexecute"
+)
+
 # User Agents for rotating requests to avoid bot detection
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

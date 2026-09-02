@@ -357,3 +357,131 @@ class TestRenpyClosingTagGlobFalsePositive:
         assert fmt._should_skip_translation(text) is True, (
             f"Should skip (real glob pattern): {text!r}"
         )
+
+# ==================================================================
+# v2.8.13: CAMELCASE IDENTIFIER SAFETY-NET
+# ==================================================================
+class TestCamelCaseSafetyNet:
+    """camelCase identifiers must be skipped by the formatter safety-net
+    (parity with the parser's is_meaningful_text camelCase check)."""
+
+    @pytest.mark.parametrize("text", [
+        "getUserName",
+        "playIntro",
+        "loadGameData",
+        "checkPlayerStatus2",
+        "onClickHandler",
+    ])
+    def test_camelcase_skipped(self, fmt, text):
+        assert fmt._should_skip_translation(text) is True, f"Should skip: {text}"
+
+    @pytest.mark.parametrize("text", [
+        "SaveGame",      # Title Case UI label — not camelCase
+        "New Game",      # two words
+        "Continue",      # single normal word
+        "Start the game now",
+    ])
+    def test_ui_labels_not_skipped(self, fmt, text):
+        assert fmt._should_skip_translation(text) is False, f"Should NOT skip: {text}"
+
+
+# ==================================================================
+# v2.8.13: WRAPPED SECTION HEADINGS
+# ==================================================================
+class TestWrappedHeadings:
+    """Menu/section dividers like ---Drops--- must never be translated."""
+
+    @pytest.mark.parametrize("text", [
+        "---Drops---",
+        "===TITLE===",
+        "~~separator~~",
+        "++BONUS++",
+        "**CHAPTER 1**".replace(" ", ""),  # **CHAPTER1**
+        "---Seçimler---",  # non-ASCII stem
+    ])
+    def test_wrapped_headings_skipped(self, fmt, text):
+        assert fmt._should_skip_translation(text) is True, f"Should skip: {text}"
+
+    @pytest.mark.parametrize("text", [
+        "Wait— what do you mean?",   # em-dash dialogue (has whitespace)
+        "— What do you mean?",
+        "I told you -- twice!",      # contains whitespace
+        "Hello there",
+        "*giggle*",                  # single-char wrapper
+        "Well... okay.",
+        "No-- I never said that.",
+    ])
+    def test_dialogue_not_skipped(self, fmt, text):
+        assert fmt._should_skip_translation(text) is False, f"Should NOT skip: {text}"
+
+    def test_helper_rules(self, fmt):
+        """Direct helper checks incl. wrapper-character exclusions."""
+        assert fmt._is_wrapped_heading("---Drops---") is True
+        assert fmt._is_wrapped_heading("___x___") is False   # '_' cannot wrap
+        assert fmt._is_wrapped_heading("..name..") is False  # '.' cannot wrap
+        assert fmt._is_wrapped_heading("---") is False       # no inner content
+        assert fmt._is_wrapped_heading("---A B---") is False  # whitespace
+
+
+# ==================================================================
+# v2.8.13: DATA-FILE EXTENSIONS & NON-ASCII ASSET PATHS
+# ==================================================================
+class TestDataFileExtensions:
+    """Data-file references and non-ASCII asset paths must be skipped."""
+
+    @pytest.mark.parametrize("text", [
+        "settings.json",
+        "quest_data.xml",
+        "items.csv",
+        "readme.txt",
+        "save01.sav",
+        "gameflow.dat",
+        "theme.mid",
+        "track.midi",
+        "layer_art.psd",
+        "img/キャラ.dat",      # non-ASCII stem with slash
+        "bg/背景.xml",
+        "sound\\効果音.dat",   # backslash variant
+    ])
+    def test_data_file_refs_skipped(self, fmt, text):
+        assert fmt._should_skip_translation(text) is True, f"Should skip: {text}"
+
+    @pytest.mark.parametrize("text", [
+        "Check the save file.",
+        "Read the note on the table.",
+        "Save the princess!",
+        "The data shows we are close.",
+    ])
+    def test_sentences_mentioning_files_not_skipped(self, fmt, text):
+        assert fmt._should_skip_translation(text) is False, f"Should NOT skip: {text}"
+
+
+# ==================================================================
+# v2.8.13: PARSER PARITY (_is_wrapped_heading + is_meaningful_text)
+# ==================================================================
+class TestParserParity:
+    """The parser mirrors the wrapped-heading filter (AGENTS.md: both
+    control points must carry the same guard)."""
+
+    @pytest.fixture
+    def parser(self):
+        from src.core.parser import RenPyParser
+        return RenPyParser(config_manager=None)
+
+    @pytest.mark.parametrize("text", [
+        "---Drops---",
+        "===TITLE===",
+        "~~separator~~",
+    ])
+    def test_parser_rejects_wrapped_headings(self, parser, text):
+        assert parser.is_meaningful_text(text) is False, f"Should reject: {text}"
+
+    def test_helper_parity(self, parser, fmt):
+        cases = [
+            "---Drops---", "===TITLE===", "___x___", "..name..",
+            "---", "—Wait—", "**bold**",
+        ]
+        for text in cases:
+            assert parser._is_wrapped_heading(text) == fmt._is_wrapped_heading(text), (
+                f"Parser/formatter disagreement on {text!r}"
+            )

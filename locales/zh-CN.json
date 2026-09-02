@@ -1,4 +1,5 @@
 {
+  "ai_batch_json_parse_failed": "AI 返回了格式错误的批量响应；回退到逐条翻译。",
   "status_ready": "准备就绪",
   "about": "关于",
   "about_content": "<h3>RenLocalizer</h3><p>适用于 Ren'Py 游戏的高级多引擎翻译工具。</p><p><b>功能：</b></p><ul><li>支持多引擎翻译</li><li>自动代理轮换</li><li>批处理</li><li>现代用户界面</li><li>UTF-8 Ren'Py 格式输出</li></ul><p><b>版本：</b> {version}</p><p><b>框架：</b> {framework}</p><p>© {year} {team}</p>",
@@ -428,6 +429,7 @@
   "guard_reason_html_leakage": "HTML 标记泄漏到了输出中",
   "guard_reason_length_inflation": "译文相对原文异常膨胀",
   "guard_reason_placeholder_set_mismatch": "placeholder 结构发生了变化",
+  "guard_reason_printf_set_mismatch": "printf 格式占位符发生变化",
   "guard_reason_renpy_tag_set_mismatch": "Ren'Py 文本标签发生了变化",
   "guard_reason_unknown": "可疑的翻译器输出",
   "log_guard_reverted_translation": "保护层在检测到可疑翻译输出后保留了原文（{reason}），位置：{path}:{line}",
@@ -544,7 +546,6 @@
   "parallel_batch_label": "并行批量请求",
   "parallel_batch_desc": "同时发送翻译批次，速度提升 8-16 倍。推荐用于快速翻译；若遇到限流请关闭。",
   "pipeline_logs": {
-    "ai_batch_json_parse_failed": "AI 返回了格式错误的批量响应；回退到逐条翻译。",
     "rpymc_entry_count": "[DEBUG] .rpymc 条目数：{count}",
     "unren_needed": "需要 UnRen：rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "已跳过其他语言文件夹：{path}",

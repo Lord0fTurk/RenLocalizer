@@ -1,4 +1,5 @@
 {
+  "ai_batch_json_parse_failed": "Die KI hat eine fehlerhafte Stapelantwort zurückgegeben; Fallback auf Einzelübersetzung.",
   "status_ready": "Bereit",
   "about": "Über",
   "about_content": "<h3>RenLocalizer</h3><p>Fortgeschrittenes Multi-Engine-Übersetzungstool für Ren'Py-Spiele.</p><p><b>Funktionen:</b></p><ul><li>Unterstützung für mehrere Übersetzungs-Engines</li><li>Automatische Proxy-Rotation</li><li>Batch-Verarbeitung</li><li>Moderne Benutzeroberfläche</li><li>Ausgabe im Ren'Py UTF-8-Format</li></ul><p><b>Version:</b> {version}</p><p><b>Framework:</b> {framework}</p><p>© {year} {team}</p>",
@@ -428,6 +429,7 @@
   "guard_reason_html_leakage": "HTML-Markup ist in die Ausgabe geraten",
   "guard_reason_length_inflation": "Der übersetzte Text wurde im Vergleich zur Quelle viel zu lang.",
   "guard_reason_placeholder_set_mismatch": "Die Placeholder-Struktur hat sich geändert.",
+  "guard_reason_printf_set_mismatch": "die printf-Formatplatzhalter haben sich geändert",
   "guard_reason_renpy_tag_set_mismatch": "Die Ren'Py-Text-Tags haben sich geändert.",
   "guard_reason_unknown": "verdächtige Übersetzerausgabe",
   "log_guard_reverted_translation": "Der Schutzmechanismus hat nach einer verdächtigen Übersetzerausgabe den Originaltext beibehalten ({reason}) in {path}:{line}",
@@ -543,7 +545,6 @@
   "parallel_batch_label": "Parallele Batch-Anfragen",
   "settings_section_perf": "Leistungs- & Verbindungsparameter",
   "pipeline_logs": {
-    "ai_batch_json_parse_failed": "Die KI hat eine fehlerhafte Stapelantwort zurückgegeben; Fallback auf Einzelübersetzung.",
     "rpymc_entry_count": "[DEBUG] .rpymc Eintrag-Anzahl: {count}",
     "unren_needed": "UnRen benötigt: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Anderer Sprachordner übersprungen: {path}",

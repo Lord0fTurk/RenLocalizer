@@ -1,4 +1,5 @@
 {
+  "ai_batch_json_parse_failed": "AI geçersiz bir toplu yanıt döndürdü; tek tek çeviriye geçiliyor.",
   "tip_desc": "Arayüzü sadeleştirilmiş hızlı çeviri modudur. Gelişmiş ince ayarlar, toplu sözlük yönetimi, font araçları ve özel çıkarma seçenekleri için tam RenLocalizer sürümünü kullanın.",
   "status_ready": "Hazır",
   "ai_settings_title": "🤖 AI Motor Ayarları",
@@ -456,6 +457,7 @@
   "guard_reason_html_leakage": "HTML işaretlemesi çıktıya sızdı",
   "guard_reason_length_inflation": "çeviri metni kaynağa göre aşırı uzadı",
   "guard_reason_placeholder_set_mismatch": "placeholder yapısı değişti",
+  "guard_reason_printf_set_mismatch": "printf biçim belirteçleri değişti",
   "guard_reason_renpy_tag_set_mismatch": "Ren'Py metin etiketleri değişti",
   "guard_reason_unknown": "şüpheli çeviri motoru çıktısı",
   "log_guard_reverted_translation": "Koruma katmanı şüpheli çeviri çıktısından sonra orijinal metni korudu ({reason}) -> {path}:{line}",
@@ -569,7 +571,6 @@
   "lite_cache_title": "Çeviri Belleği (TM Cache) Kullan",
   "lite_clear_cache_btn": "Çeviri Belleğini (TM) Temizle",
   "pipeline_logs": {
-    "ai_batch_json_parse_failed": "AI geçersiz bir toplu yanıt döndürdü; tek tek çeviriye geçiliyor.",
     "rpymc_entry_count": "[DEBUG] .rpymc giriş sayısı: {count}",
     "unren_needed": "UnRen gerekli: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Başka dil klasörü atlandı: {path}",

@@ -178,7 +178,9 @@ class RenPyParser:
             '.png', '.jpg', '.jpeg', '.webp', '.avif', '.bmp', '.gif', '.ico',
             '.mp3', '.ogg', '.wav', '.flac', '.opus', '.m4a',
             '.rpy', '.rpyc', '.rpym', '.rpymc', '.py', '.xml', '.json', '.yaml', '.txt',
-            '.ttf', '.otf', '.woff', '.woff2'
+            '.ttf', '.otf', '.woff', '.woff2',
+            # v2.8.13: Data-file extensions shipped beside Ren'Py games
+            '.dat', '.sav', '.csv', '.mid', '.midi', '.psd',
         }
         self.path_indicators = {'/', '\\', 'http://', 'https://', 'www.'}
 
@@ -2706,6 +2708,38 @@ class RenPyParser:
         unescaped = self._extract_string_content(quoted_string)
         return raw, unescaped
 
+    def _is_wrapped_heading(self, text: str) -> bool:
+        """
+        v2.8.13: Detect wrapped section headings on single-token strings.
+
+        A wrapped heading repeats the SAME non-alphanumeric character two or
+        more times at both ends of the text, e.g. "---Drops---" or
+        "===TITLE===". Such strings are menu/section dividers, not lines a
+        player reads. Conservative: whitespace disqualifies, alphanumerics
+        and '.', '_', '[', '{' cannot be wrappers, and the wrapper run must
+        leave real content between both ends.
+        """
+        if len(text) < 5 or ' ' in text:
+            return False
+
+        first = text[0]
+        if first.isalnum() or first in '._[{ \t':
+            return False
+
+        lead = 0
+        for ch in text:
+            if ch != first:
+                break
+            lead += 1
+
+        tail = 0
+        for ch in reversed(text):
+            if ch != first:
+                break
+            tail += 1
+
+        return lead >= 2 and tail >= 2 and len(text) > lead + tail
+
     def is_meaningful_text(self, text: str) -> bool:
         """
         Check if text is suitable for translation using heuristics and filters.
@@ -2732,6 +2766,11 @@ class RenPyParser:
             
         # Extension Check (Case-insensitive)
         if any(text_lower.endswith(ext) for ext in self.file_extensions):
+            return False
+
+        # v2.8.13: Skip wrapped section headings on single-token strings
+        # e.g. "---Drops---", "===TITLE===" — menu dividers, not dialogue
+        if self._is_wrapped_heading(text.strip()):
             return False
 
         # Allow single-character UI text that is explicitly translatable (e.g. _("<"), _(">"))
@@ -3125,6 +3164,7 @@ class RenPyParser:
             '.py', '.pyc', '.pyo',  # Python files
             '.json', '.txt', '.xml', '.csv', '.yaml', '.yml',  # Data files
             '.zip', '.rar', '.7z', '.tar', '.gz',  # Archives
+            '.dat', '.sav', '.mid', '.midi', '.psd',  # v2.8.13: game data / saves
         )
         if any(text_lower.endswith(ext) for ext in file_extensions):
             return False
@@ -3200,7 +3240,7 @@ class RenPyParser:
         # Skip camelCase identifiers (likely variable names)
         if re.match(r'^[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*$', text_strip) and ' ' not in text_strip:
             return False
-        
+
         # Skip save/game identifiers like "GameName-1234567890"
         if re.match(r'^[A-Za-z_][A-Za-z0-9_]*-\d+$', text_strip):
             return False
@@ -3481,7 +3521,17 @@ class RenPyParser:
             placeholder_counter += 1
 
         # Python-style format strings like %(variable)s, %s, %d, etc.
-        python_format_pattern = r'%\([^)]+\)[sdif]|%[sdif]'
+        # v2.8.13: Comprehensive printf specifier protection. Covers flags
+        # (- + # 0), width, precision, length modifiers and every conversion
+        # character Python's % operator accepts, so specs like %-5d, %6.2f,
+        # %(name)03d survive translation intact. The space flag is excluded
+        # on purpose: "% word" with a separating space is natural language
+        # ("100% sure"), not a format specifier. Literal '%%' escapes stay
+        # unprotected (they are not substitutions).
+        python_format_pattern = (
+            r'%\([^)]*\)[-+#0]*\d*(?:\.\d+)?[hlL]?[diouxXeEfFgGcrsa]'
+            r'|%[-+#0]*\d*(?:\.\d+)?[hlL]?[diouxXeEfFgGcrsa]'
+        )
         for match in re.finditer(python_format_pattern, processed_text):
             placeholder_id = f"⟦F{placeholder_counter:03d}⟧"  # F for format
             placeholder_map[placeholder_id] = match.group(0)

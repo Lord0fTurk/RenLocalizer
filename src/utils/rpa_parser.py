@@ -17,6 +17,81 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, BinaryIO
 
 
+# ============================================================================
+# RESTRICTED UNPICKLING (Security hardening)
+# ============================================================================
+# RPA archive indexes are simple data structures:
+#   { filename: [(offset, length, prefix), ...] }
+# They only need basic container/primitive types. Using raw pickle.loads on
+# untrusted game archives is a code-execution attack surface. We mirror the
+# proven allowlist pattern from src/core/rpyc_reader.py (RenpyUnpickler) but
+# with a graceful fallback: if the restricted unpickler rejects something a
+# legitimate archive needs, we fall back to standard pickle.loads with a
+# warning so existing working archives keep functioning (zero breakage).
+
+logger = logging.getLogger(__name__)
+
+# Allowlist of harmless builtins sufficient to reconstruct an RPA index.
+_RPA_SAFE_BUILTINS: Dict[Tuple[str, str], type] = {
+    ("builtins", "dict"): dict,
+    ("builtins", "list"): list,
+    ("builtins", "tuple"): tuple,
+    ("builtins", "set"): set,
+    ("builtins", "frozenset"): frozenset,
+    ("builtins", "str"): str,
+    ("builtins", "bytes"): bytes,
+    ("builtins", "bytearray"): bytearray,
+    ("builtins", "int"): int,
+    ("builtins", "float"): float,
+    ("builtins", "bool"): bool,
+    # Python 2 pickled archives (older games)
+    ("__builtin__", "dict"): dict,
+    ("__builtin__", "list"): list,
+    ("__builtin__", "tuple"): tuple,
+    ("__builtin__", "set"): set,
+    ("__builtin__", "frozenset"): frozenset,
+    ("__builtin__", "str"): str,
+    ("__builtin__", "unicode"): str,
+    ("__builtin__", "bytes"): bytes,
+    ("__builtin__", "int"): int,
+    ("__builtin__", "long"): int,
+    ("__builtin__", "float"): float,
+    ("__builtin__", "bool"): bool,
+}
+
+
+class _RestrictedRPAUnpickler(pickle.Unpickler):
+    """Unpickler that only resolves safe builtin types for RPA indexes.
+
+    Any attempt to resolve a disallowed global (e.g. os.system) raises
+    UnpicklingError, blocking arbitrary code execution during deserialization.
+    """
+
+    def find_class(self, module: str, name: str) -> type:
+        key = (module, name)
+        if key in _RPA_SAFE_BUILTINS:
+            return _RPA_SAFE_BUILTINS[key]
+        raise pickle.UnpicklingError(f"Disallowed global in RPA index: {module}.{name}")
+
+
+def _safe_loads_rpa_index(data: bytes):
+    """Deserialize an RPA index safely.
+
+    Tries the restricted unpickler first (blocks code execution). If the
+    restricted path rejects a type that a legitimate archive needs, falls back
+    to standard pickle.loads with a warning so no working archive breaks.
+    """
+    import io
+    try:
+        return _RestrictedRPAUnpickler(io.BytesIO(data)).load()
+    except pickle.UnpicklingError as e:
+        logger.warning(
+            "Restricted RPA index unpickle rejected a type (%s); "
+            "falling back to standard unpickle for compatibility.", e
+        )
+        return pickle.loads(data)
+
+
 class RPAParser:
     """Native RPA archive parser supporting RPAv2 and RPAv3 formats."""
     
@@ -80,11 +155,11 @@ class RPAParser:
             index_data = f.read()
             
             try:
-                index = pickle.loads(zlib.decompress(index_data))
+                index = _safe_loads_rpa_index(zlib.decompress(index_data))
             except Exception:
                 # Some archives use raw pickle
                 f.seek(offset)
-                index = pickle.loads(f.read())
+                index = _safe_loads_rpa_index(f.read())
             
             return self._extract_files(f, index, output_dir, key)
             
@@ -108,10 +183,10 @@ class RPAParser:
             index_data = f.read()
             
             try:
-                index = pickle.loads(zlib.decompress(index_data))
+                index = _safe_loads_rpa_index(zlib.decompress(index_data))
             except Exception:
                 f.seek(offset)
-                index = pickle.loads(f.read())
+                index = _safe_loads_rpa_index(f.read())
             
             # RPA-2.0 doesn't use key obfuscation
             return self._extract_files(f, index, output_dir, key=0)

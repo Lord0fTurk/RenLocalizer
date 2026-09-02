@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from types import SimpleNamespace
 
@@ -11,9 +12,9 @@ from src.core.translator import (
 
 
 class RoutedResp:
-    def __init__(self, status, data):
+    def __init__(self, status, payload):
         self.status = status
-        self._data = data
+        self._payload = payload
 
     async def __aenter__(self):
         return self
@@ -22,15 +23,22 @@ class RoutedResp:
         return False
 
     async def json(self, content_type=None):
-        return self._data
+        return self._payload
+
+    async def text(self):
+        if isinstance(self._payload, str):
+            return self._payload
+        return json.dumps(self._payload)
 
 
 class RoutedSession:
-    """Returns 429 for /translate_a/single-style URLs and a configurable
-    payload for clients5.google.com URLs."""
+    """GETs: 429 for primary-style URLs, configurable payload for clients5.
+    POSTs: configurable raw envelope body for batchexecute URLs."""
 
-    def __init__(self, c5_data):
+    def __init__(self, c5_data, be_raw=None, primary_status=429):
         self.c5_data = c5_data
+        self.be_raw = be_raw
+        self.primary_status = primary_status
         self.closed = False
 
     def get(self, url=None, params=None, proxy=None, timeout=None, headers=None,
@@ -39,7 +47,12 @@ class RoutedSession:
         client = (params or {}).get("client", "")
         if "clients5" in url_str or client == "dict-chrome-ex":
             return RoutedResp(200, self.c5_data)
-        return RoutedResp(429, [])
+        return RoutedResp(self.primary_status, [])
+
+    def post(self, url=None, params=None, data=None, headers=None, timeout=None):
+        if "batchexecute" in str(url):
+            return RoutedResp(200, self.be_raw or "")
+        return RoutedResp(404, "")
 
     async def close(self):
         self.closed = True
@@ -231,3 +244,99 @@ def test_breaker_probe_window_allows_single_primary_attempt(monkeypatch):
     assert len(dummy_calls) >= 1
     assert len(c5_calls) >= 1
     assert g._primary_probe_at > time.time()
+
+
+# ---------------------------------------------------------------------------
+# batchexecute (third Google-family route) — parser + rescue integration
+# ---------------------------------------------------------------------------
+
+def _be_body(inner):
+    envelope = [["wrb.fr", "MkEWBc", json.dumps(inner), None]]
+    return ")]}'\n\n140\n" + json.dumps(envelope) + "\n"
+
+
+# Shape mirrors the live response: sentences at inner[1][0][0][5].
+_INNER_SENTENCES = [
+    None,
+    [[[None, None, None, None, None, [["Selam Dunya", None]], None, None, None, []]]],
+    "tr",
+    1,
+    "en",
+]
+
+# Degenerate shape: inner[1][0][0] is the translation string itself.
+_INNER_DIRECT = [None, [["Direkt ceviri"]]]
+
+
+def test_parse_batchexecute_sentence_path():
+    assert (
+        GoogleTranslator._parse_batchexecute_text(_be_body(_INNER_SENTENCES))
+        == "Selam Dunya"
+    )
+
+
+def test_parse_batchexecute_direct_fallback():
+    assert (
+        GoogleTranslator._parse_batchexecute_text(_be_body(_INNER_DIRECT))
+        == "Direkt ceviri"
+    )
+
+
+def test_parse_batchexecute_garbage_returns_none():
+    assert GoogleTranslator._parse_batchexecute_text(None) is None
+    assert GoogleTranslator._parse_batchexecute_text("") is None
+    assert GoogleTranslator._parse_batchexecute_text(')]}\'\n\n5\n[["di",4]]') is None
+
+
+def test_extract_batchexecute_language():
+    inner = [[None, None, "EN"]]
+    assert GoogleTranslator._extract_batchexecute_lang(_be_body(inner)) == "en"
+    assert GoogleTranslator._extract_batchexecute_lang(None) is None
+
+
+def test_batchexecute_rescues_when_clients5_also_blocked(monkeypatch):
+    g = _make_translator()
+    # clients5 answers with an empty payload (extraction -> None); only the
+    # batchexecute POST returns a valid envelope.
+    session = RoutedSession(c5_data=[], be_raw=_be_body(_INNER_SENTENCES))
+    calls = []
+
+    orig_get = session.get
+    orig_post = session.post
+
+    def tracking_get(url=None, **kwargs):
+        calls.append(str(url))
+        return orig_get(url=url, **kwargs)
+
+    def tracking_post(url=None, **kwargs):
+        calls.append(str(url))
+        return orig_post(url=url, **kwargs)
+
+    session.get = tracking_get
+    session.post = tracking_post
+
+    async def fake_get_session():
+        return session
+
+    monkeypatch.setattr(g, "_get_session", fake_get_session)
+
+    async def fast_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+    g._consecutive_429_count = RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD
+    g._primary_probe_at = time.time() + 9999.0
+
+    request = TranslationRequest(
+        text="hello world",
+        source_lang="en",
+        target_lang="tr",
+        engine=TranslationEngine.GOOGLE,
+    )
+    result = asyncio.run(g.translate_single(request))
+
+    assert result.success is True
+    assert result.translated_text == "Selam Dunya"
+    assert any("batchexecute" in c for c in calls)
+    assert g._alternate_rescues == 1

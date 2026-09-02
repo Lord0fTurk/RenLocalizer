@@ -1,4 +1,5 @@
 {
+  "ai_batch_json_parse_failed": "ИИ вернул некорректный пакетный ответ; переход к поштучному переводу.",
   "status_ready": "Готово",
   "about": "О программе",
   "about_content": "<h3>RenLocalizer</h3><p>Продвинутый инструмент перевода для Ren'Py.</p>",
@@ -428,6 +429,7 @@
   "guard_reason_html_leakage": "в вывод попала HTML-разметка",
   "guard_reason_length_inflation": "переведенный текст стал слишком длинным по сравнению с исходным",
   "guard_reason_placeholder_set_mismatch": "изменилась структура placeholder-переменных",
+  "guard_reason_printf_set_mismatch": "изменились форматные спецификаторы printf",
   "guard_reason_renpy_tag_set_mismatch": "изменились текстовые теги Ren'Py",
   "guard_reason_unknown": "подозрительный ответ переводчика",
   "log_guard_reverted_translation": "Защита сохранила исходный текст после подозрительного ответа переводчика ({reason}) в {path}:{line}",
@@ -544,7 +546,6 @@
   "parallel_batch_label": "Параллельные пакетные запросы",
   "parallel_batch_desc": "Отправляет пакеты перевода одновременно для ускорения в 8–16 раз. Рекомендуется для быстрых переводов; отключите при ограничении частоты.",
   "pipeline_logs": {
-    "ai_batch_json_parse_failed": "ИИ вернул некорректный пакетный ответ; переход к поштучному переводу.",
     "rpymc_entry_count": "[DEBUG] Количество записей .rpymc: {count}",
     "unren_needed": "Требуется UnRen: rpy={has_rpy}, rpyc={has_rpyc}, rpa={has_rpa}",
     "other_lang_folder_skipped": "Папка другого языка пропущена: {path}",

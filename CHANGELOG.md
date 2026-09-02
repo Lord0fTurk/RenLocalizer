@@ -4,6 +4,41 @@ render_with_liquid: false
 
 # RenLocalizer Changelog
 
+#### [2.8.13] - 2026-09-01
+
+> **Third Google Route (batchexecute/MkEWBc), Defender Mitigations, RPA Security Hardening & Extraction Filter Quality**
+
+> **🌐 Third Google Route — TranslateWebserverUi RPC Fallback (`batchexecute`/MkEWBc):** Added a third, fully independent Google pipeline to the alternate-endpoint rescue chain, live-verified from an actively blocked IP while `/translate_a/single` mirrors were range-throttled.
+> - **Rescue chain order:** primaries → `clients5.google.com/translate_a/t` → `translate.google.com/_/TranslateWebserverUi/data/batchexecute` → Lingva. Each family is tried per item; the first structurally valid translation wins.
+> - **Envelope parser:** Handles length-prefixed batchexecute bodies across three response shapes — sentence arrays at `inner[1][0][0][5]`, plain-string nodes at `inner[1][0][0]`, and legacy single-segment strings.
+> - **Language detection coverage:** `_detect_single_language` now falls back through clients5 auto-mode pairs and batchexecute detected-language extraction, eliminating `[Smart Detect]` failures during IP blockage.
+> - **Generalized rescue telemetry:** One `_alternate_rescues` counter and periodic status line now cover every alternate family instead of clients5 only.
+> - **Latent crash fix:** The last-resort error handler in `translate_single` logged an undefined local (`text`) whenever the synchronous fallback itself raised; it now logs `request.text`.
+
+> **🛡️ Windows Defender False-Positive Mitigations:** Investigated `Trojan:Script/Wacatac.C!ml` reports on the v2.8.12 Windows build: the flagged binary was hash-verified byte-identical to the official CI artifact and a PE audit showed no packing — the verdict is a machine-learning heuristic against unsigned PyInstaller bootloaders (`!ml` class), not an actual compromise.
+> - **Windows version resource:** Both GUI and CLI executables now embed full PE metadata (ProductName, CompanyName, FileVersion…) generated from `src/version.py`, giving antivirus submissions a legitimate identity to match.
+> - **UPX globally disabled:** `USE_UPX = False` on every platform — GitHub runners ship no upx binary, so it was already a silent no-op in CI; this removes local-build divergence and any future packer-heuristic risk.
+> - **SHA256SUMS.txt shipped with releases:** checksum file generated in CI; verify downloads against it before running.
+> - **Release-files fix:** corrected a release files-list mismatch that silently omitted the macOS DMG from the published v2.8.12 assets.
+
+> **🔒 RPA Index Deserialization Hardening:** The native RPA parser deserialized archive indexes with raw `pickle.loads` on untrusted game archives — a code-execution attack surface, since a hostile `.rpa` could ship a weaponized index.
+> - **Restricted unpickler:** RPA index loading now goes through `_RestrictedRPAUnpickler`, an allowlist-based `pickle.Unpickler` that only resolves harmless builtin containers/primitives (both Python 3 `builtins` and legacy Python 2 `__builtin__` spellings for older games). Any attempt to resolve a disallowed global (e.g. `os.system`) raises `UnpicklingError`, blocking arbitrary code execution during deserialization — the same proven pattern already used by `rpyc_reader.py`.
+> - **Zero-breakage fallback:** If the restricted path rejects a type a legitimate archive genuinely needs, loading falls back to standard unpickle with a logged warning so existing working archives keep functioning.
+> - **Tests:** New `tests/test_rpa_parser.py` covers allowlist resolution, disallowed-global rejection and the fallback path.
+
+> **🧹 Version Import Cleanup:** `run.py` dropped the stale hard-coded `VERSION = "2.8.11"` fallback that shadowed `src/version.py`; the single source of truth is now the version module (with a `0.0.0` sentinel only if the import fails).
+
+> **🔎 Extraction Filter Hardening (False-Positive Reduction):** Tightened the two filter control points (`parser.is_meaningful_text()` and `output_formatter._should_skip_translation()`) against three leak classes observed in real games.
+> - **Wrapped section headings:** single-token menu/section dividers such as `---Drops---`, `===TITLE===`, `~~separator~~` are now rejected. Detection requires 2+ repeats of the same non-alphanumeric wrapper character on BOTH ends with real content between, so dash-punctuated dialogue is untouched.
+> - **camelCase safety-net:** the formatter now carries the camelCase identifier check (`getUserName`, `playIntro`) that previously existed only in the parser, closing the safety-net parity gap.
+> - **Data-file references:** extension skip-lists expanded with `.dat`, `.sav`, `.csv`, `.mid`, `.midi`, `.psd` (+ formatter-side `.json/.xml/.txt` coverage), and a generic extension-suffix check catches asset paths whose stems use non-ASCII characters (e.g. `img/キャラ.dat`) that the ASCII-only path regexes could not match. Single-token constraint keeps sentences mentioning files translatable.
+
+> **🧮 Printf Specifier Protection & Symmetry Guard:** closed a placeholder-protection gap for Python `%`-format specifiers.
+> - **Broad protection:** `preserve_placeholders()` now protects the full printf specifier grammar — flags (`- + # 0`), width, precision, length modifiers and every conversion character (`%-5d`, `%6.2f`, `%(name)03d`…), not just the previous narrow `%[sdif]` family. The space flag is deliberately excluded so natural language like `100% sure` is never touched; literal `%%` escapes stay unprotected.
+> - **Post-translation guard:** `classify_translation_corruption()` gained `printf_set_mismatch` — source and translation must carry an identical sorted specifier list, or the translation reverts to the original (same token-absence contract as the Ren'Py tag check). Surfaces as a localized guard reason in all 9 UI languages.
+
+> **🧪 Tests:** Extended `tests/test_clients5_fallback.py` with envelope-parser shape tests (sentence array / plain-string node / malformed bodies) and a clients5-also-blocked integration rescue test. New `tests/test_printf_symmetry.py` (pattern coverage, natural-language safety, protect/restore roundtrip, guard accept/reject, locale coverage) and extended `tests/test_false_positive_filters.py` (camelCase, wrapped headings, data-file refs, parser parity). All 1135 tests passing.
+
 #### [2.8.12] - 2026-08-15
 
 > **Non-Identifier Speaker Formatting, Stateful Lexer, Hy-MT2 Profile, Settings Persistence & Factory Reset**

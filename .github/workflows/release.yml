@@ -306,6 +306,9 @@ jobs:
         with:
           name: macos-build
 
+      - name: Generate SHA256 checksums
+        run: sha256sum RenLocalizer-* > SHA256SUMS.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -313,7 +316,8 @@ jobs:
             RenLocalizer-Windows-x64.zip
             RenLocalizer-Linux-x64.AppImage
             RenLocalizer-Linux-x64.tar.gz
-            RenLocalizer-macOS.dmg
+            RenLocalizer-macOS-arm64.dmg
+            SHA256SUMS.txt
           body: ""
           draft: false
           prerelease: false

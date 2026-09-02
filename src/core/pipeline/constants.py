@@ -85,6 +85,14 @@ VISIBLE_TEXT_SENTENCE_RE = re.compile(r"[^.!?\u2026]+(?:[.!?\u2026]+|$)")
 VISIBLE_TEXT_BRIDGE_PREFIXES = ("And", "But", "So", "Or", "Then")
 PLACEHOLDER_BRACKET_RE = re.compile(r"\[[^\]]+\]")
 RENPY_TAG_RE = re.compile(r"\{/?[^}]+\}")
+# v2.8.13: printf-style format specifiers (%s, %-5d, %(name)03d, %6.2f ...).
+# Covers flags (- + # 0), width, precision, length modifiers and every
+# conversion character Python's % operator accepts. The space flag is
+# excluded on purpose so "% word" natural language is never matched.
+PRINTF_SPEC_RE = re.compile(
+    r"%\([^)]*\)[-+#0]*\d*(?:\.\d+)?[hlL]?[diouxXeEfFgGcrsa]"
+    r"|%[-+#0]*\d*(?:\.\d+)?[hlL]?[diouxXeEfFgGcrsa]"
+)
 HTML_LEAK_RE = re.compile(r"</?(?:span|div)\b", re.IGNORECASE)
 PLACEHOLDER_REMNANT_RE = re.compile(
     r"(?i)(?:R[A-Z]{0,6}LPH[0-9A-F]{3,}|XRPYX_[A-Z0-9_]+|RNPY_[A-Z0-9_]+)"

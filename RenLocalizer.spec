@@ -8,10 +8,63 @@ from PyInstaller.utils.hooks import collect_submodules
 block_cipher = None
 project_dir = os.path.abspath(os.getcwd())
 
-# UPX corrupts ad-hoc signed Mach-O binaries/dylibs on macOS arm64 — the
-# compressed libpython fails dlopen with "Failed to load Python shared
-# library". Never enable it for darwin targets.
-USE_UPX = sys.platform != 'darwin'
+# UPX stays OFF everywhere: GitHub runners ship no upx binary (so it was
+# already a silent no-op in CI) and compressed unsigned bootloaders only
+# raise antivirus ML-heuristic scores.
+USE_UPX = False
+
+# Windows version resource: proper PE metadata (ProductName/FileVersion/...)
+# lowers generic packer-heuristic scores on unsigned builds and gives
+# Defender submissions a legitimate identity to match against.
+def _read_app_version() -> str:
+    try:
+        with open(os.path.join(project_dir, 'src', 'version.py'), encoding='utf-8') as fh:
+            m = re.search(r'VERSION\s*=\s*"([^"]+)"', fh.read())
+            return m.group(1) if m else '0.0.0'
+    except OSError:
+        return '0.0.0'
+
+APP_VERSION = _read_app_version()
+_ver_parts = [int(x) for x in APP_VERSION.split('.')] + [0] * 4
+_ver_parts = _ver_parts[:4]
+
+import tempfile
+
+_version_info_path = os.path.join(
+    tempfile.gettempdir(), f'RenLocalizer_{APP_VERSION}_version_info.txt'
+)
+with open(_version_info_path, 'w', encoding='utf-8') as _vf:
+    _vf.write(f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=({_ver_parts[0]}, {_ver_parts[1]}, {_ver_parts[2]}, {_ver_parts[3]}),
+    prodvers=({_ver_parts[0]}, {_ver_parts[1]}, {_ver_parts[2]}, {_ver_parts[3]}),
+    mask=0x3F,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0),
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable("040904B0", [
+        StringStruct("CompanyName", "RenLocalizer Contributors"),
+        StringStruct("FileDescription", "Ren'Py Visual Novel Localization Tool"),
+        StringStruct("FileVersion", "{APP_VERSION}"),
+        StringStruct("InternalName", "RenLocalizer"),
+        StringStruct("OriginalFilename", "RenLocalizer.exe"),
+        StringStruct("ProductName", "RenLocalizer"),
+        StringStruct("ProductVersion", "{APP_VERSION}"),
+      ])
+    ]),
+    VarFileInfo([VarStruct("Translation", 1033, 1200)]),
+  ])
+""")
+
+win_exe_kwargs = (
+    {"version_file": _version_info_path} if sys.platform == "win32" else {}
+)
 
 # Automatically collect all submodules from src package
 hidden_imports = collect_submodules('src')
@@ -119,6 +172,7 @@ exe = EXE(
     entitlements_file=None,
     icon=os.path.join(project_dir, 'icon.ico') if sys.platform == 'win32' else None,
     manifest=os.path.join(project_dir, 'src', 'RenLocalizer.manifest') if (sys.platform == 'win32' and os.path.exists(os.path.join(project_dir, 'src', 'RenLocalizer.manifest'))) else None,
+    **win_exe_kwargs,
 )
 
 # =========================================================
@@ -160,6 +214,7 @@ exe_cli = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=os.path.join(project_dir, 'icon.ico') if sys.platform == 'win32' else None,
+    **win_exe_kwargs,
 )
 
 # =========================================================
@@ -193,18 +248,8 @@ coll_cli = COLLECT(
 # =========================================================
 # macOS: BUNDLE → produces RenLocalizer.app via PyInstaller
 # Only active on macOS; other platforms skip this block.
-# Requires UPX to be OFF (see USE_UPX) — compressed dylibs
-# break the ad-hoc signature of Contents/Frameworks/Python.
 # =========================================================
 if sys.platform == 'darwin':
-    def _read_version() -> str:
-        vp = os.path.join(project_dir, 'src', 'version.py')
-        try:
-            m = re.search(r'VERSION\s*=\s*"([^"]+)"', open(vp, encoding='utf-8').read())
-            return m.group(1) if m else '1.0'
-        except Exception:
-            return '1.0'
-
     app = BUNDLE(
         coll,
         name='RenLocalizer.app',
@@ -212,11 +257,11 @@ if sys.platform == 'darwin':
             if os.path.exists(os.path.join(project_dir, 'icon.icns'))
             else None,
         bundle_identifier='com.lord0fturk.renlocalizer',
-        version=_read_version(),
+        version=APP_VERSION,
         info_plist={
             'CFBundleName': 'RenLocalizer',
             'CFBundleDisplayName': 'RenLocalizer',
-            'CFBundleShortVersionString': _read_version(),
+            'CFBundleShortVersionString': APP_VERSION,
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,
             'LSMinimumSystemVersion': '11.0',

@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Tuple, Any, Union
 
 from .constants import (
     SEPARATOR_REMNANTS, PLACEHOLDER_REMNANT_RE, HTML_LEAK_RE,
-    PLACEHOLDER_BRACKET_RE, RENPY_TAG_RE, HOTKEY_SOURCE_RE,
+    PLACEHOLDER_BRACKET_RE, RENPY_TAG_RE, PRINTF_SPEC_RE, HOTKEY_SOURCE_RE,
 )
 
 
@@ -106,6 +106,14 @@ def classify_translation_corruption(original: str, translated: str) -> Optional[
     if '\u27e6' not in orig and '\u27e7' not in orig:
         if sorted(RENPY_TAG_RE.findall(orig)) != sorted(RENPY_TAG_RE.findall(trans)):
             return 'renpy_tag_set_mismatch'
+        # v2.8.13: printf-style format specifiers must survive translation
+        # intact — a dropped or mutated %-specifier breaks the game's
+        # string formatting at runtime ("%d items" → TypeError). The same
+        # token-absence guard as the tag check above applies: when the
+        # original still carries ⟦…⟧ tokens its specifier count is
+        # distorted by the protect step, so comparison is skipped.
+        if sorted(PRINTF_SPEC_RE.findall(orig)) != sorted(PRINTF_SPEC_RE.findall(trans)):
+            return 'printf_set_mismatch'
     return None
 
 
@@ -117,6 +125,7 @@ def get_guard_reason_text(reason: str, config) -> str:
         'length_inflation': ('guard_reason_length_inflation', 'translated text expanded far beyond the source'),
         'placeholder_set_mismatch': ('guard_reason_placeholder_set_mismatch', 'placeholder structure changed'),
         'renpy_tag_set_mismatch': ('guard_reason_renpy_tag_set_mismatch', "Ren'Py text tags changed"),
+        'printf_set_mismatch': ('guard_reason_printf_set_mismatch', 'printf-style format specifiers changed'),
     }
     key, default = reason_key_map.get(reason, ('guard_reason_unknown', (reason or 'suspicious translator output').replace('_', ' ')))
     return config.get_log_text(key, default)

@@ -1,7 +1,7 @@
 # RenLocalizer: Visual Novel Localization Made Simple
 
 <p align="center">
-  <strong>Minimalist, Zero-Dependency Translation and Localization Toolkit for Ren'Py Games.</strong>
+  <strong>Minimalist, Zero-Setup Translation and Localization Toolkit for Ren'Py Games.</strong>
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab">
   <img alt="GUI" src="https://img.shields.io/badge/gui-PyQt6%20%2B%20QML-41cd52">
   <img alt="Build" src="https://img.shields.io/badge/build-Portable%20%2F%20CLI-ff6b6b">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.8.12-111827">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.8.13-111827">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue">
 </p>
 
@@ -32,7 +32,7 @@ Visual Novel translations often fail because translation tools don't understand 
 
 **RenLocalizer solves this with zero hassle:**
 
-- **🔌 Zero Dependencies (Plug-and-Play):** All major machine translation and LLM submodules (including Google Translate, OpenAI, DeepSeek, and Local LLM support) are pre-bundled inside the application. No need to install Python or configure virtual environments.
+- **🔌 Zero Setup (Plug-and-Play):** The packaged build bundles all major machine translation and LLM submodules (including Google Translate, OpenAI, DeepSeek, and Local LLM support) inside the application. No need to install Python or configure virtual environments. (Running from source requires the packages in `requirements.txt`.)
 - **🎯 Minimalist UI:** Stripped of complex tabs and overwhelming settings. The single-page Material dashboard focuses strictly on: **Select Project -> Configure Engine -> Translate.**
 - **🛡️ Decoupled NMT & LLM Protection:** Google Translate is fed with custom Unicode brackets (`⟦N⟧`) which it preserves best, while LLMs (OpenAI/Local LLMs) receive structured XML tags (`<ph id="N">...</ph>`) to prevent subword tokenizer splitting and keep grammar markers contextually correct.
 - **🎮 Full CLI Mode:** Headless translation with Rich-powered terminal UI — perfect for automated builds (`python run_cli.py "Game.exe" -e libretranslate -t ru`).

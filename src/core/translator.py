@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import aiohttp
+import json
 import logging
 import os
 import re
@@ -29,6 +30,7 @@ from src.core.constants import (
     GOOGLE_ENDPOINTS,
     GOOGLE_BROWSER_HEADERS,
     GOOGLE_CLIENTS5_ENDPOINT,
+    GOOGLE_BATCHEXECUTE_ENDPOINT,
     LINGVA_INSTANCES,
     USER_AGENTS,
     MIRROR_MAX_FAILURES,
@@ -368,9 +370,9 @@ class GoogleTranslator(BaseTranslator):
         # Next wall-clock time at which a blocked primary endpoint may be
         # probed again (one request per RATE_LIMIT_PRIMARY_PROBE_INTERVAL).
         self._primary_probe_at: float = 0.0
-        # Alternate-family (clients5) rescue counter — drives the periodic
-        # user-visible status line while primaries are IP-blocked.
-        self._clients5_rescues: int = 0
+        # Alternate-family rescue counter (clients5/batchexecute) — drives
+        # the periodic user-visible status line while primaries are blocked.
+        self._alternate_rescues: int = 0
 
         # Initialize health tracking for all endpoints
         for ep in self.google_endpoints:
@@ -546,6 +548,101 @@ class GoogleTranslator(BaseTranslator):
         except Exception as e:
             self.logger.debug(f"clients5 fallback failed: {e}")
             return None
+
+    async def _post_batchexecute(self, inner_args: str) -> Optional[str]:
+        """POST one MkEWBc RPC to TranslateWebserverUi and return the raw
+        length-prefixed envelope body, or None on any failure."""
+        freq = json.dumps(
+            [[["MkEWBc", inner_args, None, "generic"]]], separators=(",", ":")
+        )
+        params = {
+            "rpcids": "MkEWBc",
+            "source-path": "/",
+            "f.sid": "",
+            "bl": "",
+            "hl": "en-US",
+            "soc-app": "1",
+            "soc-platform": "1",
+            "soc-device": "1",
+            "_reqid": str(random.randint(1000, 9999)),
+            "rt": "c",
+        }
+        headers = dict(GOOGLE_BROWSER_HEADERS)
+        headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8"
+        try:
+            session = await self._get_session()
+            async with session.post(
+                GOOGLE_BATCHEXECUTE_ENDPOINT,
+                params=params,
+                data=f"f.req={urllib.parse.quote(freq)}&",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=12),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.text()
+        except Exception as e:
+            self.logger.debug(f"batchexecute request failed: {e}")
+            return None
+
+    @staticmethod
+    def _iter_batchexecute_inner(raw: Optional[str]):
+        """Yield parsed inner payloads from a batchexecute envelope body."""
+        if not raw:
+            return
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("[") or "MkEWBc" not in line:
+                continue
+            try:
+                envelope = json.loads(line)
+                yield json.loads(envelope[0][2])
+            except (ValueError, IndexError, TypeError):
+                continue
+
+    @staticmethod
+    def _parse_batchexecute_text(raw: Optional[str]) -> Optional[str]:
+        """Extract joined sentence translations from a batchexecute body."""
+        for inner in GoogleTranslator._iter_batchexecute_inner(raw):
+            try:
+                node = inner[1][0][0]
+            except (TypeError, IndexError):
+                continue
+            if isinstance(node, str):
+                # Plain-string node: the whole translation in one value.
+                if node:
+                    return node
+                continue
+            if isinstance(node, list):
+                if len(node) > 5 and isinstance(node[5], list):
+                    text = "".join(s[0] for s in node[5] if s and s[0])
+                    if text:
+                        return text
+                if node and isinstance(node[0], str) and node[0]:
+                    return node[0]
+        return None
+
+    @staticmethod
+    def _extract_batchexecute_lang(raw: Optional[str]) -> Optional[str]:
+        """Detected source language sits at inner[0][2] in auto mode."""
+        for inner in GoogleTranslator._iter_batchexecute_inner(raw):
+            try:
+                detected = inner[0][2]
+                if isinstance(detected, str) and len(detected) >= 2:
+                    return detected.lower()
+            except (TypeError, IndexError):
+                continue
+        return None
+
+    async def _translate_via_batchexecute(
+        self, text: str, source: str, target: str
+    ) -> Optional[str]:
+        """Fallback via the TranslateWebserverUi RPC layer (MkEWBc) — a third,
+        fully separate Google pipeline. Verified live while /translate_a/single
+        was range-blocked."""
+        args = json.dumps([[text, source or "auto", target, True], [None]])
+        raw = await self._post_batchexecute(args)
+        return self._parse_batchexecute_text(raw)
 
     async def translate_single(self, request: TranslationRequest) -> TranslationResult:
         """Translate single text with multi-endpoint + Lingva fallback."""
@@ -1137,28 +1234,38 @@ class GoogleTranslator(BaseTranslator):
         # All Google endpoints failed, try alternate endpoint families then
         # the Lingva fallback (if enabled)
         if self.enable_lingva_fallback:
-            c5_result = await self._translate_via_clients5(
-                protected_text, request.source_lang, request.target_lang
-            )
-            if c5_result:
-                c5_final = restore_renpy_syntax(c5_result, placeholders)
+            for family, fetcher in (
+                ("clients5", self._translate_via_clients5),
+                ("batchexecute", self._translate_via_batchexecute),
+            ):
+                alt_result = await fetcher(
+                    protected_text, request.source_lang, request.target_lang
+                )
+                if not alt_result:
+                    continue
+                alt_final = restore_renpy_syntax(alt_result, placeholders)
                 if placeholders and validate_translation_integrity(
-                    c5_final, placeholders
+                    alt_final, placeholders
                 ):
                     self.logger.warning(
-                        "Integrity check failed (clients5): Placeholders missing. Using original text."
+                        f"Integrity check failed ({family}): Placeholders missing. "
+                        f"Using original text."
                     )
-                elif c5_final.strip() != source_text.strip():
-                    self._clients5_rescues += 1
-                    if self._clients5_rescues == 1 or self._clients5_rescues % 50 == 0:
+                    continue
+                if alt_final.strip() != source_text.strip():
+                    self._alternate_rescues += 1
+                    if (
+                        self._alternate_rescues == 1
+                        or self._alternate_rescues % 50 == 0
+                    ):
                         self.logger.warning(
                             f"Alternate Google endpoint active: "
-                            f"{self._clients5_rescues} translations rescued while "
+                            f"{self._alternate_rescues} translations rescued while "
                             f"primary endpoints are IP-blocked."
                         )
                     return TranslationResult(
                         source_text,
-                        c5_final,
+                        alt_final,
                         request.source_lang,
                         request.target_lang,
                         TranslationEngine.GOOGLE,
@@ -1248,7 +1355,9 @@ class GoogleTranslator(BaseTranslator):
                         metadata=request.metadata,
                     )
         except Exception as e:
-            self.logger.warning("translate_single failed for text=%r: %s", text, e)
+            self.logger.warning(
+                "translate_single failed for text=%r: %s", request.text, e
+            )
 
         return TranslationResult(
             source_text,
@@ -1485,6 +1594,16 @@ class GoogleTranslator(BaseTranslator):
                         return data[0][1].lower()
         except Exception as e:
             self.logger.debug(f"clients5 language detection failed: {e}")
+
+        try:
+            args = json.dumps([[text[:500], "auto", "en", True], [None]])
+            detected = self._extract_batchexecute_lang(
+                await self._post_batchexecute(args)
+            )
+            if detected:
+                return detected
+        except Exception as e:
+            self.logger.debug(f"batchexecute language detection failed: {e}")
 
         return None
 
@@ -2927,6 +3046,7 @@ class LibreTranslateTranslator(BaseTranslator):
 
         # Try multiple times to prevent ban/rate-limit interruptions
         import random
+
         from src.core.constants import USER_AGENTS
 
         for attempt in range(self.MAX_RETRIES):
