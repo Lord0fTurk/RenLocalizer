@@ -58,12 +58,12 @@ VSVersionInfo(
         StringStruct("ProductVersion", "{APP_VERSION}"),
       ])
     ]),
-    VarFileInfo([VarStruct("Translation", 1033, 1200)]),
+    VarFileInfo([VarStruct("Translation")]),
   ])
 """)
 
 win_exe_kwargs = (
-    {"version_file": _version_info_path} if sys.platform == "win32" else {}
+    {"version": _version_info_path} if sys.platform == "win32" else {}
 )
 
 # Automatically collect all submodules from src package
