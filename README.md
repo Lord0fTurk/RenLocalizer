@@ -20,7 +20,7 @@
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab">
   <img alt="GUI" src="https://img.shields.io/badge/gui-PyQt6%20%2B%20QML-41cd52">
   <img alt="Build" src="https://img.shields.io/badge/build-Portable%20%2F%20CLI-ff6b6b">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.8.13-111827">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.8.14-111827">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue">
 </p>
 

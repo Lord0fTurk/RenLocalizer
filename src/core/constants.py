@@ -50,6 +50,9 @@ GOOGLE_BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://translate.google.com/",
     "Cookie": "CONSENT=YES+cb",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
 }
 
 # Alternate Google endpoint family (/translate_a/t, Chrome-dictionary

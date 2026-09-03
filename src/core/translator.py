@@ -260,6 +260,174 @@ class BaseTranslator(ABC):
         return True
 
 
+class _FamilyHealth:
+    """Per-family success/failure tracker for EndpointRouter."""
+
+    __slots__ = ("success", "failure", "last_failure_at", "blocked_until")
+
+    def __init__(self) -> None:
+        self.success: int = 0
+        self.failure: int = 0
+        self.last_failure_at: float = 0.0
+        self.blocked_until: float = 0.0
+
+    @property
+    def success_rate(self) -> float:
+        total = self.success + self.failure
+        return self.success / total if total > 0 else 1.0
+
+    def record_success(self) -> None:
+        self.success += 1
+
+    def record_failure(self, block_for: float = 0.0) -> None:
+        self.failure += 1
+        self.last_failure_at = time.time()
+        if block_for > 0:
+            self.blocked_until = time.time() + block_for
+
+    def is_blocked(self) -> bool:
+        return time.time() < self.blocked_until
+
+    def reset_block(self) -> None:
+        self.blocked_until = 0.0
+
+
+class EndpointRouter:
+    """Session-scoped router between three Google endpoint families.
+
+    Routing priority (batch):  PRIMARY → BATCHEXECUTE → CLIENTS5 → LINGVA
+    Routing priority (single): PRIMARY → CLIENTS5 → BATCHEXECUTE → LINGVA
+
+    State transitions
+    -----------------
+    HEALTHY   → 6× consecutive primary 429s     → ALTERNATE
+    ALTERNATE → background probe success         → HEALTHY  (auto-restore)
+    Any family → 2× consecutive failures         → that family blocked 120s
+
+    The probe runs as a non-blocking asyncio Task so it never stalls
+    the in-flight translation batch.
+    """
+
+    FAMILY_PRIMARY      = "primary"
+    FAMILY_BATCHEXECUTE = "batchexecute"
+    FAMILY_CLIENTS5     = "clients5"
+    FAMILY_LINGVA       = "lingva"
+
+    # Ordered preference lists
+    PRIORITY_BATCH  = [FAMILY_PRIMARY, FAMILY_BATCHEXECUTE, FAMILY_CLIENTS5, FAMILY_LINGVA]
+    PRIORITY_SINGLE = [FAMILY_PRIMARY, FAMILY_CLIENTS5, FAMILY_BATCHEXECUTE, FAMILY_LINGVA]
+
+    def __init__(self) -> None:
+        self._health: Dict[str, _FamilyHealth] = {
+            f: _FamilyHealth() for f in self.PRIORITY_BATCH
+        }
+        self._consecutive_primary_429: int = 0
+        self._probe_task: Optional[asyncio.Task] = None
+        # Injected by GoogleTranslator after construction so the probe can
+        # call the real network method without a circular reference.
+        self._do_probe: Optional[asyncio.coroutines.CoroType] = None  # type: ignore[type-arg]
+        self.logger = logging.getLogger("EndpointRouter")
+
+    # ── Public state ────────────────────────────────────────────────────────
+
+    @property
+    def primary_blocked(self) -> bool:
+        """True while the circuit breaker for /translate_a/single is active."""
+        return self._consecutive_primary_429 >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD
+
+    def best_family_for_batch(self) -> str:
+        """Return the highest-priority non-blocked family for batch calls."""
+        for fam in self.PRIORITY_BATCH:
+            # PRIMARY family is blocked either by the 429 circuit breaker counter
+            # OR by a timed FamilyHealth block (from record_family_failure).
+            if fam == self.FAMILY_PRIMARY and self.primary_blocked:
+                continue
+            if not self._health[fam].is_blocked():
+                return fam
+        return self.FAMILY_LINGVA
+
+    def best_family_for_single(self) -> str:
+        """Return the highest-priority non-blocked family for single calls."""
+        for fam in self.PRIORITY_SINGLE:
+            if fam == self.FAMILY_PRIMARY and self.primary_blocked:
+                continue
+            if not self._health[fam].is_blocked():
+                return fam
+        return self.FAMILY_LINGVA
+
+    # ── Recording outcomes ──────────────────────────────────────────────────
+
+    def record_primary_429(self) -> None:
+        """Called each time /translate_a/single returns HTTP 429."""
+        self._consecutive_primary_429 += 1
+        if self._consecutive_primary_429 == RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD:
+            self.logger.warning(
+                "EndpointRouter: PRIMARY blocked — switching to BATCHEXECUTE/CLIENTS5. "
+                "Background probe scheduled every %ds.", RATE_LIMIT_PRIMARY_PROBE_INTERVAL
+            )
+            self._schedule_probe()
+
+    def record_primary_success(self) -> None:
+        """Called when /translate_a/single returns a valid translation."""
+        self._health[self.FAMILY_PRIMARY].record_success()
+        if self._consecutive_primary_429 > 0:
+            self._consecutive_primary_429 = max(0, self._consecutive_primary_429 - 1)
+
+    def record_family_success(self, family: str) -> None:
+        """Record a successful translation from any alternate family."""
+        h = self._health.get(family)
+        if h:
+            h.record_success()
+
+    def record_family_failure(self, family: str, block_for: float = 120.0) -> None:
+        """Record a failure for an alternate family and optionally block it."""
+        h = self._health.get(family)
+        if h:
+            h.record_failure(block_for)
+            if h.failure >= 2 and block_for > 0:
+                self.logger.warning(
+                    "EndpointRouter: %s blocked for %.0fs after repeated failures.",
+                    family, block_for,
+                )
+
+    # ── Background probe ────────────────────────────────────────────────────
+
+    def _schedule_probe(self) -> None:
+        """Start background probe task if not already running."""
+        if self._probe_task is None or self._probe_task.done():
+            try:
+                self._probe_task = asyncio.get_event_loop().create_task(
+                    self._probe_loop(), name="EndpointRouter-probe"
+                )
+            except RuntimeError:
+                # No running event loop yet (e.g. import-time) — probe will
+                # be scheduled lazily on the next _schedule_probe() call.
+                pass
+
+    async def _probe_loop(self) -> None:
+        """Non-blocking probe: every RATE_LIMIT_PRIMARY_PROBE_INTERVAL seconds,
+        call self._do_probe() (injected by GoogleTranslator). On success restore
+        the primary family."""
+        while self.primary_blocked:
+            await asyncio.sleep(RATE_LIMIT_PRIMARY_PROBE_INTERVAL)
+            if not self.primary_blocked:
+                return
+            if self._do_probe is None:
+                continue
+            try:
+                ok = await self._do_probe()
+                if ok:
+                    self._consecutive_primary_429 = 0
+                    self._health[self.FAMILY_PRIMARY].reset_block()
+                    self.logger.warning(
+                        "EndpointRouter: PRIMARY probe succeeded — restoring primary endpoints."
+                    )
+                    return
+                self.logger.debug("EndpointRouter: probe attempt failed, staying on alternate.")
+            except Exception as exc:
+                self.logger.debug("EndpointRouter: probe raised %s", exc)
+
+
 class GoogleTranslator(BaseTranslator):
     """Multi-endpoint Google Translator with Lingva fallback.
 
@@ -365,14 +533,25 @@ class GoogleTranslator(BaseTranslator):
         # because Google rate-limits by IP, not by mirror domain.
         self._global_cooldown_until: float = 0.0
         self._consecutive_429_count: int = (
-            0  # Track consecutive 429s across all mirrors
+            0  # Track consecutive 429s across all mirrors (backward-compat)
         )
         # Next wall-clock time at which a blocked primary endpoint may be
         # probed again (one request per RATE_LIMIT_PRIMARY_PROBE_INTERVAL).
+        # Kept for backward-compat; EndpointRouter owns the probe logic now.
         self._primary_probe_at: float = 0.0
-        # Alternate-family rescue counter (clients5/batchexecute) — drives
-        # the periodic user-visible status line while primaries are blocked.
+        # Alternate-family rescue counter — drives the periodic status line.
         self._alternate_rescues: int = 0
+
+        # ── Smart endpoint router ─────────────────────────────────────────
+        # Manages PRIMARY → BATCHEXECUTE → CLIENTS5 → LINGVA routing with
+        # per-family health tracking and a non-blocking background probe.
+        self._router = EndpointRouter()
+        # Probe lock: ensures only ONE concurrent worker sends a primary probe
+        # request, preventing N workers from all probing simultaneously and
+        # triggering N × 429.
+        self._probe_lock: asyncio.Lock = asyncio.Lock()
+        # Inject the probe callback so the router can issue real requests.
+        self._router._do_probe = self._probe_primary_endpoint  # type: ignore[assignment]
 
         # Initialize health tracking for all endpoints
         for ep in self.google_endpoints:
@@ -414,6 +593,43 @@ class GoogleTranslator(BaseTranslator):
 
         # Keep a baseline to restore when proxy adaptasyonu devre dışı
         self._base_multi_q_concurrency = self.multi_q_concurrency
+
+    async def _probe_primary_endpoint(self) -> bool:
+        """Single lightweight probe request to any primary mirror.
+        Called by EndpointRouter._probe_loop() — runs in background, never
+        blocks the in-flight translation pipeline.
+        Returns True if the primary endpoint is responding normally."""
+        endpoint = random.choice(self.google_endpoints)
+        params = {
+            "client": "gtx",
+            "sl": "en",
+            "tl": "tr",
+            "dt": "t",
+            "q": "test",
+        }
+        try:
+            query = urllib.parse.urlencode(params)
+            url = f"{endpoint}?{query}"
+            session = await self._get_session()
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=6),
+                headers=GOOGLE_BROWSER_HEADERS,
+            ) as resp:
+                if resp.status == 200:
+                    self.logger.info(
+                        "Primary probe succeeded on %s — primary endpoints restored.", endpoint
+                    )
+                    # Sync legacy counter so _try_batch_separator guard works too
+                    self._consecutive_429_count = 0
+                    self._primary_probe_at = 0.0
+                    return True
+                if resp.status == 429:
+                    self.logger.debug("Primary probe got 429 on %s — still blocked.", endpoint)
+                    return False
+        except Exception as exc:
+            self.logger.debug("Primary probe exception on %s: %s", endpoint, exc)
+        return False
 
     async def _get_next_endpoint(self) -> str:
         """Random endpoint selection with health checks and ban cooldown."""
@@ -644,6 +860,184 @@ class GoogleTranslator(BaseTranslator):
         raw = await self._post_batchexecute(args)
         return self._parse_batchexecute_text(raw)
 
+    async def _translate_via_batchexecute_batch(
+        self,
+        texts: List[str],
+        source: str,
+        target: str,
+    ) -> Optional[List[str]]:
+        """Multi-item batch via the TranslateWebserverUi RPC layer (MkEWBc).
+
+        Sends all texts in a single f.req array POST — one round-trip for
+        the whole batch. Each item is tagged with its index (str(i)).
+        Google streams envelopes (wrb.fr) back asynchronously in arbitrary
+        order; we match each item by its ID tag back to its exact slot.
+
+        Returns None if any item failed to parse or was omitted.
+        """
+        if not texts:
+            return None
+
+        # Build per-item RPC frames tagged with original index: [[text, src, tgt, True], [None]]
+        rpc_items = [
+            ["MkEWBc", json.dumps([[t, source or "auto", target, True], [None]]), None, str(i)]
+            for i, t in enumerate(texts)
+        ]
+        freq = json.dumps([rpc_items], separators=(",", ":"))
+
+        params = {
+            "rpcids": "MkEWBc",
+            "source-path": "/",
+            "f.sid": "",
+            "bl": "",
+            "hl": "en-US",
+            "soc-app": "1",
+            "soc-platform": "1",
+            "soc-device": "1",
+            "_reqid": str(random.randint(1000, 9999)),
+            "rt": "c",
+        }
+        headers = dict(GOOGLE_BROWSER_HEADERS)
+        headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8"
+
+        try:
+            session = await self._get_session()
+            async with session.post(
+                GOOGLE_BATCHEXECUTE_ENDPOINT,
+                params=params,
+                data=f"f.req={urllib.parse.quote(freq)}&",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as resp:
+                if resp.status != 200:
+                    self.logger.debug(
+                        "batchexecute batch HTTP %d for %d items", resp.status, len(texts)
+                    )
+                    return None
+                raw = await resp.text()
+        except Exception as exc:
+            self.logger.debug("batchexecute batch request failed: %s", exc)
+            return None
+
+        # Parse per-item responses from length-prefixed wrb.fr envelopes
+        results: List[Optional[str]] = [None] * len(texts)
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("[") or "wrb.fr" not in line:
+                continue
+            try:
+                env = json.loads(line)
+                for entry in env:
+                    if isinstance(entry, list) and len(entry) >= 4 and entry[0] == "wrb.fr":
+                        try:
+                            item_id = int(entry[-1])
+                        except (ValueError, TypeError):
+                            continue
+                        if not (0 <= item_id < len(texts)):
+                            continue
+                        if not entry[2]:
+                            continue
+                        inner = json.loads(entry[2])
+                        try:
+                            node = inner[1][0][0]
+                        except (TypeError, IndexError):
+                            continue
+
+                        if isinstance(node, str) and node:
+                            results[item_id] = node
+                        elif isinstance(node, list) and len(node) > 5 and isinstance(node[5], list):
+                            text_out = "".join(s[0] for s in node[5] if s and s[0])
+                            results[item_id] = text_out or None
+                        elif isinstance(node, list) and node and isinstance(node[0], str) and node[0]:
+                            results[item_id] = node[0]
+            except (ValueError, TypeError):
+                continue
+
+        # If any item is missing, fail over to clients5 gracefully
+        if any(r is None for r in results):
+            received = sum(1 for r in results if r is not None)
+            self.logger.debug(
+                "batchexecute batch incomplete: received %d/%d items", received, len(texts)
+            )
+            return None
+
+        return [r for r in results if r is not None]
+
+    async def _translate_via_clients5_parallel(
+        self,
+        batch: List[TranslationRequest],
+        router: "EndpointRouter",
+    ) -> List["TranslationResult"]:
+        """Translate a batch using clients5 single-item calls in parallel.
+
+        Used when the primary/batchexecute families are blocked. Concurrency
+        is capped so we don't hammer the alternate endpoint.
+        """
+        sem = asyncio.Semaphore(min(self.multi_q_concurrency, 16))
+
+        async def _one(req: TranslationRequest) -> TranslationResult:
+            async with sem:
+                meta = req.metadata if isinstance(req.metadata, dict) else {}
+                source_text = meta.get("original_text", req.text)
+                protected, placeholders, _ = self._prepare_request_protection(req)
+
+                raw = await self._translate_via_clients5(
+                    protected, req.source_lang, req.target_lang
+                )
+                if raw:
+                    router.record_family_success(EndpointRouter.FAMILY_CLIENTS5)
+                    restored = restore_renpy_syntax(raw, placeholders)
+                    if placeholders and validate_translation_integrity(restored, placeholders):
+                        # Integrity failed — try batchexecute as per-item fallback
+                        raw2 = await self._translate_via_batchexecute(
+                            protected, req.source_lang, req.target_lang
+                        )
+                        if raw2:
+                            restored = restore_renpy_syntax(raw2, placeholders)
+                            if validate_translation_integrity(restored, placeholders):
+                                restored = source_text
+                        else:
+                            restored = source_text
+                    if restored.strip() != source_text.strip():
+                        self._alternate_rescues += 1
+                        if self._alternate_rescues == 1 or self._alternate_rescues % 50 == 0:
+                            self.logger.warning(
+                                "Alternate Google endpoint active: %d translations rescued "
+                                "while primary endpoints are IP-blocked.",
+                                self._alternate_rescues,
+                            )
+                    return TranslationResult(
+                        source_text, restored,
+                        req.source_lang, req.target_lang,
+                        TranslationEngine.GOOGLE, True,
+                        confidence=0.85, metadata=req.metadata,
+                    )
+
+                router.record_family_failure(EndpointRouter.FAMILY_CLIENTS5, block_for=0.0)
+                return TranslationResult(
+                    source_text, source_text,
+                    req.source_lang, req.target_lang,
+                    TranslationEngine.GOOGLE, False,
+                    "clients5 failed", metadata=req.metadata,
+                )
+
+        tasks = [asyncio.create_task(_one(r)) for r in batch]
+        gathered = await asyncio.gather(*tasks, return_exceptions=True)
+
+        results: List[TranslationResult] = []
+        for i, item in enumerate(gathered):
+            if isinstance(item, Exception):
+                req = batch[i]
+                meta = req.metadata if isinstance(req.metadata, dict) else {}
+                src = meta.get("original_text", req.text)
+                results.append(TranslationResult(
+                    src, src, req.source_lang, req.target_lang,
+                    TranslationEngine.GOOGLE, False, str(item), metadata=req.metadata,
+                ))
+            else:
+                results.append(item)
+        return results
+
     async def translate_single(self, request: TranslationRequest) -> TranslationResult:
         """Translate single text with multi-endpoint + Lingva fallback."""
         metadata = request.metadata if isinstance(request.metadata, dict) else {}
@@ -689,11 +1083,11 @@ class GoogleTranslator(BaseTranslator):
             entered_as_probe = False
             if self._consecutive_429_count >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD:
                 now = time.time()
-                if now < self._primary_probe_at:
-                    return None
-                self._primary_probe_at = (
-                    now + RATE_LIMIT_PRIMARY_PROBE_INTERVAL
-                )
+                async with self._probe_lock:
+                    if now < self._primary_probe_at:
+                        return None
+                    # Atomically claim the probe slot
+                    self._primary_probe_at = now + RATE_LIMIT_PRIMARY_PROBE_INTERVAL
                 entered_as_probe = True
             max_attempts = 3
             for attempt in range(1, max_attempts + 1):
@@ -705,7 +1099,10 @@ class GoogleTranslator(BaseTranslator):
                     and not entered_as_probe
                 ):
                     return None
-                await self._wait_out_global_cooldown()
+                # Probe skips global cooldown — its purpose is to test
+                # whether the IP block has lifted, not to wait it out.
+                if not entered_as_probe:
+                    await self._wait_out_global_cooldown()
                 try:
                     query = urllib.parse.urlencode(params, doseq=True, safe="")
                     url = f"{endpoint}?{query}"
@@ -739,6 +1136,7 @@ class GoogleTranslator(BaseTranslator):
                                     self._consecutive_429_count = max(
                                         0, self._consecutive_429_count - 1
                                     )
+                                    self._router.record_primary_success()
                                     # Report proxy success
                                     if proxy_url_used and self.proxy_manager:
                                         self.proxy_manager.mark_proxy_success(
@@ -761,6 +1159,8 @@ class GoogleTranslator(BaseTranslator):
                                 self._endpoint_health[endpoint]["fails"] += 1
                             if proxy_url_used and self.proxy_manager:
                                 self.proxy_manager.mark_proxy_failed(proxy_url_used)
+                            # Notify router — triggers ALTERNATE state on Nth 429
+                            self._router.record_primary_429()
                             wait_time = min(global_wait, 25.0) + random.uniform(0.5, 1.5)
                             self.logger.warning(
                                 f"Google 429 (Rate Limit) on {endpoint}. Global cooldown {global_wait:.0f}s (#{self._consecutive_429_count})"
@@ -1697,6 +2097,10 @@ class GoogleTranslator(BaseTranslator):
             )
 
         concurrency_limit = self.multi_q_concurrency if is_parallel else 1
+        # When not using proxies, cap concurrency to 4 to prevent Google's WAF
+        # from instantly flagging the residential IP with a burst-rate 429.
+        if is_parallel and not getattr(self, "use_proxy", False):
+            concurrency_limit = min(concurrency_limit, 4)
         sem = asyncio.Semaphore(concurrency_limit)
 
         async def run_slice(slice_items: List[Tuple[int, TranslationRequest]]):
@@ -1830,20 +2234,26 @@ class GoogleTranslator(BaseTranslator):
     async def _multi_q(
         self, batch: List[TranslationRequest]
     ) -> List[TranslationResult]:
-        """Batch translation - tries separator method first, falls back to parallel individual.
+        """Batch translation with smart router: PRIMARY → BATCHEXECUTE → CLIENTS5.
 
-        For better performance, uses parallel individual translation when batch method fails.
+        Routing is determined by EndpointRouter which tracks per-family health
+        and circuit breaker state. When primaries are blocked the batch goes
+        directly to batchexecute (true multi-item) or clients5 (parallel)
+        without wasting time on doomed primary probe attempts.
         """
         if not batch:
             return []
         if len(batch) == 1:
             return [await self.translate_single(batch[0])]
 
+        router = self._router
         total_chars = sum(len(r.text) for r in batch)
 
-        # Separator method dene (daha büyük batch'ler için de)
-        # Limit artırıldı: 50 metin, 8000 karakter
-        if len(batch) <= 50 and total_chars <= 8000:
+        # ── PRIMARY PATH ────────────────────────────────────────────────────
+        # Only attempt batch separator when primaries are healthy.
+        # When primary_blocked, skip straight to alternate families — this
+        # is the key fix that eliminates the 25-50s probe-induced stalls.
+        if not router.primary_blocked and len(batch) <= 50 and total_chars <= 8000:
             result = await self._try_batch_separator(batch)
             if result:
                 # ── Batch integrity-fail recovery ──
@@ -1872,17 +2282,70 @@ class GoogleTranslator(BaseTranslator):
                         )
                 return result
             self.logger.debug(
-                f"Batch separator failed for {len(batch)} texts ({total_chars} chars), falling back to parallel"
+                f"Batch separator failed for {len(batch)} texts ({total_chars} chars)"
             )
 
-        # Separator başarısız veya batch çok büyük - paralel çeviri
-        self.logger.debug(f"Using parallel translation for {len(batch)} texts")
+        # ── ALTERNATE FAMILIES (primary blocked or separator failed) ────────
+        best = router.best_family_for_batch()
+
+        # BATCHEXECUTE: true multi-item batch — single round-trip
+        if best in (EndpointRouter.FAMILY_BATCHEXECUTE, EndpointRouter.FAMILY_PRIMARY):
+            source_lang = batch[0].source_lang
+            target_lang = batch[0].target_lang
+            protected_texts = []
+            all_placeholders = []
+            for req in batch:
+                protected, placeholders, _ = self._prepare_request_protection(req)
+                protected_texts.append(protected)
+                all_placeholders.append(placeholders)
+
+            raw_results = await self._translate_via_batchexecute_batch(
+                protected_texts, source_lang, target_lang
+            )
+            if raw_results:
+                router.record_family_success(EndpointRouter.FAMILY_BATCHEXECUTE)
+                self.logger.info(
+                    "batchexecute batch: translated %d texts in one round-trip.", len(batch)
+                )
+                final: List[TranslationResult] = []
+                for req, raw, placeholders in zip(batch, raw_results, all_placeholders):
+                    meta = req.metadata if isinstance(req.metadata, dict) else {}
+                    source_text = meta.get("original_text", req.text)
+                    restored = restore_renpy_syntax(raw, placeholders) if raw else source_text
+                    if placeholders and raw and validate_translation_integrity(restored, placeholders):
+                        restored = source_text
+                    final.append(TranslationResult(
+                        source_text, restored,
+                        req.source_lang, req.target_lang,
+                        TranslationEngine.GOOGLE, True,
+                        confidence=0.85, metadata=req.metadata,
+                    ))
+                return final
+
+            router.record_family_failure(EndpointRouter.FAMILY_BATCHEXECUTE, block_for=120.0)
+            self.logger.debug("batchexecute batch failed — falling through to clients5.")
+            best = router.best_family_for_batch()
+
+        # CLIENTS5: parallel single-item calls
+        if best == EndpointRouter.FAMILY_CLIENTS5:
+            return await self._translate_via_clients5_parallel(batch, router)
+
+        # LINGVA / last resort: fall back to parallel individual translate_single
+        self.logger.debug(f"Using parallel translation for {len(batch)} texts (lingva/last resort)")
         return await self._translate_parallel(batch)
 
     async def _try_batch_separator(
         self, batch: List[TranslationRequest]
     ) -> Optional[List[TranslationResult]]:
-        """Try batch translation with separator. Returns None if fails."""
+        """Try batch translation with separator. Returns None if fails.
+
+        When the EndpointRouter marks primary endpoints as blocked, this
+        method returns None immediately so _multi_q can route to
+        batchexecute/clients5 without triggering any probe sleep.
+        """
+        # Fast exit: primaries are IP-blocked — no point attempting them.
+        if self._router.primary_blocked:
+            return None
 
         protected_texts = []
         all_placeholders = []  # Her metin için placeholder sözlüğü
@@ -1919,11 +2382,11 @@ class GoogleTranslator(BaseTranslator):
             entered_as_probe = False
             if self._consecutive_429_count >= RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD:
                 now = time.time()
-                if now < self._primary_probe_at:
-                    return None
-                self._primary_probe_at = (
-                    now + RATE_LIMIT_PRIMARY_PROBE_INTERVAL
-                )
+                async with self._probe_lock:
+                    if now < self._primary_probe_at:
+                        return None
+                    # Atomically claim the probe slot
+                    self._primary_probe_at = now + RATE_LIMIT_PRIMARY_PROBE_INTERVAL
                 entered_as_probe = True
             max_attempts = 2  # Fewer retries than translate_single (batch is heavier)
             for attempt in range(1, max_attempts + 1):
@@ -1934,9 +2397,11 @@ class GoogleTranslator(BaseTranslator):
                     and not entered_as_probe
                 ):
                     return None
-                await self._wait_out_global_cooldown()
+                # Probe requests skip the global cooldown — they are supposed
+                # to test whether the IP block has lifted, not wait it out.
+                if not entered_as_probe:
+                    await self._wait_out_global_cooldown()
                 try:
-                    url = f"{endpoint}?{query}"
                     session = await self._get_session()
 
                     proxy = None
@@ -1947,11 +2412,15 @@ class GoogleTranslator(BaseTranslator):
                             proxy = p.url
                             proxy_url_used = proxy
 
-                    async with session.get(
-                        url,
+                    post_headers = dict(GOOGLE_BROWSER_HEADERS)
+                    post_headers["Content-Type"] = "application/x-www-form-urlencoded;charset=utf-8"
+
+                    async with session.post(
+                        endpoint,
+                        data=query,
                         proxy=proxy,
                         timeout=aiohttp.ClientTimeout(total=15),
-                        headers=GOOGLE_BROWSER_HEADERS,
+                        headers=post_headers,
                     ) as resp:
                         if resp.status == 429:
                             # 429 = IP-level rate limit — apply global cooldown

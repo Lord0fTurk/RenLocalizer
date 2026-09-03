@@ -78,7 +78,8 @@ index.html
 opencode.exe
 
 # Test game files (large binaries)
-TestOyun/
+*impl/
+*_impl/
 
 # Temp directories
 tmp/

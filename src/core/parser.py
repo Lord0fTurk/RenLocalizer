@@ -269,7 +269,12 @@ class RenPyParser:
         )
 
         self.menu_choice_re = re.compile(
-            r'^\s*(?P<quote>"(?:[^"\\]|\\.)*"|\'(?:[^\\\']|\\.)*\')\s*(?:\((?:[^)(]*|\([^)]*\))*\)\s*)?(?:if\s+[^:]+)?\s*:\s*'
+            # Paren group matches one atom per iteration (single char or one
+            # depth-1 group) so every input position has exactly one viable
+            # path: linear time guaranteed. The old (?:[^()]*|\([^()]*\))* form
+            # let the greedy run repartition content 2^N ways on overall
+            # failure (ReDoS, 12_shop.rpy:120). Same accepted language.
+            r'^\s*(?P<quote>"(?:[^"\\]|\\.)*"|\'(?:[^\\\']|\\.)*\')\s*(?:\((?:[^()]|\([^()]*\))*\)\s*)?(?:if\s+[^:]+)?\s*:\s*'
         )
         self.menu_choice_multiline_re = re.compile(
             r'^\s*(?P<delim>"""|\'\'\')(?P<body>(?![\s]*\)).*)\s*(?:if\s+[^:]+)?\s*:\s*$'
@@ -1120,6 +1125,11 @@ class RenPyParser:
                 continue
 
             for descriptor in self.pattern_registry:
+                # ReDoS guard: menu patterns always terminate with ':' — running
+                # the nested-paren menu pattern on colon-less lines can
+                # backtrack exponentially (12_shop.rpy:120). Skip cheaply.
+                if descriptor.get('type') == 'menu' and ':' not in raw_line:
+                    continue
                 match = descriptor['regex'].match(raw_line)
                 if not match:
                     continue

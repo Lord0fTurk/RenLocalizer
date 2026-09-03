@@ -30,6 +30,9 @@ class DummySession:
     def get(self, url, proxy=None, timeout=None, headers=None):
         return DummyResp(self.data)
 
+    def post(self, url, data=None, proxy=None, timeout=None, headers=None):
+        return DummyResp(self.data)
+
     async def close(self):
         self.closed = True
 

@@ -4,6 +4,40 @@ render_with_liquid: false
 
 # RenLocalizer Changelog
 
+#### [2.8.14] - 2026-09-03
+
+> **Smart Endpoint Router — Eliminating 30s Translation Spikes & True batchexecute Batch**
+
+> **🚦 EndpointRouter — Family-Level Smart Routing (`translator.py`):** Replaced the implicit linear fallback chain (`primary → clients5 → batchexecute`) with a structured `EndpointRouter` class that tracks per-family health and implements a proper state machine.
+> - **Routing priority (batch):** `PRIMARY` (batch separator) → `BATCHEXECUTE` (true multi-item) → `CLIENTS5` (parallel single-item) → `LINGVA`
+> - **Routing priority (single):** `PRIMARY` → `CLIENTS5` → `BATCHEXECUTE` → `LINGVA`
+> - **`_FamilyHealth` tracker:** Per-family `success`, `failure`, `blocked_until` with `success_rate` property. Families block individually for a configurable `block_for` duration on repeated failures.
+> - **`primary_blocked` property:** Driven by `_consecutive_primary_429` counter (threshold = 6); `best_family_for_batch/single()` explicitly skips PRIMARY when this is true.
+
+> **⚡ batchexecute True Multi-Item Batch (`_translate_via_batchexecute_batch`):** When PRIMARY is blocked, `_multi_q` now sends the entire batch (up to 50 items) as a **single** `f.req` array POST to `TranslateWebserverUi/data/batchexecute` instead of N individual `translate_single` calls. One round-trip replaces what was previously O(N) requests.
+> - **Indexed RPC Slot Mapping:** Each RPC item is tagged with its original index (`str(i)`). Google streams envelopes (`wrb.fr`) asynchronously in arbitrary order; the parser now maps each item by `int(entry[-1])` directly into its slot index, completely eliminating out-of-order text corruption.
+> - **Sentence Stream Parser:** Robust parser extracts translation from `inner[1][0][0][5]` sentence lists, single-string nodes, and plain string fallbacks. Missing items cleanly trigger clients5 fallback.
+
+> **🛡️ Primary Endpoint Hardening (POST & WAF Shielding):**
+> - **Switched to POST:** `_try_batch_separator` now uses HTTP POST (`application/x-www-form-urlencoded`) instead of GET with huge URL query strings. Eliminates URL length truncation and significantly reduces Google WAF bot flagging.
+> - **Modern Sec-Fetch Headers:** `GOOGLE_BROWSER_HEADERS` updated with `Sec-Fetch-Dest: empty`, `Sec-Fetch-Mode: cors`, `Sec-Fetch-Site: same-origin` to match native Chrome browser signatures.
+> - **Burst Concurrency Cap:** Direct residential IP traffic (without proxy) is capped to concurrency=4 to prevent instant IP-wide rate-limit bans while maintaining maximum throughput when proxies are enabled.
+
+> **🔇 Non-Blocking Background Probe (`EndpointRouter._probe_loop`):** The primary endpoint probe is now a dedicated `asyncio.Task` running entirely in the background.
+> - **Root cause fixed:** Previously, every ~300 s the "probe" batch would enter `_wait_out_global_cooldown()` (25 s sleep) then potentially hit another 429 sleep (25 s), causing **~50 s translation stalls** visible as 30 s batch spikes in the log.
+> - The background task sleeps `RATE_LIMIT_PRIMARY_PROBE_INTERVAL` (300 s) between lightweight probe requests, never blocking in-flight translation.
+> - On probe success: resets `_consecutive_primary_429 = 0`, clears legacy `_primary_probe_at`, logs `"PRIMARY endpoints restored"`.
+
+> **🔒 Probe Race Fix (`asyncio.Lock`):** Both `translate_single.try_endpoint` and `_try_batch_separator.try_endpoint` now guard the probe-slot claim with `async with self._probe_lock`. Previously, N concurrent workers could simultaneously observe `now >= _primary_probe_at` and all fire N probe requests, generating N new 429 responses.
+
+> **⏭️ Probe Sleep Bypass:** In the (now rare) inline probe paths, `_wait_out_global_cooldown()` is skipped when `entered_as_probe = True`. A probe's purpose is to *test* whether the IP block has lifted — waiting out the cooldown first defeats that purpose.
+
+> **🎯 `_try_batch_separator` Fast Exit:** Returns `None` immediately when `router.primary_blocked`, so `_multi_q` can route to batchexecute/clients5 without hitting any endpoint gating code.
+
+> **🔁 `_translate_via_clients5_parallel`:** Dedicated helper for parallelized single-item clients5 calls (concurrency capped at `min(multi_q_concurrency, 16)`). Per-item integrity failure falls through to batchexecute single before reverting to original.
+
+> **🧪 Tests:** New `tests/test_endpoint_router.py` (10 tests) covering `_FamilyHealth` state, `EndpointRouter` state machine transitions, routing priority with multiple families blocked, probe task singleton guarantee, and primary recovery. All **1148 tests passing** (1138 pre-existing + 10 new).
+
 #### [2.8.13] - 2026-09-01
 
 > **Third Google Route (batchexecute/MkEWBc), Defender Mitigations, RPA Security Hardening & Extraction Filter Quality**
