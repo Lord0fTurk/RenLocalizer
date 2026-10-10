@@ -17,6 +17,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ['3.10', '3.11', '3.12']
+        include:
+          # macOS (Apple Silicon): one job on the Python the release DMG is built with
+          - os: macos-latest
+            python-version: '3.12'
 
     steps:
       - name: Checkout code
@@ -72,8 +76,8 @@ jobs:
           export RENLOCALIZER_QT_SMOKE_TEST="1"
           xvfb-run -a python run.py
 
-      - name: Smoke test source Qt startup (Windows)
-        if: runner.os == 'Windows'
+      - name: Smoke test source Qt startup (Windows/macOS)
+        if: runner.os != 'Linux'
         shell: bash
         run: |
           export RENLOCALIZER_QT_SMOKE_TEST="1"

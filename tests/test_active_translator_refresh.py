@@ -116,6 +116,45 @@ class TestActiveTranslatorRefresh:
         assert gemini.fallback_translator is google
         assert gemini._safety_level == "BLOCK_NONE"
 
+    def _guard_stub(self, engine, mode="external", translating=False):
+        from src.backend.app_backend import AppBackend
+
+        stub = _make_backend_stub()
+        stub._selected_engine = engine
+        stub._is_translating = translating
+        stub.config.translation_settings.local_llm_mode = mode
+        stub.messages = []
+        stub.logMessage = SimpleNamespace(emit=lambda level, msg: stub.messages.append((level, msg)))
+        stub._t = lambda key, default: default
+        for name in ("_is_builtin_local_llm", "_setup_selected_engine_async"):
+            setattr(stub, name, getattr(AppBackend, name).__get__(stub))
+        return stub
+
+    def test_no_translator_swap_during_running_translation(self, monkeypatch):
+        """Replacing the in-use translator closed its HTTP session mid-request."""
+        import threading
+
+        started = []
+        monkeypatch.setattr(threading, "Thread", lambda *a, **k: started.append(k) or SimpleNamespace(start=lambda: None))
+        stub = self._guard_stub(TranslationEngine.OPENAI, translating=True)
+        stub._setup_selected_engine_async(TranslationEngine.OPENAI)
+        assert started == []
+        assert stub.messages and stub.messages[0][0] == "info"
+
+    def test_builtin_gguf_server_not_started_by_warmup(self, monkeypatch):
+        """Launch / engine selection must not load a GGUF into VRAM."""
+        import threading
+
+        started = []
+        monkeypatch.setattr(threading, "Thread", lambda *a, **k: started.append(k) or SimpleNamespace(start=lambda: None))
+        stub = self._guard_stub(TranslationEngine.LOCAL_LLM, mode="builtin")
+        stub._setup_selected_engine_async(TranslationEngine.LOCAL_LLM)
+        assert started == []
+
+        external = self._guard_stub(TranslationEngine.LOCAL_LLM, mode="external")
+        external._setup_selected_engine_async(TranslationEngine.LOCAL_LLM)
+        assert len(started) == 1
+
     def test_refresh_builds_bing_with_google_fallback(self):
         from src.core.translator import BingTranslator, GoogleTranslator
 

@@ -176,10 +176,14 @@ def _download_font(font_family: str, target_dir: Path) -> Tuple[bool, str]:
 def inject_font(game_dir: str, lang_code: str) -> Dict[str, Any]:
     base_lang = _normalize_lang_code(lang_code)
 
-    if base_lang not in FONT_CANDIDATES:
-        return {"success": False, "message": f"No auto font mapping for '{lang_code}'"}
-
-    candidates = FONT_CANDIDATES[base_lang]
+    if base_lang in FONT_CANDIDATES:
+        candidates = FONT_CANDIDATES[base_lang]
+    else:
+        # The table covers ~30 languages; every other one gets the Noto
+        # family made for its writing system (Devanagari, Georgian, Thaana,
+        # Ethiopic...), RTL when the script is right-to-left.
+        from src.tools.lang_scripts import font_candidates
+        candidates = tuple(font_candidates(lang_code)[0])
     game_path = Path(game_dir)
     if (game_path / "game").exists():
         game_path = game_path / "game"

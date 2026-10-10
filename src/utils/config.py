@@ -254,6 +254,10 @@ class TranslationSettings:
     # blocks instead of translate <lang> strings: for dialogues. UI text stays strings:.
     # Runtime hook still active but handles only UI/screen text when native mode enabled.
     output_mode: str = "native"  # "strings" | "native"
+    # Write game/zzz_<lang>_language.rpy so the game starts in the translated
+    # language. Off = only tl/<lang> is written (for translators who ship the
+    # tl folder themselves and let players pick the language in-game).
+    activate_language_on_launch: bool = True
     # Deep Scan: Normal pattern'lerin kaçırdığı gizli stringleri bul
     # init python bloklarındaki dictionary'ler, değişken atamaları vb.
     enable_deep_scan: bool = True  # Varsayılan artık açık (gizli string taraması)
@@ -443,6 +447,7 @@ class TranslationSettings:
             "local_llm",
             "libretranslate",
             "bing",
+            "deepseek",
             "custom",
             "yandex",
             "pseudo",

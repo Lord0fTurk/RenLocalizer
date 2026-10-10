@@ -175,6 +175,18 @@ RISK_LABELS: Dict[str, str] = {
 }
 
 
+def _lang_key(language: str) -> str:
+    """'turkish' / 'Turkish' / 'tr' / 'zh-CN' -> the key used in LANGUAGE_CHAR_SETS.
+
+    Callers pass the Ren'Py language name from the settings ("turkish"), but
+    the tables are keyed by ISO codes; without this every font was reported
+    as incompatible ("Unknown language: turkish", 0% coverage).
+    """
+    from src.tools.font_injector import _normalize_lang_code
+
+    return _normalize_lang_code(language or "")
+
+
 class FontHelper:
     """
     Helper for checking font compatibility with different languages.
@@ -189,29 +201,36 @@ class FontHelper:
                 "Font checking will be limited."
             )
     
-    def check_font(self, font_path: str, language: str) -> FontCheckResult:
+    def check_font(self, font_path: str, language: str, required_chars: str = "") -> FontCheckResult:
         """
         Check if a font supports a specific language.
-        
+
         Args:
             font_path: Path to TTF/OTF font file
-            language: Language code (e.g., 'tr', 'ru', 'ja')
-        
+            language: Ren'Py language name or code (e.g. 'turkish', 'fa', 'japanese')
+            required_chars: characters the translation actually uses; when
+                given, the font must contain every letter among them
+
         Returns:
             FontCheckResult with coverage information
         """
-        # Get character set for language
-        if language not in LANGUAGE_CHAR_SETS:
-            return FontCheckResult(
-                font_path=font_path,
-                language=language,
-                supported=False,
-                coverage_percent=0.0,
-                missing_chars=[],
-                sample_text=f"Unknown language: {language}"
-            )
-        
-        essential_chars, sample_text = LANGUAGE_CHAR_SETS[language]
+        from src.tools.lang_scripts import script_of, script_sample_chars
+
+        # What to test, most precise first: the translation's own characters,
+        # the hand-made table (language-specific letters such as ğ ş ı), or a
+        # sample of the language's writing system — so all 135 languages work
+        # instead of only the ~21 in the table.
+        strict = bool(required_chars)
+        table_key = _lang_key(language)
+        if strict:
+            essential_chars = "".join(sorted(set(required_chars)))
+            sample_text = required_chars[:80]
+        elif table_key in LANGUAGE_CHAR_SETS:
+            essential_chars, sample_text = LANGUAGE_CHAR_SETS[table_key]
+        else:
+            essential_chars = script_sample_chars(script_of(language))
+            sample_text = essential_chars[:40]
+        language = table_key or language
         
         if not FONTTOOLS_AVAILABLE:
             # Cannot check without fontTools
@@ -235,7 +254,12 @@ class FontHelper:
             )
         
         try:
-            font = TTFont(font_path)
+            # .ttc/.otc collections (most CJK fonts) need a face index;
+            # Ren'Py uses face 0 unless the game writes "N@font.ttc".
+            if font_path.lower().endswith(('.ttc', '.otc')):
+                font = TTFont(font_path, fontNumber=0)
+            else:
+                font = TTFont(font_path)
             cmap = font.getBestCmap()
             
             if cmap is None:
@@ -259,8 +283,15 @@ class FontHelper:
             supported_count = total - len(missing)
             coverage = (supported_count / total * 100) if total > 0 else 0
             
-            # Determine if font is usable (allow some missing)
-            is_supported = coverage >= 90.0
+            # Determine if font is usable. Against the real translation every
+            # letter must exist (a missing one renders as a box in the game);
+            # punctuation/symbol gaps are reported but tolerated. Generic
+            # samples allow a few gaps.
+            if strict:
+                import unicodedata as _ud
+                is_supported = not any(_ud.category(ch).startswith("L") for ch in missing)
+            else:
+                is_supported = coverage >= 90.0
             
             return FontCheckResult(
                 font_path=font_path,
@@ -317,25 +348,33 @@ class FontHelper:
         Returns:
             List of FontCheckResult for each font found
         """
+        from src.tools.lang_scripts import collect_translation_chars
+
         fonts = self.find_game_fonts(game_dir)
+        # Characters the game's translation really uses (empty before the
+        # first translation) — checked exactly instead of a generic sample.
+        used = "".join(sorted(collect_translation_chars(game_dir, language)))
+        self.last_basis = "translation" if used else "sample"
         results = []
-        
+
         for font_path in fonts:
-            result = self.check_font(font_path, language)
+            result = self.check_font(font_path, language, required_chars=used)
             results.append(result)
-        
+
         return results
     
     def get_sample_text(self, language: str) -> str:
         """Get sample text for a language."""
-        if language in LANGUAGE_CHAR_SETS:
-            return LANGUAGE_CHAR_SETS[language][1]
+        key = _lang_key(language)
+        if key in LANGUAGE_CHAR_SETS:
+            return LANGUAGE_CHAR_SETS[key][1]
         return f"No sample text available for language: {language}"
-    
+
     def get_essential_chars(self, language: str) -> str:
         """Get essential characters for a language."""
-        if language in LANGUAGE_CHAR_SETS:
-            return LANGUAGE_CHAR_SETS[language][0]
+        key = _lang_key(language)
+        if key in LANGUAGE_CHAR_SETS:
+            return LANGUAGE_CHAR_SETS[key][0]
         return ""
     
     def generate_font_test_file(
@@ -499,7 +538,13 @@ label font_test_label:
             norm_lang = _normalize_lang_code(norm_lang)
         except Exception:
             pass
-        return FONT_SUGGESTIONS.get(norm_lang, default_fonts)
+        if norm_lang in FONT_SUGGESTIONS:
+            return FONT_SUGGESTIONS[norm_lang]
+        # Every other language: fonts made for its writing system
+        # (Devanagari, Georgian, Thaana...) rather than Latin defaults.
+        from src.tools.lang_scripts import script_fonts, script_of
+        families, _rtl = script_fonts(script_of(language))
+        return list(families) if script_of(language) != "Latin" else default_fonts
 
     def analyze_font_risks(self, game_dir: str) -> Dict[str, Any]:
         """Scan project scripts for hardcoded/custom font usage.
@@ -575,6 +620,13 @@ def check_font_for_project(
         'results': results,
         'suggestions': helper.suggest_fonts(target_language),
         'risk_report': risk_report,
+        # "translation": checked against the characters game/tl/<lang> uses;
+        # "sample": no translation yet, checked against a language sample.
+        'basis': getattr(helper, 'last_basis', 'sample'),
+        'missing_by_font': {
+            os.path.basename(r.font_path): "".join(r.missing_chars[:30])
+            for r in results if not r.supported
+        },
     }
     
     if verbose:

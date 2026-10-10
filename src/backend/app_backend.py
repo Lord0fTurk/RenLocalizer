@@ -79,6 +79,8 @@ class AppBackend(QObject):
     stageChanged = pyqtSignal(str, str, arguments=["stage", "displayName"])
     translationStarted = pyqtSignal()
     translationFinished = pyqtSignal(bool, str, arguments=["success", "message"])
+    # Internal: worker thread -> GUI thread hand-off after llama-server start.
+    _builtinServerPrepared = pyqtSignal(bool, str)
     statsReady = pyqtSignal(
         int, int, int, arguments=["total", "translated", "untranslated"]
     )
@@ -115,6 +117,7 @@ class AppBackend(QObject):
     themeChanged = pyqtSignal(str)
     enableRpycReaderChanged = pyqtSignal()
     enableDeepScanChanged = pyqtSignal()
+    activateLanguageOnLaunchChanged = pyqtSignal()
     enableStatefulLexerChanged = pyqtSignal()
     enableDesktopNotificationsChanged = pyqtSignal()
     checkForUpdatesOnStartupChanged = pyqtSignal()
@@ -173,8 +176,6 @@ class AppBackend(QObject):
             except Exception as e:
                 self.logger.warning(f"Could not write migration marker: {e}")
 
-        # Seçili motor her zaman Google; config'e yazılmıyor (runtime override)
-        self.config.translation_settings.selected_engine = "google"
         # Gerekmeyen ağır özellikleri kapat (hız + bellek tasarrufu)
         self.config.translation_settings.enable_deep_extraction = False
         self.config.translation_settings.enable_unrpyc_decompile = False
@@ -184,6 +185,7 @@ class AppBackend(QObject):
             self.config.translation_settings.target_language or "turkish"
         )
         self._is_translating: bool = False
+        self._preparing_builtin_server: bool = False
         self._ui_trigger: bool = False
         # TL retranslation mode (Ren'Py SDK-generated tl/ directory)
         self._tl_mode: bool = False
@@ -229,6 +231,7 @@ class AppBackend(QObject):
         self.settings.on("enable_desktop_notifications", lambda: self.enableDesktopNotificationsChanged.emit())
         self.settings.on("rpyc_reader", lambda: self.enableRpycReaderChanged.emit())
         self.settings.on("deep_scan", lambda: self.enableDeepScanChanged.emit())
+        self.settings.on("activate_language_on_launch", lambda: self.activateLanguageOnLaunchChanged.emit())
         self.settings.on("stateful_lexer", lambda: self.enableStatefulLexerChanged.emit())
         self.settings.on("selected_engine", lambda engine_str: self.selectedEngineChanged.emit(engine_str))
         self.settings.on("openai_api_key", lambda: self.openaiApiKeyChanged.emit())
@@ -267,29 +270,12 @@ class AppBackend(QObject):
         self.settings.on("language", lambda lang_code: self.languageChanged.emit(lang_code))
         self.settings.on("theme", lambda theme: self.themeChanged.emit(theme))
         self.settings.on("glossary", lambda: self.glossaryChanged.emit())
+        self._builtinServerPrepared.connect(self._on_builtin_server_prepared)
 
         # Google translator'ı her zaman hazırla (fallback)
         threading.Thread(target=self._setup_google_translator, daemon=True).start()
         # Seçili motora göre diğer translator'ları kur
-        if self._selected_engine not in (TranslationEngine.GOOGLE,):
-            if self._selected_engine in (
-                TranslationEngine.OPENAI,
-                TranslationEngine.LOCAL_LLM,
-                TranslationEngine.GEMINI,
-            ):
-                threading.Thread(
-                    target=self._setup_ai_translator,
-                    args=(self._selected_engine,),
-                    daemon=True,
-                ).start()
-            elif self._selected_engine == TranslationEngine.LIBRETRANSLATE:
-                threading.Thread(target=self._setup_libretranslate, daemon=True).start()
-            elif self._selected_engine == TranslationEngine.BING:
-                threading.Thread(target=self._setup_bing_translator, daemon=True).start()
-            elif self._selected_engine == TranslationEngine.CUSTOM:
-                threading.Thread(
-                    target=self._setup_custom_endpoint, daemon=True
-                ).start()
+        self._setup_selected_engine_async(self._selected_engine)
 
         # ── System Tray & Desktop Notifications ──────────────────────────
         self._tray_icon: Optional[QSystemTrayIcon] = None
@@ -441,6 +427,45 @@ class AppBackend(QObject):
                 self._setup_custom_endpoint()
         except Exception as exc:
             self.logger.warning(f"[AppBackend] Translator refresh failed: {exc}")
+
+    def _is_builtin_local_llm(self, engine: Optional[TranslationEngine] = None) -> bool:
+        engine = engine or self._selected_engine
+        return (
+            engine == TranslationEngine.LOCAL_LLM
+            and getattr(self.config.translation_settings, "local_llm_mode", "external") == "builtin"
+        )
+
+    def _setup_selected_engine_async(self, engine: TranslationEngine) -> None:
+        """Pre-build *engine*'s translator in the background, outside a run.
+
+        Translation start always calls _refresh_active_translator(), so this is
+        only a warm-up. It must not run during a translation: _replace_translator
+        closes the previous instance — the one the running pipeline is using —
+        from another thread and event loop.
+        """
+        if engine == TranslationEngine.GOOGLE:
+            return
+        if self._is_translating:
+            self.logMessage.emit("info", self._t(
+                "log_engine_change_next_run",
+                "Engine settings saved; they will apply to the next translation run.",
+            ))
+            return
+        if self._is_builtin_local_llm(engine):
+            # Loading a GGUF into VRAM is deferred until a translation starts
+            # (or the user presses "Start server"), not done on every launch.
+            return
+        if engine in (TranslationEngine.OPENAI, TranslationEngine.LOCAL_LLM, TranslationEngine.GEMINI):
+            target, args = self._setup_ai_translator, (engine,)
+        elif engine == TranslationEngine.LIBRETRANSLATE:
+            target, args = self._setup_libretranslate, ()
+        elif engine == TranslationEngine.BING:
+            target, args = self._setup_bing_translator, ()
+        elif engine == TranslationEngine.CUSTOM:
+            target, args = self._setup_custom_endpoint, ()
+        else:
+            return
+        threading.Thread(target=target, args=args, daemon=True).start()
 
     def _setup_ai_translator(self, engine: Optional[TranslationEngine] = None) -> None:
         """Builds and registers the selected AI translator in the translation manager."""
@@ -658,6 +683,14 @@ class AppBackend(QObject):
     def enableDeepScan(self, val: bool) -> None:
         self.settings.set_enable_deep_scan(val)
 
+    @pyqtProperty(bool, notify=activateLanguageOnLaunchChanged)
+    def activateLanguageOnLaunch(self) -> bool:
+        return self.settings.get_activate_language_on_launch()
+
+    @activateLanguageOnLaunch.setter
+    def activateLanguageOnLaunch(self, val: bool) -> None:
+        self.settings.set_activate_language_on_launch(val)
+
     @pyqtProperty(bool, notify=enableStatefulLexerChanged)
     def enableStatefulLexer(self) -> bool:
         return self.settings.get_enable_stateful_lexer()
@@ -675,25 +708,12 @@ class AppBackend(QObject):
     @pyqtSlot(str)
     def setSelectedEngine(self, engine_str: str) -> None:
         """Changes the active translation engine and sets it up if needed."""
-        new_engine = self._engine_from_str(engine_str)
-        self.settings.set_selected_engine(engine_str)
-        if new_engine == self._selected_engine:
-            return
+        clean_str = (engine_str or "google").lower()
+        new_engine = self._engine_from_str(clean_str)
+        self.settings.set_selected_engine(clean_str)
         self._selected_engine = new_engine
         # Setup new engine in background if not Google (Google always active as fallback)
-        if new_engine not in (TranslationEngine.GOOGLE,):
-            if new_engine in (TranslationEngine.OPENAI, TranslationEngine.LOCAL_LLM, TranslationEngine.GEMINI):
-                threading.Thread(
-                    target=self._setup_ai_translator, args=(new_engine,), daemon=True
-                ).start()
-            elif new_engine == TranslationEngine.LIBRETRANSLATE:
-                threading.Thread(target=self._setup_libretranslate, daemon=True).start()
-            elif new_engine == TranslationEngine.BING:
-                threading.Thread(target=self._setup_bing_translator, daemon=True).start()
-            elif new_engine == TranslationEngine.CUSTOM:
-                threading.Thread(
-                    target=self._setup_custom_endpoint, daemon=True
-                ).start()
+        self._setup_selected_engine_async(new_engine)
 
     @pyqtProperty(str, notify=openaiApiKeyChanged)
     def openaiApiKey(self) -> str:
@@ -848,6 +868,15 @@ class AppBackend(QObject):
     @pyqtSlot()
     def startLocalServer(self) -> None:
         """Starts the built-in server with the configured GGUF model."""
+        if self._is_translating:
+            # start() restarts the server when settings changed, which would
+            # cut off the running translation's requests.
+            self.logMessage.emit("warning", self._t(
+                "log_local_server_busy",
+                "Stop the running translation before restarting the local model server.",
+            ))
+            return
+
         def _worker() -> None:
             self.localServerStatusChanged.emit()
             try:
@@ -1282,6 +1311,16 @@ class AppBackend(QObject):
         if not path:
             return
 
+        # macOS Ren'Py app: the game lives in Game.app/Contents/Resources/autorun.
+        from src.utils.path_manager import unwrap_mac_app
+        app_root = unwrap_mac_app(path)
+        if app_root != path:
+            path = app_root
+            self.logMessage.emit(
+                "info",
+                self._t("log_mac_app_bundle", "🍎 macOS app package detected — using {path}").format(path=path),
+            )
+
         self._project_path = path
         self._tl_mode = False
         self._tl_source_path = ""
@@ -1366,8 +1405,29 @@ class AppBackend(QObject):
         self.translationStarted.emit()
         self._start_pipeline_translation()
 
-    def _start_pipeline_translation(self) -> None:
+    def _start_pipeline_translation(self, builtin_server_ready: bool = False) -> None:
         """Pipeline tabanlı çeviriyi başlatır (normal veya TL modu)."""
+        if self._is_builtin_local_llm() and not builtin_server_ready:
+            # Loading a GGUF can take a minute; doing it in the synchronous
+            # refresh below froze the UI. Start (or reuse) the server on a
+            # worker thread and come back here through a queued signal.
+            self.logMessage.emit("info", self._t(
+                "log_local_server_preparing",
+                "Preparing the local model server before translation...",
+            ))
+
+            def _prepare() -> None:
+                try:
+                    self._start_builtin_server()
+                    self._builtinServerPrepared.emit(True, "")
+                except Exception as exc:
+                    self.logger.error("[AppBackend] llama-server start failed: %s", exc)
+                    self._builtinServerPrepared.emit(False, str(exc))
+
+            self._preparing_builtin_server = True
+            threading.Thread(target=_prepare, daemon=True).start()
+            return
+
         try:
             # Rebuild the selected engine's translator from the CURRENT config.
             # Translator instances are created at app startup and cached in the
@@ -1421,8 +1481,30 @@ class AppBackend(QObject):
             self._is_translating = False
             self.translationFinished.emit(False, str(exc))
 
+    def _on_builtin_server_prepared(self, ok: bool, error: str) -> None:
+        self.localServerStatusChanged.emit()
+        if not self._preparing_builtin_server:
+            return  # stopped while the model was loading
+        self._preparing_builtin_server = False
+        if ok:
+            self._start_pipeline_translation(builtin_server_ready=True)
+            return
+        self.logMessage.emit("error", f"❌ {error}")
+        self._is_translating = False
+        self.translationFinished.emit(False, error)
+
     def stop_translation(self, wait_ms: int = 0) -> None:
         """Stops the translation pipeline and optionally waits for worker thread termination."""
+        if self._preparing_builtin_server:
+            # No pipeline yet — the model is still loading. The server keeps
+            # loading in the background and is reused by the next run.
+            self._preparing_builtin_server = False
+            self._is_translating = False
+            self.logMessage.emit(
+                "warning", self._t("log_stop_requested", "⏹ Stop request sent...")
+            )
+            self.translationFinished.emit(False, "stopped")
+            return
         if self.pipeline and self._is_translating:
             self.pipeline.stop()
             self.logMessage.emit(
@@ -1520,13 +1602,8 @@ class AppBackend(QObject):
         try:
             self.settings.save_settings()
 
-            # Re-setup the active AI translator to apply newly saved settings
-            if self._selected_engine != TranslationEngine.GOOGLE:
-                threading.Thread(
-                    target=self._setup_ai_translator,
-                    args=(self._selected_engine,),
-                    daemon=True,
-                ).start()
+            # Re-setup the active translator to apply newly saved settings
+            self._setup_selected_engine_async(self._selected_engine)
 
             self.logMessage.emit(
                 "success",
@@ -1673,10 +1750,7 @@ class AppBackend(QObject):
     @pyqtSlot()
     def runToolFontHelper(self) -> None:
         """Run font compatibility check."""
-        if not self._project_path or not os.path.exists(self._project_path):
-            self.logMessage.emit(
-                "error", "❌ Please select a valid game folder or EXE first."
-            )
+        if not self._require_tool_game_dir():
             return
         self.logMessage.emit(
             "info",
@@ -1693,21 +1767,30 @@ class AppBackend(QObject):
             target_lang = getattr(
                 self.config.translation_settings, "target_language", "turkish"
             )
-            summary = check_font_for_project(self._project_path, target_lang)
+            # The selected path may be the game's EXE; fonts live under game/.
+            summary = check_font_for_project(self._tool_game_dir(), target_lang)
             total = summary.get("fonts_checked", 0)
             compat = summary.get("compatible_fonts", 0)
             incompat = summary.get("incompatible_fonts", 0)
             suggestions = summary.get("suggestions", [])
             sug_str = f" Recommended: {', '.join(suggestions[:3])}" if suggestions else ""
+            basis = (
+                "the characters your translation uses"
+                if summary.get("basis") == "translation"
+                else f"a '{target_lang}' sample (no translation yet)"
+            )
             if incompat > 0:
+                missing = summary.get("missing_by_font", {})
+                details = "; ".join(f"{name}: {chars}" for name, chars in list(missing.items())[:3])
                 self.logMessage.emit(
                     "warning",
-                    f"⚠️ Font check: {total} font(s) scanned — {incompat} incompatible (missing glyphs).{sug_str}",
+                    f"⚠️ Font check against {basis}: {total} font(s) scanned — {incompat} cannot show "
+                    f"all characters (missing → {details}).{sug_str} Use 'Inject' to add a matching font.",
                 )
             elif total > 0:
                 self.logMessage.emit(
                     "success",
-                    f"✅ Font check: {total} font(s) scanned — all {compat} fonts support '{target_lang}'.",
+                    f"✅ Font check against {basis}: all {compat} font(s) can show '{target_lang}'.",
                 )
             else:
                 self.logMessage.emit(
@@ -1720,10 +1803,7 @@ class AppBackend(QObject):
     @pyqtSlot()
     def runToolFontInject(self) -> None:
         """Download and inject Google Fonts."""
-        if not self._project_path or not os.path.exists(self._project_path):
-            self.logMessage.emit(
-                "error", "❌ Please select a valid game folder or EXE first."
-            )
+        if not self._require_tool_game_dir():
             return
         self.logMessage.emit(
             "info", "🔤 Downloading and injecting font from Google Fonts..."
@@ -1737,7 +1817,7 @@ class AppBackend(QObject):
             target_lang = getattr(
                 self.config.translation_settings, "target_language", "turkish"
             )
-            result = inject_font(self._project_path, target_lang)
+            result = inject_font(self._tool_game_dir(), target_lang)
             if result.get("success"):
                 self.logMessage.emit(
                     "success", f"✅ Font injected: {result.get('font', '?')}"
@@ -1752,10 +1832,7 @@ class AppBackend(QObject):
     @pyqtSlot()
     def runToolRenpyLint(self) -> None:
         """Run Ren'Py lint on game project."""
-        if not self._project_path or not os.path.exists(self._project_path):
-            self.logMessage.emit(
-                "error", "❌ Please select a valid game project first."
-            )
+        if not self._require_tool_game_dir():
             return
         self.logMessage.emit(
             "info", self._t("log_lint_starting", "🩺 Ren'Py Lint scanner running...")
@@ -1767,12 +1844,13 @@ class AppBackend(QObject):
             from src.tools.renpy_lint import lint_translation_output
 
             sdk_path = self.config.app_settings.renpy_sdk_path
-            tl_dir = os.path.join(self._project_path, "game", "tl")
-            target_path = tl_dir if os.path.isdir(tl_dir) else self._project_path
+            game_dir = self._tool_game_dir()
+            tl_dir = os.path.join(game_dir, "tl")
+            target_path = tl_dir if os.path.isdir(tl_dir) else game_dir
             report = lint_translation_output(
                 target_path,
                 try_engine_lint=bool(sdk_path),
-                game_dir=self._project_path,
+                game_dir=os.path.dirname(game_dir),
                 sdk_path=sdk_path,
             )
             if report is None:
@@ -1790,13 +1868,97 @@ class AppBackend(QObject):
         except Exception as e:
             self.logMessage.emit("error", f"❌ Ren'Py Lint error: {e}")
 
+    # ── Tool: language activation file ──────────────────────────────────
+
+    def _tool_game_dir(self) -> Optional[str]:
+        """game/ folder of the selected project (path may be the exe, the
+        project root, game/ itself or a tl/ folder inside it)."""
+        path = self._project_path
+        if not path:
+            return None
+        if os.path.isfile(path):
+            path = os.path.dirname(path)
+        parts = os.path.normpath(path).split(os.sep)
+        lowered = [p.lower() for p in parts]
+        if "tl" in lowered:
+            idx = len(lowered) - 1 - lowered[::-1].index("tl")
+            path = os.sep.join(parts[:idx]) or path
+        if os.path.basename(os.path.normpath(path)).lower() == "game" and os.path.isdir(path):
+            return path
+        candidate = os.path.join(path, "game")
+        return candidate if os.path.isdir(candidate) else None
+
+    def _require_tool_game_dir(self) -> Optional[str]:
+        """game/ dir for a Toolbox action, or None after telling the user why."""
+        game_dir = self._tool_game_dir()
+        if not game_dir:
+            self.logMessage.emit("error", self._t(
+                "log_select_game", "❌ Please select a game folder or EXE first."))
+        return game_dir
+
+    @pyqtSlot(result=list)
+    def toolListTlLanguages(self) -> list:
+        """Languages that have a game/tl/<lang> folder in the selected project."""
+        game_dir = self._tool_game_dir()
+        if not game_dir:
+            return []
+        from src.core.pipeline.saving import list_tl_languages
+        return list_tl_languages(game_dir)
+
+    @pyqtSlot(result=str)
+    def toolDefaultTlLanguage(self) -> str:
+        """Pre-selection for the tool: the dashboard target if it has a tl/ folder."""
+        langs = self.toolListTlLanguages()
+        target = (self._target_language or "").lower()
+        for lang in langs:
+            if lang.lower() == target:
+                return lang
+        return langs[0] if langs else ""
+
+    @pyqtSlot(str)
+    def runToolActivateLanguage(self, language: str) -> None:
+        """Write game/zzz_<lang>_language.rpy so the game starts in *language*.
+
+        Ren'Py does not list tl/ folders by itself; without this file (or a
+        language menu in the game) a finished translation never shows up.
+        """
+        game_dir = self._tool_game_dir()
+        if not game_dir:
+            self.logMessage.emit("error", self._t(
+                "log_select_game", "❌ Please select a game folder or EXE first."))
+            return
+        language = (language or "").strip()
+        if not language:
+            self.logMessage.emit("warning", self._t(
+                "tool_lang_no_tl", "No translation folders found in game/tl. Translate the game first."))
+            return
+        from src.core.pipeline.saving import create_language_init_file
+        create_language_init_file(game_dir, language, self.config, self.logMessage.emit, force=True)
+        self.logMessage.emit("success", self._t(
+            "log_lang_activated", "✅ The game will now start in: {lang}").replace("{lang}", language))
+
+    @pyqtSlot()
+    def runToolRemoveLanguageActivation(self) -> None:
+        """Remove RenLocalizer's language activation file(s) from game/."""
+        game_dir = self._tool_game_dir()
+        if not game_dir:
+            self.logMessage.emit("error", self._t(
+                "log_select_game", "❌ Please select a game folder or EXE first."))
+            return
+        from src.core.pipeline.saving import remove_language_init_files
+        removed = remove_language_init_files(game_dir)
+        if removed:
+            self.logMessage.emit("success", self._t(
+                "log_lang_activation_removed",
+                "✅ Language activation removed; the game starts in its own language again."))
+        else:
+            self.logMessage.emit("info", self._t(
+                "log_lang_activation_none", "No language activation file was found in game/."))
+
     @pyqtSlot()
     def runToolGlossaryExtractor(self) -> None:
         """Extract glossary terms from project."""
-        if not self._project_path or not os.path.exists(self._project_path):
-            self.logMessage.emit(
-                "error", "❌ Please select a valid game project first."
-            )
+        if not self._require_tool_game_dir():
             return
         self.logMessage.emit(
             "info",
@@ -1811,22 +1973,24 @@ class AppBackend(QObject):
             from src.tools.glossary_extractor.extractor import GlossaryExtractor
 
             extractor = GlossaryExtractor()
+            # Scan game/ (the selected path may be the EXE). The terms go into
+            # RenLocalizer's own glossary; nothing is written into the game.
             terms = extractor.extract_from_directory(
-                self._project_path, min_occurrence=3
+                self._tool_game_dir(), min_occurrence=3
             )
-            out_json = os.path.join(self._project_path, "glossary.json")
-            import json
-
-            with open(out_json, "w", encoding="utf-8") as f:
-                json.dump(terms, f, ensure_ascii=False, indent=2)
-            for term in terms:
+            added = 0
+            for term, target in terms.items():
                 if term not in self.config.glossary:
-                    self.config.glossary[term] = ""
+                    self.config.glossary[term] = target
+                    added += 1
             self.config.save_glossary()
             self.glossaryChanged.emit()
             self.logMessage.emit(
                 "success",
-                f"✅ {len(terms)} terms extracted and saved to 'glossary.json'.",
+                self._t(
+                    "log_glossary_extracted",
+                    "✅ {found} terms found, {added} new ones added to the glossary (Glossary tab).",
+                ).replace("{found}", str(len(terms))).replace("{added}", str(added)),
             )
         except Exception as e:
             self.logMessage.emit("error", f"❌ Glossary extractor error: {e}")

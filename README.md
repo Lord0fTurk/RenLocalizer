@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases"><img alt="Latest Release" src="https://img.shields.io/badge/Release-v2.8.18-blue?style=for-the-badge&logo=github"></a>
+  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases"><img alt="Latest Release" src="https://img.shields.io/badge/Release-v2.8.19-blue?style=for-the-badge&logo=github"></a>
   <a href="https://www.patreon.com/cw/LordOfTurk"><img alt="Support on Patreon" src="https://img.shields.io/badge/Support-Patreon-ff424d?style=for-the-badge&logo=patreon"></a>
 </p>
 
@@ -87,6 +87,7 @@ Translating Ren'Py visual novels with standard translation tools usually crashes
 * 🚫 **No Duplicate Key Crashes:** Automatically tracks existing translations and native IDs, preventing Ren'Py 7.5+ / 8.x duplicate string fatal errors.
 * 📦 **Deep Binary Scan (.rpyc & .rpa):** Extracts hidden strings directly from compiled `.rpyc` files and unpacks `.rpa` archives automatically.
 * 🌐 **Full RTL & BiDi Support:** Automatic layout and reading direction (`wrtl`) handling for Arabic, Persian, Hebrew, and Urdu without altering LTR games.
+* ✏️ **Translation Editor:** Review and hand-fix every line of a game's `tl/` folder with search, filters, speaker and context, tag/variable checks and one-line machine suggestions; edits are written back in place and kept by later runs.
 * 🧰 **Integrated Toolbox:** Standalone Ren'Py syntax & indentation linter, automated OpenType font injection, font compatibility scanner, and glossary extractor.
 * 🚀 **Smart Runtime Hook:** Injects a lightweight `init -999 python:` hook for dynamic on-the-fly string translation and instant language switching in-game.
 

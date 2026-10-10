@@ -14,7 +14,6 @@ KEY IMPROVEMENTS:
     ✅ Fast-Path Checks: Exit early before expensive operations
     ✅ Screen Harvesting: Iterative (no recursion) Auto-Discovery
     ✅ Self-Healing Thread: Background fuzzy matching + candidate generation
-    ✅ Language Hot-Swap: Controlled data purge (not .clear() cliff-edge)
     ✅ Template Matching: Indexed by prefix/suffix for O(1)-ish access
 
 PERFORMANCE TARGETS:
@@ -800,28 +799,34 @@ init -999 python:
     # =========================================================================
     def _rl_find_strings_json():
         lang = _rl_get_active_language()
+        langs_to_try = [lang]
+        if "{renpy_lang}" and "{renpy_lang}".lower() != (lang or '').lower():
+            langs_to_try.append("{renpy_lang}")
+
         candidates = []
-        
-        if hasattr(config, 'gamedir') and config.gamedir:
-            gd = config.gamedir
-            candidates.extend([
-                _rl_os.path.join(gd, "tl", lang, "strings.json"),
-                "/".join([gd, "tl", lang, "strings.json"]),
-            ])
-        
-        if hasattr(renpy, 'config') and hasattr(renpy.config, 'searchpath') and renpy.config.searchpath:
-            for d in renpy.config.searchpath:
+        for _l in langs_to_try:
+            if not _l or _l == 'None':
+                continue
+            if hasattr(config, 'gamedir') and config.gamedir:
+                gd = config.gamedir
                 candidates.extend([
-                    _rl_os.path.join(d, "tl", lang, "strings.json"),
-                    "/".join([d, "tl", lang, "strings.json"]),
+                    _rl_os.path.join(gd, "tl", _l, "strings.json"),
+                    "/".join([gd, "tl", _l, "strings.json"]),
                 ])
-        
-        candidates.extend([
-            _rl_os.path.join("game", "tl", lang, "strings.json"),
-            _rl_os.path.join("tl", lang, "strings.json"),
-            "/tl/" + lang + "/strings.json",
-        ])
-        
+
+            if hasattr(renpy, 'config') and hasattr(renpy.config, 'searchpath') and renpy.config.searchpath:
+                for d in renpy.config.searchpath:
+                    candidates.extend([
+                        _rl_os.path.join(d, "tl", _l, "strings.json"),
+                        "/".join([d, "tl", _l, "strings.json"]),
+                    ])
+
+            candidates.extend([
+                _rl_os.path.join("game", "tl", _l, "strings.json"),
+                _rl_os.path.join("tl", _l, "strings.json"),
+                "/tl/" + _l + "/strings.json",
+            ])
+
         for path in candidates:
             try:
                 full = _rl_os.path.abspath(path) if not _rl_os.path.isabs(path) else path
@@ -829,20 +834,23 @@ init -999 python:
                     return full
             except Exception:
                 pass
-        
+
         # Android APK support
         if hasattr(renpy, 'android') and renpy.android:
             try:
                 if hasattr(renpy, 'loader') and hasattr(renpy.loader, 'game_apks') and len(renpy.loader.game_apks) > 0:
-                    filename = "tl/" + lang + "/strings.json"
-                    apk = renpy.loader.game_apks[0]
-                    xname = "x-" + "/x-".join(filename.split("/"))
-                    binary = apk.open(xname)
-                    if binary is not None:
-                        return "__APK__:" + filename
+                    for _l in langs_to_try:
+                        if not _l or _l == 'None':
+                            continue
+                        filename = "tl/" + _l + "/strings.json"
+                        apk = renpy.loader.game_apks[0]
+                        xname = "x-" + "/x-".join(filename.split("/"))
+                        binary = apk.open(xname)
+                        if binary is not None:
+                            return "__APK__:" + filename
             except Exception:
                 pass
-        
+
         return None
     
     def _rl_load_translations():
@@ -1210,60 +1218,6 @@ init -999 python:
             pass
     
     # =========================================================================
-    # LANGUAGE HOT-SWAP PROTOCOL (v4.2.0)
-    # =========================================================================
-    # Enables seamless language change mid-game without restarting.
-    # Replaces the old .clear() cliff-edge with graceful data purge.
-    
-    def _rl_language_hot_swap(new_lang):
-        """
-        Seamless language transition:
-        1. call renpy.change_language(new_lang) — Ren'Py core
-        2. Purge translation caches gracefully (not .clear())
-        3. Load new language strings.json
-        4. Call renpy.restart_interaction() — UI refresh
-        
-        Cost: ~500ms smooth transition (was causing UI freeze in v4.1.1)
-        """
-        try:
-            # Step 1: Engine core language change
-            renpy.change_language(new_lang)
-            
-            # Step 2: Graceful cache purge (v4.2.0 improvement)
-            global _rl_translations, _rl_translations_ci, _rl_mru_cache, _rl_alias_cache
-            global _rl_loaded, _rl_loaded_language, _rl_miss_set
-            
-            # Don't nuke, just reset state
-            _rl_translations = {{}}
-            _rl_translations_ci = {{}}
-            _rl_mru_cache = {{}}  # ← v2.8.4: Dict-based clear
-            _rl_miss_set = set()  # ← v2.8.4+: Clear miss set on language change
-            _rl_alias_cache = {{}}
-            _rl_loaded = False
-            
-            # Step 3: Reload from new language's strings.json
-            _rl_load_translations()
-            
-            # Step 4: Refresh UI (no scene restart, just re-draw)
-            renpy.restart_interaction()
-            
-            # Optional diagnostics
-            if _renlocalizer_debug:
-                try:
-                    with _rl_io.open(_rl_os.path.join(config.gamedir, "renlocalizer_debug.log"), "a", encoding="utf-8") as _rl_f:
-                        _rl_f.write(u"[LANG_HOT_SWAP] from {{}} to {{}}\n".format(_rl_loaded_language, new_lang))
-                except Exception:
-                    pass
-        
-        except Exception:
-            # Fallback: hard reset
-            try:
-                renpy.change_language(new_lang)
-                renpy.utter_restart()
-            except Exception:
-                pass
-    
-    # =========================================================================
     # DIAGNOSTICS & DEBUG HELPERS
     # =========================================================================
     
@@ -1369,34 +1323,6 @@ init 999 python:
     if hasattr(config, 'start_interact_callbacks'):
         if _rl_harvest_screens not in config.start_interact_callbacks:
             config.start_interact_callbacks.append(_rl_harvest_screens)
-
-    # Shift+L hotkey overlay: force translated language mid-game
-    if hasattr(config, 'overlay_screens'):
-        if '_rl_hotkey_overlay' not in config.overlay_screens:
-            config.overlay_screens.append('_rl_hotkey_overlay')
-
-    # Debug: Print version info
-    try:
-        with _rl_io.open(_rl_os.path.join(config.gamedir, "renlocalizer_runtime.log"), "w", encoding="utf-8") as _rl_f:
-            _rl_f.write(u"RenLocalizer v4.2.0 Runtime Hook Initialized\n")
-            _rl_f.write(u"Language: {{}}\n".format(_rl_get_active_language()))
-            _rl_f.write(u"Loaded: {{}}\n".format(_rl_loaded))
-            _rl_f.write(u"Entries: {{}}\n".format(len(_rl_translations)))
-    except Exception:
-        pass
-
-# =============================================================================
-# SHIFT+L HOTKEY OVERLAY — Force Translated Language
-# =============================================================================
-# Pressing Shift+L during gameplay instantly switches the game to the
-# translated language ({renpy_lang}) without a restart.
-# Useful when a game defaults to English on launch.
-
-screen _rl_hotkey_overlay():
-    zorder 99
-    key "shift_K_l" action [
-        Function(_rl_language_hot_swap, "{renpy_lang}"),
-        Notify(u"RenLocalizer: {renpy_lang}"),
-    ]
 '''
+
 

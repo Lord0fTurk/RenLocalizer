@@ -109,6 +109,16 @@ def escape_rpy_string(text: str) -> str:
     return text
 
 
+def collapse_source_whitespace(text: str) -> str:
+    """What Ren'Py's lexer does to a string literal from a .rpy file before it
+    becomes a say statement: runs of plain spaces/tabs become one space
+    ("Perfect!  Catch ya" is stored as "Perfect! Catch ya"). Only spaces the
+    author escaped ("\\ ") survive, and encode_say_string() then writes those
+    as "\\ ". Text read from source must go through this before hashing.
+    """
+    return re.sub(r'(?<!\\)[ \t]{2,}', ' ', text) if text else text
+
+
 def encode_say_string_for_tlid(text: str) -> str:
     """Mirror Ren'Py's own `encode_say_string()` (renpy/ast.py) so that the MD5
     hash we compute for a fallback Native TLID matches what Ren'Py's compiler
@@ -512,7 +522,9 @@ def generate_all_strings_file(
 
     for i, entry in enumerate(entries):
         text = entry.get('text', '')
-        if not text or formatter._should_skip_translation(text):
+        # Strings the author marked with _() are translated whatever they
+        # look like (Ren'Py's own rule); the code heuristics are for the rest.
+        if not text or (not entry.get('marked') and formatter._should_skip_translation(text)):
             skipped += 1
             continue
 
@@ -656,7 +668,8 @@ def generate_native_tlid_content(
 
         # Safety net: only filter non-dialogue text with _should_skip_translation.
         # Spoken character dialogue (who is present) must never be dropped by code pattern filters.
-        if not who and formatter._should_skip_translation(text):
+        # Strings marked with _() by the author skip the code heuristics too.
+        if not who and not entry.get('marked') and formatter._should_skip_translation(text):
             skipped += 1
             continue
 
@@ -670,6 +683,12 @@ def generate_native_tlid_content(
                 continue
             seen_dialogue_keys.add(d_key)
             dialogue_entries.append(entry)
+            # A narrated menu question is also handed to the choice screen as
+            # its caption, which Ren'Py translates as a string (its own
+            # template lists both).
+            if (not who and entry.get('menu_caption') and text not in seen_string_texts):
+                seen_string_texts.add(text)
+                string_entries.append(entry)
         else:
             # For UI strings: Ren'Py allows each old "..." only once in translate strings:
             if text in seen_string_texts:
@@ -682,8 +701,17 @@ def generate_native_tlid_content(
             text = entry.get('text', '')
             who = entry.get('character', '')
             file_path = entry.get('file_path', '')
+            # The speaker as written in the script. A quoted name ("Shop Owner",
+            # "[a] and [b]") is an ordinary say statement in Ren'Py: its id is
+            # hashed with the quotes, and without them the translated line
+            # would name an undefined variable (NameError in game).
+            speaker_source = str(entry.get('speaker_source') or '').strip()
+            if not speaker_source and len(who) >= 2 and who[0] == who[-1] and who[0] in '"\'':
+                speaker_source = who
+            if speaker_source:
+                who = speaker_source
 
-            if who and (
+            if who and not speaker_source and (
                 ',' in who
                 or ' and ' in who or ' y ' in who or ' et ' in who
                 or ' und ' in who or ' e ' in who or ' i ' in who
@@ -699,8 +727,18 @@ def generate_native_tlid_content(
                 continue
 
             fmt_who = format_renpy_speaker(who)
-            source_line = f'{fmt_who} "{text}"' if fmt_who else f'"{text}"'
-            escaped_source = source_line.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+            # Clauses after the text (" nointeract", " with vpunch") are part
+            # of the id and the translation must repeat them: a menu question
+            # without "nointeract" waits for a click before the choices appear.
+            # A menu caption is stored with "nointeract" even if not written.
+            say_tail = str(entry.get('say_tail') or '')
+            if entry.get('menu_caption') and 'nointeract' not in say_tail:
+                say_tail = ' nointeract' + say_tail
+            # The comment is what Ren'Py's own template writes (Say.get_code()):
+            # quotes and backslashes escaped, so 'k "\\"Hi.\\""' reads back as
+            # the original text instead of 'k ""Hi.""'.
+            encoded_comment = encode_say_string_for_tlid(collapse_source_whitespace(text))
+            escaped_source = (f'{fmt_who} "{encoded_comment}"' if fmt_who else f'"{encoded_comment}"') + say_tail
 
             # Real Ren'Py identifier from the compiled .rpyc AST (Translate/
             # TranslateSay node) is the exact id the game will look up at
@@ -731,8 +769,8 @@ def generate_native_tlid_content(
                 # Fallback: no ground-truth id available (.rpy source not yet
                 # compiled) — approximate it, matching encode_say_string() so
                 # quotes/backslashes/newlines don't silently break the match.
-                encoded_text = encode_say_string_for_tlid(text)
-                hash_source = f'{who} "{encoded_text}"' if who else f'"{encoded_text}"'
+                encoded_text = encode_say_string_for_tlid(collapse_source_whitespace(text))
+                hash_source = (f'{who} "{encoded_text}"' if who else f'"{encoded_text}"') + say_tail
                 tlid_hash = hashlib.md5((hash_source + '\r\n').encode('utf-8')).hexdigest()[:8]
                 base_tlid = f'{label}_{tlid_hash}'
 
@@ -778,9 +816,9 @@ def generate_native_tlid_content(
                     cached = escape_rpy_string(cached_res.translated_text)
 
             if cached:
-                lines.append(f'    {fmt_who} "{cached}"' if fmt_who else f'    "{cached}"')
+                lines.append((f'    {fmt_who} "{cached}"' if fmt_who else f'    "{cached}"') + say_tail)
             else:
-                lines.append(f'    {fmt_who} ""' if fmt_who else '    ""')
+                lines.append((f'    {fmt_who} ""' if fmt_who else '    ""') + say_tail)
 
             lines.append("")
             entries_added += 1

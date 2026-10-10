@@ -352,7 +352,8 @@ class TestServerLifecycle:
                 raise lls.urllib.error.HTTPError(url, 503, "Loading model", None, None)
             return FakeResponse(b"{}", status=200)
 
-        monkeypatch.setattr(lls.urllib.request, "urlopen", fake_urlopen)
+        # Health polling bypasses system proxies, so it goes through urlopen_direct.
+        monkeypatch.setattr(lls, "urlopen_direct", fake_urlopen)
         monkeypatch.setattr(lls.time, "sleep", lambda *_: None)
 
         assert manager._wait_for_health(9126, timeout=5) is True

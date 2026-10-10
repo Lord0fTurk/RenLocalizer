@@ -17,14 +17,44 @@ import faulthandler
 from pathlib import Path
 from types import TracebackType
 
-# Enable native crash fault handler to capture C/C++ access violations
-try:
-    crash_dir = Path(__file__).parent / "logs"
-    crash_dir.mkdir(parents=True, exist_ok=True)
-    crash_log_file = open(crash_dir / "crash_report.log", "a", encoding="utf-8")
-    faulthandler.enable(file=crash_log_file, all_threads=True)
-except Exception:
-    faulthandler.enable()
+# Enable native crash fault handler to capture C/C++ access violations.
+# The install dir may be read-only for standard users (Program Files), and a
+# windowed build has sys.stderr = None, where a bare faulthandler.enable()
+# raises RuntimeError at import time — so the app died before Qt started
+# unless it was run as administrator.
+def _crash_log_dir_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    try:
+        from src.utils.path_manager import get_data_path
+        candidates.append(get_data_path() / "logs")
+    except Exception:
+        pass
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidates.append(Path(appdata) / "RenLocalizer" / "logs")
+    candidates.append(Path(__file__).parent / "logs")
+    candidates.append(Path(tempfile.gettempdir()) / "RenLocalizer")
+    return candidates
+
+
+def _enable_faulthandler() -> Path | None:
+    for crash_dir in _crash_log_dir_candidates():
+        try:
+            crash_dir.mkdir(parents=True, exist_ok=True)
+            crash_log_file = open(crash_dir / "crash_report.log", "a", encoding="utf-8")
+            faulthandler.enable(file=crash_log_file, all_threads=True)
+            return crash_dir
+        except Exception:
+            continue
+    if sys.stderr is not None:
+        try:
+            faulthandler.enable()
+        except Exception:
+            pass
+    return None
+
+
+CRASH_LOG_DIR = _enable_faulthandler()
 
 # ── Temel ortam ayarları (Qt importlarından ÖNCE) ─────────────────────────
 os.environ["QT_QPA_PLATFORM_THEME"] = ""
@@ -153,13 +183,17 @@ def _global_exception_handler(
     error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    crash_path = WORK_DIR / "logs" / "crash_report.log"
-    try:
-        crash_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(crash_path, "a", encoding="utf-8") as f:
-            f.write(f"\n{'=' * 60}\n[{timestamp}]\n{error_msg}\n")
-    except Exception:
-        pass
+    crash_path = None
+    for crash_dir in ([CRASH_LOG_DIR] if CRASH_LOG_DIR else []) + _crash_log_dir_candidates():
+        try:
+            crash_dir.mkdir(parents=True, exist_ok=True)
+            candidate = crash_dir / "crash_report.log"
+            with open(candidate, "a", encoding="utf-8") as f:
+                f.write(f"\n{'=' * 60}\n[{timestamp}]\n{error_msg}\n")
+            crash_path = candidate
+            break
+        except Exception:
+            continue
 
     print(error_msg)
     if sys.platform == "win32":
@@ -212,7 +246,11 @@ def main() -> int:
 
     # Qt runtime utils (mevcut run.py ile paylaşılan)
     from src.utils.qt_runtime import (
+        SCENEGRAPH_FAILURE_EXIT_CODE,
         configure_qt_graphics_environment,
+        default_graphics_state_path,
+        load_failed_graphics_modes,
+        remember_failed_graphics_mode,
         should_attempt_qt_safe_relaunch,
         build_qt_safe_relaunch_env,
     )
@@ -222,14 +260,33 @@ def main() -> int:
     logger.info("RenLocalizer starting, version: %s", VERSION)
     ensure_executable_permissions(WORK_DIR, logger)
 
+    # Manual escape hatch for machines where even the automatic chain fails
+    # silently (e.g. black window without a scene graph error).
+    if "--safe-graphics" in sys.argv:
+        sys.argv.remove("--safe-graphics")
+        os.environ["RENLOCALIZER_QT_RENDER_MODE"] = "raster"
+
+    graphics_state_path = default_graphics_state_path()
     graphics_bootstrap = configure_qt_graphics_environment(
-        frozen=bool(getattr(sys, "frozen", False))
+        frozen=bool(getattr(sys, "frozen", False)),
+        failed_modes=load_failed_graphics_modes(graphics_state_path, VERSION),
     )
     logger.info(
-        "Qt graphics: platform=%s mode=%s",
+        "Qt graphics: platform=%s mode=%s applied=%s",
         sys.platform,
         graphics_bootstrap.mode,
+        graphics_bootstrap.applied,
     )
+
+    def _relaunch_in_safe_mode(failed_mode: str | None) -> int:
+        safe_env = build_qt_safe_relaunch_env(os.environ, sys.platform, failed_mode=failed_mode)
+        cmd = (
+            [sys.executable, *sys.argv[1:]]
+            if getattr(sys, "frozen", False)
+            else [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
+        )
+        logger.warning("Relaunching with safer Qt graphics (failed mode: %s)", failed_mode)
+        return subprocess.call(cmd, cwd=str(WORK_DIR), env=safe_env)
 
     # ── Qt import ─────────────────────────────────────────────────────────
     print("Loading Qt framework...")
@@ -313,6 +370,10 @@ def main() -> int:
 
         backend = AppBackend(parent=app)
 
+        from src.backend.editor_backend import EditorBackend
+
+        editor_backend = EditorBackend(backend, parent=app)
+
         # ── QML Engine ────────────────────────────────────────────────────
         _splash_msg("Starting interface...")
 
@@ -332,6 +393,7 @@ def main() -> int:
 
         # Context property
         engine.rootContext().setContextProperty("appBackend", backend)
+        engine.rootContext().setContextProperty("editorBackend", editor_backend)
 
         def _on_object_created(obj, url) -> None:
             if obj is None:
@@ -351,15 +413,13 @@ def main() -> int:
         if not engine.rootObjects():
             print("[ERROR] QML yüklenemedi.")
             splash.close()
-            # Safe relaunch denemesi
-            if should_attempt_qt_safe_relaunch(os.environ, sys.platform, graphics_bootstrap):
-                safe_env = build_qt_safe_relaunch_env(os.environ, sys.platform)
-                cmd = (
-                    [sys.executable, *sys.argv[1:]]
-                    if getattr(sys, "frozen", False)
-                    else [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
-                )
-                return subprocess.call(cmd, cwd=str(WORK_DIR), env=safe_env)
+            # On Linux/macOS a failed load is usually EGL/GLX; on Windows the
+            # scene graph is not initialised yet, so this is a QML error and a
+            # graphics relaunch would only hide it.
+            if sys.platform != "win32" and should_attempt_qt_safe_relaunch(
+                os.environ, sys.platform, graphics_bootstrap
+            ):
+                return _relaunch_in_safe_mode(graphics_bootstrap.mode)
             return 1
 
         # ── Window hazırlığı ──────────────────────────────────────────────
@@ -367,6 +427,27 @@ def main() -> int:
 
         if not app_icon.isNull():
             root_window.setIcon(app_icon)
+
+        # Without a receiver Qt shows its "Failed to initialize graphics
+        # backend for OpenGL" box and calls qFatal(). With one, we record the
+        # failed mode and exit so the launcher can step down the fallback
+        # chain. Must be connected before show() (window is visible: false).
+        graphics_failed = [False]
+
+        def _on_scene_graph_error(error, message) -> None:
+            if graphics_failed[0]:
+                return
+            graphics_failed[0] = True
+            logger.error(
+                "Qt scene graph error (%s) in mode %s: %s",
+                error, graphics_bootstrap.mode, message,
+            )
+            if not remember_failed_graphics_mode(graphics_state_path, graphics_bootstrap.mode, VERSION):
+                logger.warning("Could not persist graphics state to %s", graphics_state_path)
+            app.exit(SCENEGRAPH_FAILURE_EXIT_CODE)
+
+        if hasattr(root_window, "sceneGraphError"):
+            root_window.sceneGraphError.connect(_on_scene_graph_error)
 
         root_window.show()
         app.processEvents()
@@ -422,19 +503,39 @@ def main() -> int:
             QTimer.singleShot(500, _apply_win_icon)
 
         app.processEvents()
-        exit_code = app.exec()
+        # The error usually fires during show()/processEvents(), before the
+        # event loop runs, where app.exit() is a no-op — so check the flag
+        # both before entering and after leaving exec().
+        if graphics_failed[0]:
+            exit_code = SCENEGRAPH_FAILURE_EXIT_CODE
+        else:
+            exit_code = app.exec()
+            if graphics_failed[0]:
+                exit_code = SCENEGRAPH_FAILURE_EXIT_CODE
 
         # Scenegraph hatası → safe relaunch
-        if exit_code == 213 and should_attempt_qt_safe_relaunch(
-            os.environ, sys.platform, graphics_bootstrap
-        ):
-            safe_env = build_qt_safe_relaunch_env(os.environ, sys.platform)
-            cmd = (
-                [sys.executable, *sys.argv[1:]]
-                if getattr(sys, "frozen", False)
-                else [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
-            )
-            return subprocess.call(cmd, cwd=str(WORK_DIR), env=safe_env)
+        if exit_code == SCENEGRAPH_FAILURE_EXIT_CODE:
+            # Qt may already have destroyed the window; only tear down the
+            # backend (stops llama-server, persists settings) before relaunch.
+            try:
+                _schedule_teardown()
+            except Exception as exc:
+                logger.debug("Teardown before graphics relaunch failed: %s", exc)
+            if should_attempt_qt_safe_relaunch(os.environ, sys.platform, graphics_bootstrap):
+                return _relaunch_in_safe_mode(graphics_bootstrap.mode)
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    ctypes.windll.user32.MessageBoxW(
+                        None,
+                        "RenLocalizer could not initialise any graphics backend "
+                        "(OpenGL, software OpenGL, software raster).\n\n"
+                        "Please update your graphics driver. Details are in renlocalizer.log.",
+                        "RenLocalizer — Graphics",
+                        0x10,
+                    )
+                except Exception:
+                    pass
 
         return exit_code
 

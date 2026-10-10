@@ -395,7 +395,8 @@ def write_translation_reports(lang_dir: str, target_language: str, diagnostic_re
         'sample_limit': translation_guard_sample_limit,
         'samples': translation_guard_events,
     }
-    save_text_safely(Path(report_path), json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    from src.utils.encoding import save_json_safely
+    save_json_safely(Path(report_path), payload, indent=2)
 
     # Clean up legacy diagnostics directory inside tl/<lang>/ if present
     legacy_diag_dir = os.path.join(lang_dir, 'diagnostics')
@@ -495,21 +496,70 @@ def manage_runtime_hook(project_path: str, target_language: str, config, log_emi
         logger.warning(f"Failed to manage runtime hook: {e}")
 
 
-def create_language_init_file(game_dir: str, target_language: str, config, log_emit, lang_map=None) -> None:
+def remove_language_init_files(game_dir: str) -> int:
+    """Delete RenLocalizer's zzz_<lang>_language.rpy(.rpyc) files; returns how many."""
+    from src.core.constants import is_renlocalizer_generated_script
+
+    removed = 0
+    for path in Path(game_dir).glob("zzz_*_language.rpy*"):
+        if is_renlocalizer_generated_script(path.name):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                logger.debug("Could not remove %s", path)
+    return removed
+
+
+def list_tl_languages(game_dir: str) -> list:
+    """Language folders under game/tl (what Ren'Py can switch to)."""
+    tl_root = Path(game_dir) / "tl"
+    if not tl_root.is_dir():
+        return []
+    # A language folder holds translation scripts; tl/ may also contain
+    # helpers such as the Font Injector's renlocalizer_fonts/.
+    return sorted(
+        p.name for p in tl_root.iterdir()
+        if p.is_dir() and not p.name.startswith(".") and p.name.lower() != "none"
+        and any(f.suffix.lower() in (".rpy", ".rpyc") for f in p.rglob("*"))
+    )
+
+
+def create_language_init_file(game_dir: str, target_language: str, config, log_emit, lang_map=None,
+                              force: bool = False) -> None:
     """Dil başlangıç dosyasını oluşturur."""
     from src.utils.encoding import save_text_safely
+
+    ts = getattr(config, 'translation_settings', None)
+    # force=True: the Toolbox / CLI "activate language" tool, run on purpose.
+    if not force and ts is not None and not getattr(ts, 'activate_language_on_launch', True):
+        # The user only wants tl/<lang>; also drop a file an earlier run left,
+        # otherwise it would keep forcing the language.
+        if remove_language_init_files(game_dir):
+            log_emit("info", config.get_log_text(
+                'log_language_init_removed',
+                "Language activation is off: removed the generated language-activation file from game/.",
+            ))
+        return
 
     try:
         lang_map_val = lang_map if lang_map is not None else RENPY_TO_API_LANG
         language_code = (target_language or '').strip().lower()
-        if not language_code:
+        if force and (target_language or '').strip():
+            # The tool passes an existing tl/<folder> name: Ren'Py matches it
+            # case-sensitively, so neither lower-case nor map it ("ru" is a
+            # valid folder name and must not become "russian").
+            language_code = target_language.strip()
+        elif not language_code:
             try:
                 language_code = getattr(config.translation_settings, 'target_language', '') or ''
             except Exception:
                 language_code = ''
         original_input = language_code
         reverse_lang_map = {v.lower(): k for k, v in lang_map_val.items()}
-        if language_code:
+        if force and language_code:
+            pass
+        elif language_code:
             language_code = reverse_lang_map.get(language_code, language_code)
         else:
             tl_root = Path(game_dir) / "tl"
@@ -520,9 +570,14 @@ def create_language_init_file(game_dir: str, target_language: str, config, log_e
                 language_code = 'turkish'
 
         try:
-            for existing in Path(game_dir).glob("*_language.rpy"):
+            current_name = f"zzz_{language_code}_language.rpy"
+            for existing in Path(game_dir).glob("*_language.rpy*"):
                 if "renlocalizer" in existing.name or existing.name.startswith("a0_") or existing.name.startswith("zzz_"):
-                    if existing.name != f"zzz_{language_code}_language.rpy":
+                    # Compare without the compiled "c": a stale .rpyc of another
+                    # language would still load (Ren'Py runs .rpyc without the
+                    # .rpy) and force the old language alongside the new one.
+                    source_name = existing.name[:-1] if existing.name.endswith(".rpyc") else existing.name
+                    if source_name.endswith(".rpy") and source_name != current_name:
                         existing.unlink(missing_ok=True)
         except Exception:
             logger.debug("Failed to clean up existing language init files")
@@ -531,13 +586,13 @@ def create_language_init_file(game_dir: str, target_language: str, config, log_e
         if os.path.exists(init_file):
             os.remove(init_file)
 
-        safe_code = language_code.replace("-", "_").replace(" ", "_").replace(".", "_")
+        safe_code = re.sub(r"\W", "_", language_code)
 
         rtl_phase = ""
         if is_rtl_language(language_code):
             rtl_phase = '''
 # ============================================================
-# PHASE 4: Safe RTL & BiDi Direction Override (Right-to-Left)
+# PHASE 5: Safe RTL & BiDi Direction Override (Right-to-Left)
 # ============================================================
 define config.rtl = True
 init 999 python:
@@ -598,10 +653,36 @@ init python:
     try:
         if hasattr(persistent, "language"):
             persistent.language = "{language_code}"
+        if hasattr(persistent, "current_language"):
+            persistent.current_language = "{language_code}"
         if hasattr(persistent, "game_language"):
             persistent.game_language = "{language_code}"
         if hasattr(persistent, "selected_language"):
             persistent.selected_language = "{language_code}"
+    except Exception:
+        pass
+
+# ============================================================
+# PHASE 4: Late-Binding Boot Enforcement (init 999)
+# Overrides developer init -1 hardcoded scripts. Ren'Py itself applies
+# config.language once init finishes; calling renpy.change_language() here
+# would run translate/style blocks before Ren'Py has taken its style and
+# store backups, so it is intentionally not done.
+# ============================================================
+init 999 python:
+    try:
+        config.language = "{language_code}"
+    except Exception:
+        pass
+    try:
+        if hasattr(persistent, "language"):
+            persistent.language = "{language_code}"
+        if hasattr(persistent, "current_language"):
+            persistent.current_language = "{language_code}"
+        if hasattr(persistent, "selected_language"):
+            persistent.selected_language = "{language_code}"
+        if hasattr(persistent, "game_language"):
+            persistent.game_language = "{language_code}"
     except Exception:
         pass
 {rtl_phase}'''
@@ -873,7 +954,8 @@ def _write_skipped_corruption_report(
             'sample_limit': 100,
             'samples': skipped_samples,
         }
-        save_text_safely(Path(report_path), json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+        from src.utils.encoding import save_json_safely
+        save_json_safely(Path(report_path), payload, indent=2)
         active_logger.info(f"strings.json: Wrote skipped-corruption report -> {report_path}")
     except Exception as report_exc:
         active_logger.debug(f"strings.json: Failed to write skipped-corruption report: {report_exc}")
@@ -886,7 +968,7 @@ def _save_strings_json(
     config: Optional[Any] = None,
 ) -> int:
     """Saves the final strings.json file with static and dynamic entries."""
-    from src.utils.encoding import save_text_safely
+    from src.utils.encoding import save_json_safely
     dynamic_entries: Dict[str, str] = {}
     try:
         from src.core.exporter import _has_dynamic_variables
@@ -895,7 +977,7 @@ def _save_strings_json(
         dynamic_entries = {}
     payload = {"translations": mapping, "dynamic": dynamic_entries}
     json_path = os.path.join(lang_dir, "strings.json")
-    save_text_safely(Path(json_path), json.dumps(payload, ensure_ascii=False, indent=4), encoding='utf-8')
+    save_json_safely(Path(json_path), payload, indent=2)
     if log_emit and config and hasattr(config, 'get_log_text'):
         dyn_msg = f" ({len(dynamic_entries)} dynamic)" if dynamic_entries else ""
         log_msg = config.get_log_text('log_strings_json_generated', count=len(mapping)) + dyn_msg

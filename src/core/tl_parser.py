@@ -21,6 +21,20 @@ from pathlib import Path
 
 from src.utils.encoding import read_text_safely, save_text_safely
 
+_UNESCAPE_MAP = {'n': '\n', 't': '\t', '"': '"', "'": "'", '\\': '\\'}
+# Ren'Py turns \{ \[ \% into {{ [[ %% (literal brackets/percent); they are
+# kept as written so a rewrite reproduces them. Any other unknown escape is
+# just the character, as in Ren'Py's lexer.
+_KEPT_ESCAPES = '{[%'
+_ESCAPE_SEQ_RE = re.compile(r'\\(.)', re.S)
+
+
+def _unescape_match(m: "re.Match[str]") -> str:
+    c = m.group(1)
+    if c in _UNESCAPE_MAP:
+        return _UNESCAPE_MAP[c]
+    return m.group(0) if c in _KEPT_ESCAPES else c
+
 
 @dataclass
 class TranslationEntry:
@@ -44,7 +58,16 @@ class TranslationEntry:
     def needs_translation(self) -> bool:
         """Çeviri gerekiyor mu?"""
         return not self.translated_text or self.translated_text.strip() == ""
-    
+
+    def is_source_copy(self) -> bool:
+        """The 'translation' is just the original text copied over.
+
+        Ren'Py's "Generate Translations" fills every dialogue line and every
+        `new` with the source text, so these are untranslated even though
+        they are not empty.
+        """
+        return bool(self.translated_text) and self.translated_text.strip() == (self.original_text or "").strip()
+
     # Geriye uyumluluk için
     @property
     def old_text(self) -> str:
@@ -111,17 +134,22 @@ class TLParser:
         # Speaker pattern: bare identifier (with optional dot/attributes) or quoted string
         _speaker_pattern = r'(?P<speaker>[A-Za-z_][\w\.]*(?:\s+[^"\'\n]+)?|"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\')'
 
+        # Clauses Ren'Py allows after the text of a say statement. A menu's
+        # caption is stored as 'who "what" nointeract'; without this tail the
+        # line was not recognised and its translation was never filled in.
+        _say_tail = r'(?P<tail>(?:\s+(?:nointeract|with\s+[^\s(]+(?:\((?:[^()]|\([^()]*\))*\))?|id\s+\w+))*)'
+
         # # character "text" - dialogue orijinal yorum satırı (karakterli)
-        self._dialogue_comment_re = re.compile(rf'^\s*#\s*{_speaker_pattern}\s+(?P<quote>["\'])(?P<text>.*)(?P=quote)\s*$')
-        
+        self._dialogue_comment_re = re.compile(rf'^\s*#\s*{_speaker_pattern}\s+(?P<quote>["\'])(?P<text>.*?)(?P=quote){_say_tail}\s*$')
+
         # # "text" - narrator orijinal yorum satırı (karaktersiz)
-        self._narrator_comment_re = re.compile(r'^\s*#\s*(?P<quote>["\'])(?P<text>(?:(?!(?P=quote)).|\\.)*)(?P=quote)\s*$')
-        
+        self._narrator_comment_re = re.compile(rf'^\s*#\s*(?P<quote>["\'])(?P<text>(?:(?!(?P=quote)).|\\.)*)(?P=quote){_say_tail}\s*$')
+
         # character "" veya character "text" - dialogue çeviri satırı
-        self._dialogue_line_re = re.compile(rf'^\s*{_speaker_pattern}\s+(?P<quote>["\'])(?P<text>.*)(?P=quote)\s*$')
-        
+        self._dialogue_line_re = re.compile(rf'^\s*{_speaker_pattern}\s+(?P<quote>["\'])(?P<text>.*?)(?P=quote){_say_tail}\s*$')
+
         # "" veya "text" - narrator çeviri satırı (karaktersiz)
-        self._narrator_line_re = re.compile(r'^\s*(?P<quote>["\'])(?P<text>(?:(?!(?P=quote)).|\\.)*)(?P=quote)\s*$')
+        self._narrator_line_re = re.compile(rf'^\s*(?P<quote>["\'])(?P<text>(?:(?!(?P=quote)).|\\.)*)(?P=quote){_say_tail}\s*$')
         
         # Sadece # path.rpy:123 veya # game/path.rpy:123 formatı - kaynak yorum
         self._source_comment_re = re.compile(r'^\s*#\s*([^:]+:\d+)\s*$')
@@ -444,31 +472,39 @@ class TLParser:
         return entries
     
     def _unescape_string(self, text: str) -> str:
-        """Ren'Py string escape'lerini geri çevir"""
+        """Ren'Py string escape'lerini geri çevir.
+
+        Tek geçiş: zincirleme replace "\\\\n" (ters bölü + n) dizisini satır
+        sonuna çeviriyordu. \\{ \\[ \\% olduğu gibi kalır (_escape_string
+        bunları ikilemez); diğer bilinmeyen kaçışlar Ren'Py'daki gibi karakterin
+        kendisidir.
+        """
         if not text:
             return text
-        
-        # Escape sequences
-        text = text.replace('\\n', '\n')
-        text = text.replace('\\t', '\t')
-        text = text.replace('\\"', '"')
-        text = text.replace("\\'", "'")
-        text = text.replace('\\\\', '\\')
-        
-        return text
-    
+        return _ESCAPE_SEQ_RE.sub(_unescape_match, text)
+
     def _escape_string(self, text: str) -> str:
-        """Ren'Py için string escape et"""
+        """Ren'Py için string escape et (_unescape_string'in tersi)."""
         if not text:
             return text
-        
-        # Sıralama önemli - önce backslash
-        text = text.replace('\\', '\\\\')
-        text = text.replace('"', '\\"')
-        text = text.replace('\n', '\\n')
-        text = text.replace('\t', '\\t')
-        
-        return text
+
+        out = []
+        n = len(text)
+        for i, ch in enumerate(text):
+            if ch == '\\':
+                nxt = text[i + 1] if i + 1 < n else ''
+                # A backslash kept from \{ \[ \% stays single; any other
+                # backslash is a literal one ("¯\\_(ツ)_/¯") and is doubled.
+                out.append('\\' if nxt and nxt in _KEPT_ESCAPES else '\\\\')
+            elif ch == '"':
+                out.append('\\"')
+            elif ch == '\n':
+                out.append('\\n')
+            elif ch == '\t':
+                out.append('\\t')
+            else:
+                out.append(ch)
+        return ''.join(out)
     
     def parse_directory(self, tl_dir: str, language: str) -> List[TranslationFile]:
         """
@@ -527,6 +563,23 @@ class TLParser:
         
         return files
     
+    @staticmethod
+    def _pick_translation(translations: Dict[str, str], translation_id: str,
+                          original: str, existing: str) -> Optional[str]:
+        """New text for one slot, or None to keep what is there.
+
+        A text-keyed translation only fills a slot that is empty or still a
+        copy of the source; otherwise a line the user already translated by
+        hand was overwritten whenever the same sentence was translated
+        somewhere else.
+        """
+        by_id = translations.get(translation_id)
+        if by_id:
+            return by_id
+        if not existing or not existing.strip() or existing.strip() == (original or '').strip():
+            return translations.get(original)
+        return None
+
     def update_translations(
         self,
         tl_file: TranslationFile,
@@ -575,7 +628,7 @@ class TLParser:
                     
                     if new_match:
                         existing_translated = self._unescape_string(new_match.group('text'))
-                        translated = translations.get(translation_id) or translations.get(old_text)
+                        translated = self._pick_translation(translations, translation_id, old_text, existing_translated)
                         if translated is None:
                             translated = existing_translated
                         escaped = self._escape_string(translated or "")
@@ -603,12 +656,12 @@ class TLParser:
                     if dialogue_match:
                         char_name = dialogue_match.group('speaker')
                         existing_translated = self._unescape_string(dialogue_match.group('text'))
-                        translated = translations.get(translation_id) or translations.get(original_text)
+                        translated = self._pick_translation(translations, translation_id, original_text, existing_translated)
                         if translated is None:
                             translated = existing_translated
                         escaped = self._escape_string(translated or "")
                         indent = len(next_line) - len(next_line.lstrip())
-                        new_lines.append(' ' * indent + f'{char_name} "{escaped}"')
+                        new_lines.append(' ' * indent + f'{char_name} "{escaped}"' + (dialogue_match.group('tail') or ''))
                     
                     i += 2
                     continue
@@ -626,12 +679,12 @@ class TLParser:
                     
                     if narrator_line_match:
                         existing_translated = self._unescape_string(narrator_line_match.group('text'))
-                        translated = translations.get(translation_id) or translations.get(original_text)
+                        translated = self._pick_translation(translations, translation_id, original_text, existing_translated)
                         if translated is None:
                             translated = existing_translated
                         escaped = self._escape_string(translated or "")
                         indent = len(next_line) - len(next_line.lstrip())
-                        new_lines.append(' ' * indent + f'"{escaped}"')
+                        new_lines.append(' ' * indent + f'"{escaped}"' + (narrator_line_match.group('tail') or ''))
                     
                     i += 2
                     continue
@@ -649,6 +702,50 @@ class TLParser:
         
         return '\n'.join(new_lines)
     
+    def apply_line_edits(self, content: str, edits: List[Dict]) -> Tuple[str, List[int]]:
+        """Replace single translation lines in *content*; return (content, failed lines).
+
+        Each edit is ``{"line", "kind", "original", "text"}`` where ``line`` and
+        ``kind`` are the ``line_number``/``entry_type`` that ``parse_file``
+        reported. The line is rewritten only when the source line above it
+        still carries ``original``; anything else (the file was regenerated,
+        lines moved) is reported as failed instead of writing to the wrong
+        slot. Speaker, indentation, the say tail and line endings are kept.
+        """
+        lines = content.split('\n')
+        failed: List[int] = []
+        for edit in edits:
+            ln = int(edit["line"])
+            kind = edit["kind"]
+            if kind == 'string':
+                src_idx, dst_idx, src_re, dst_re = ln - 1, ln, self._old_re, self._new_re
+            elif kind == 'dialogue':
+                src_idx, dst_idx, src_re, dst_re = ln - 2, ln - 1, self._dialogue_comment_re, self._dialogue_line_re
+            else:
+                src_idx, dst_idx, src_re, dst_re = ln - 2, ln - 1, self._narrator_comment_re, self._narrator_line_re
+            if src_idx < 0 or dst_idx >= len(lines):
+                failed.append(ln)
+                continue
+            src_match = src_re.match(lines[src_idx].strip())
+            dst_line = lines[dst_idx]
+            eol = '\r' if dst_line.endswith('\r') else ''
+            body = dst_line[:-1] if eol else dst_line
+            dst_match = dst_re.match(body.strip())
+            if (not src_match or not dst_match
+                    or self._unescape_string(src_match.group('text')) != edit["original"]):
+                failed.append(ln)
+                continue
+            indent = body[:len(body) - len(body.lstrip())]
+            escaped = self._escape_string(edit["text"] or "")
+            if kind == 'string':
+                new_body = f'new "{escaped}"'
+            elif kind == 'dialogue':
+                new_body = f'{dst_match.group("speaker")} "{escaped}"{dst_match.group("tail") or ""}'
+            else:
+                new_body = f'"{escaped}"{dst_match.group("tail") or ""}'
+            lines[dst_idx] = indent + new_body + eol
+        return '\n'.join(lines), failed
+
     def save_translations(
         self,
         tl_file: TranslationFile,

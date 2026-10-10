@@ -11,7 +11,7 @@ import os
 import re
 import time
 from collections import OrderedDict, deque
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Tuple, Callable, Union
 
 from .base import (
     BaseTranslator,
@@ -37,6 +37,75 @@ def _is_corrupt_or_protected_cache_text(text: str) -> bool:
 _is_protected_cache_text = _is_corrupt_or_protected_cache_text
 
 
+class _ObservableCacheDict(OrderedDict):
+    """OrderedDict that tracks dirty state and secondary O(1) lookup indices."""
+
+    def __init__(self, manager: "TranslationManager", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._manager = manager
+
+    def __setitem__(self, key, val):
+        super().__setitem__(key, val)
+        mgr = getattr(self, "_manager", None)
+        if mgr is not None:
+            mgr._is_dirty = True
+            try:
+                engine_str, sl, tl, text = key
+                mgr._engine_text_index[(engine_str, tl, text)] = val
+                mgr._text_target_index[(tl, text)] = val
+            except (ValueError, TypeError):
+                pass
+
+    def __delitem__(self, key):
+        super().__delitem__(key)
+        mgr = getattr(self, "_manager", None)
+        if mgr is not None:
+            mgr._is_dirty = True
+            try:
+                engine_str, sl, tl, text = key
+                mgr._engine_text_index.pop((engine_str, tl, text), None)
+                mgr._text_target_index.pop((tl, text), None)
+            except (ValueError, TypeError):
+                pass
+
+    def pop(self, key, *args):
+        mgr = getattr(self, "_manager", None)
+        res = super().pop(key, *args)
+        if mgr is not None:
+            mgr._is_dirty = True
+            try:
+                engine_str, sl, tl, text = key
+                mgr._engine_text_index.pop((engine_str, tl, text), None)
+                mgr._text_target_index.pop((tl, text), None)
+            except (ValueError, TypeError):
+                pass
+        return res
+
+    def popitem(self, last=True):
+        res = super().popitem(last=last)
+        mgr = getattr(self, "_manager", None)
+        if mgr is not None:
+            mgr._is_dirty = True
+            try:
+                key, val = res
+                engine_str, sl, tl, text = key
+                if mgr._engine_text_index.get((engine_str, tl, text)) == val:
+                    mgr._engine_text_index.pop((engine_str, tl, text), None)
+                if mgr._text_target_index.get((tl, text)) == val:
+                    mgr._text_target_index.pop((tl, text), None)
+            except (ValueError, TypeError):
+                pass
+        return res
+
+    def clear(self):
+        super().clear()
+        mgr = getattr(self, "_manager", None)
+        if mgr is not None:
+            mgr._is_dirty = True
+            mgr._engine_text_index.clear()
+            mgr._text_target_index.clear()
+
+
 class TranslationManager:
     def __init__(self, proxy_manager=None, config_manager=None):
         self.proxy_manager = proxy_manager
@@ -59,8 +128,11 @@ class TranslationManager:
         else:
             self.use_cache = True
 
+        self._is_dirty: bool = False
+        self._engine_text_index: Dict[Tuple[str, str, str], TranslationResult] = {}
+        self._text_target_index: Dict[Tuple[str, str], TranslationResult] = {}
         self.cache_capacity = 500000  # Increased from 20k to 500k to support large VNs
-        self._cache: OrderedDict = OrderedDict()
+        self._cache: OrderedDict = _ObservableCacheDict(self)
         self._cache_lock = asyncio.Lock()
         self.cache_hits = 0
         self.cache_misses = 0
@@ -128,26 +200,68 @@ class TranslationManager:
                 self._cache.move_to_end(key)
                 return val
 
-            # 2. Akıllı Dil Eşleşmesi (Kaynak dili 'auto' ise ama cache'de 'en' gibi saklıysa)
-            if sl == "auto":
-                # 'auto' anahtarı ile bulunamadıysa, aynı motor ve hedef dil için herhangi bir kaynak dildeki çeviriye bak.
-                # Not: Büyük cachelerde performans için sadece son 1000 kayda hızlıca bakabiliriz veya kalsın.
-                # Genellikle kullanıcılar tek bir kaynak dilden (örn: ingilizce) çeviri yaptığı için pratik bir çözüm:
-                # Cache anahtarlarını tararken sadece engine, target_lang ve text uyumuna bakıyoruz.
-                for k, v in reversed(self._cache.items()):
-                    # k: (engine_str, sl, tl, text)
-                    if k[0] == engine_val and k[2] == tl and k[3] == text:
-                        return v
+            # 2. Akıllı Dil Eşleşmesi (aynı motor, hedef dil ve metin)
+            val = self._engine_text_index.get((engine_val, tl, text))
+            if val:
+                return val
 
             # 3. Motor Bağımsız Ebeveyn Eşleşmesi (Cross-Engine)
-            # Eğer Google ile çevrilmiş bir metin varsa ve şu an OpenAI kullanılıyorsa, onu kullan.
-            # (Çeviri kalitesi motorlar arasında benzerdir ve kullanıcıyı maliyetten/beklemeden kurtarır)
-            for k, v in reversed(self._cache.items()):
-                if k[1] == sl and k[2] == tl and k[3] == text:
-                    # Motor farklı olsa bile içerik aynı
-                    return v
+            val = self._text_target_index.get((tl, text))
+            if val:
+                return val
 
+            return self._scan_unindexed_cache(tl, text)
+
+    def _scan_unindexed_cache(self, tl: str, text: str) -> Optional[TranslationResult]:
+        """Linear lookup, only when _cache was swapped for a plain dict.
+
+        _ObservableCacheDict keeps both indexes current on every write, so a
+        miss there is a real miss; scanning 500k entries per miss made the
+        "O(1)" fast path O(N*M) on partially cached projects.
+        """
+        if isinstance(self._cache, _ObservableCacheDict):
             return None
+        for k, v in reversed(list(self._cache.items())):
+            if k[2] == tl and k[3] == text and v and v.success and v.translated_text:
+                return v
+        return None
+
+    def get_cached_translation(
+        self,
+        text: str,
+        source_lang: str,
+        target_lang: str,
+        engine: Optional[Union[TranslationEngine, str]] = None,
+    ) -> Optional[TranslationResult]:
+        """Synchronous O(1) cache lookup for pipeline pre-resolution.
+
+        Checks exact engine match first, then engine-agnostic match for target_lang.
+        Returns None if cache is disabled, text is empty, or not found in cache.
+        """
+        if not self.use_cache or not text:
+            return None
+
+        engine_val = ""
+        if engine:
+            engine_val = engine.value if isinstance(engine, TranslationEngine) else str(engine)
+
+        # 1. Exact engine match
+        if engine_val:
+            val = self._cache.get((engine_val, source_lang, target_lang, text))
+            if val and val.success and val.translated_text:
+                return val
+
+            # 2. Same engine, any source language / auto
+            val = self._engine_text_index.get((engine_val, target_lang, text))
+            if val and val.success and val.translated_text:
+                return val
+
+        # 3. Cross-engine / any engine match for target_lang + text
+        val = self._text_target_index.get((target_lang, text))
+        if val and val.success and val.translated_text:
+            return val
+
+        return self._scan_unindexed_cache(target_lang, text)
 
     async def _cache_put(self, key: Tuple[str, str, str, str], val: TranslationResult):
         if not self.use_cache or not val.success:
@@ -175,9 +289,11 @@ class TranslationManager:
             return
         async with self._cache_lock:
             cached = self._cache.get(key)
-            if cached:
+            if cached and cached.translated_text != updated_translated_text:
                 cached.translated_text = updated_translated_text
                 self._cache.move_to_end(key)
+                # In-place mutation bypasses _ObservableCacheDict.__setitem__.
+                self._is_dirty = True
 
     def _build_cache_hit_projection(
         self,
@@ -595,6 +711,10 @@ class TranslationManager:
         if not self.use_cache:
             return
 
+        if not self._is_dirty and os.path.exists(file_path):
+            self.logger.debug(f"Cache save skipped (not dirty): {file_path}")
+            return
+
         try:
             import json
             import tempfile
@@ -629,36 +749,31 @@ class TranslationManager:
             # Dizini kontrol et
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
-            # Atomik Yazma: Önce geçici bir dosyaya yaz, sonra yer değiştir
-            # Bu yöntem ani sistem kapanmalarında ana cache dosyasının bozulmasını önler.
-            temp_fd, temp_path = tempfile.mkstemp(
-                dir=os.path.dirname(file_path), suffix=".tmp"
-            )
-            try:
-                with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-
-                # Windows'ta os.replace güvenli atomik yer değiştirmeyi sağlar
-                if os.path.exists(file_path):
-                    try:
-                        os.replace(temp_path, file_path)
-                    except OSError:
-                        # Eğer dosya kullanımdaysa (nadiren), saniyeler sonra tekrar denemeyi Pipeline'a bırak
-                        os.remove(temp_path)
-                        raise
-                else:
-                    os.rename(temp_path, file_path)
-
-            except Exception as e:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                raise e
-
-            self.logger.info(
-                f"Cache saved atomically: {file_path} ({len(self._cache)} entries)"
-            )
+            # Atomik Yazma: orjson / json fallback ile güvenli atomik kayıt
+            from src.utils.encoding import save_json_safely
+            success = save_json_safely(file_path, data, indent=2)
+            if success:
+                self._is_dirty = False
+                self.logger.info(
+                    f"Cache saved atomically: {file_path} ({len(self._cache)} entries)"
+                )
+            else:
+                self.logger.error(f"Failed to save cache: {file_path}")
         except Exception as e:
             self.logger.error(f"Failed to save cache: {e}")
+
+    def _backup_unreadable_cache(self, file_path: str) -> Optional[str]:
+        try:
+            if os.path.getsize(file_path) == 0:
+                return None
+            import shutil
+            backup_path = f"{file_path}.{time.strftime('%Y%m%d-%H%M%S')}.bak"
+            shutil.copy2(file_path, backup_path)
+            self.logger.warning(f"Backed up unreadable cache to {backup_path}")
+            return backup_path
+        except Exception as exc:
+            self.logger.warning(f"Could not back up unreadable cache {file_path}: {exc}")
+            return None
 
     def load_cache(self, file_path: str):
         """Cache içeriğini diskten yükle."""
@@ -666,13 +781,15 @@ class TranslationManager:
             return
 
         try:
-            import json
-
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            from src.utils.encoding import read_json_safely
+            data = read_json_safely(file_path)
 
             if not isinstance(data, dict):
-                self.logger.warning(f"Invalid cache format in {file_path}")
+                self.logger.warning(f"Invalid or unreadable cache file: {file_path}")
+                # The next checkpoint would overwrite it with only this run's
+                # entries; keep a copy so a lock/AV hiccup or a torn write
+                # does not silently cost the user the whole project cache.
+                self._backup_unreadable_cache(file_path)
                 return
 
             count = 0
@@ -721,6 +838,7 @@ class TranslationManager:
                     "Dropped %d corrupted or placeholder-leaked cache entries",
                     skipped_protected,
                 )
+            self._is_dirty = False
             self.logger.info(f"Cache loaded: {file_path} ({count} entries)")
         except Exception as e:
             self.logger.error(f"Failed to load cache: {e}")

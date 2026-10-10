@@ -26,7 +26,8 @@ env/
 
 # ── Build & Distribution ──────────────────────────────────────────────
 dist/
-# Ignore Python/PyInstaller build artifacts but keep build/linux and build/macos scripts
+# Ignore Python/PyInstaller build artifacts but keep the build/linux AppImage files
+# (macOS has no script: the spec's BUNDLE block makes the .app, see release.yml)
 build/bdist.*
 build/lib
 build_log.txt

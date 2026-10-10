@@ -97,6 +97,9 @@ LLAMACPP_RELEASE_LIST_API = (
 )
 # Seconds to wait for GET /health after launch (large models load slowly).
 LLAMACPP_HEALTH_TIMEOUT = 180.0
+# Used when local_llm_server_port is 0 (auto) and the port is free; Ollama is
+# 11434, LM Studio 1234 and llama-server's own default 8080 — avoid all three.
+LLAMACPP_DEFAULT_PORT = 18080
 # backend -> platform key -> release asset template.
 # Vulkan is the default: ~30 MB, works on NVIDIA/AMD/Intel without CUDA Toolkit.
 # CUDA is faster on NVIDIA but needs the 400 MB cudart archive as well.
@@ -150,3 +153,21 @@ RATE_LIMIT_LONG_COOLDOWN = 300
 # While the breaker is active, primaries are retried at most once per this
 # interval (a single request probes whether the IP flag has decayed).
 RATE_LIMIT_PRIMARY_PROBE_INTERVAL = 300
+
+# ============================================================================
+# FILES RENLOCALIZER WRITES INTO game/
+# ============================================================================
+# Re-scanning these on the next run sent their comments and docstrings
+# (Turkish/English helper text) to the translator and skewed source-language
+# detection, so source scanners must skip them (.rpy and compiled .rpyc).
+import re as _re
+
+_GENERATED_SCRIPT_RE = _re.compile(
+    r"^(?:zzz_renlocalizer_runtime|zzz_renlocalizer_font|zzz_[a-z0-9_\-]+_language|zz_rl_exported_.+)\.rpym?c?$",
+    _re.IGNORECASE,
+)
+
+
+def is_renlocalizer_generated_script(file_name: str) -> bool:
+    """True for scripts RenLocalizer itself generates inside the game folder."""
+    return bool(_GENERATED_SCRIPT_RE.match(file_name or ""))

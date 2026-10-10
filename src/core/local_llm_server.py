@@ -37,7 +37,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
 
+from src.utils.net import urlopen_direct
+
 from src.core.constants import (
+    LLAMACPP_DEFAULT_PORT,
     LLAMACPP_HEALTH_TIMEOUT,
     LLAMACPP_PINNED_BUILD,
     LLAMACPP_RELEASE_API,
@@ -427,6 +430,26 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _port_is_free(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+
+
+def _auto_port() -> int:
+    """Stable default port when it is free, a random free one otherwise.
+
+    A new random port on every launch made the server URL impossible to
+    reuse from other tools and confused users who copied it from the log.
+    """
+    if _port_is_free(LLAMACPP_DEFAULT_PORT):
+        return LLAMACPP_DEFAULT_PORT
+    return _free_port()
+
+
 class LlamaServerManager:
     """Owns at most one ``llama-server`` child process.
 
@@ -651,7 +674,9 @@ class LlamaServerManager:
             if self._process is not None and self._process.poll() is not None:
                 return False
             try:
-                with urllib.request.urlopen(url, timeout=3) as response:
+                # Never through a system proxy: it would keep /health from
+                # ever answering and the start would time out after minutes.
+                with urlopen_direct(url, timeout=3) as response:
                     if response.status == 200:
                         return True
             except urllib.error.HTTPError as exc:
@@ -693,7 +718,7 @@ class LlamaServerManager:
                     "llama-server was not found. Download the runtime or point at an existing binary."
                 )
 
-            chosen_port = int(port) if port else _free_port()
+            chosen_port = int(port) if port else _auto_port()
             command = self.build_command(server, model, chosen_port, gpu_layers, ctx_size, parallel)
             self._status = STATUS_STARTING
             self._last_error = ""

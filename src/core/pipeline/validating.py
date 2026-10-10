@@ -57,6 +57,50 @@ def extract_strings_from_rpymc_ast(ast_root) -> list:
     return result
 
 
+def probe_directory_writable(directory: str) -> bool:
+    """True when a file can actually be created and removed in *directory*.
+
+    os.access(W_OK) only checks the read-only attribute on Windows and ignores
+    ACLs, so games under Program Files looked writable for standard users and
+    the run failed much later with PermissionError (fine when run as admin).
+    """
+    import tempfile
+
+    try:
+        fd, probe_path = tempfile.mkstemp(dir=directory, prefix=".rl_write_probe_")
+    except OSError as exc:
+        logger.warning("Directory is not writable: %s (%s)", directory, exc)
+        return False
+    try:
+        os.close(fd)
+        os.unlink(probe_path)
+    except OSError:
+        pass
+    return True
+
+
+_NON_SOURCE_DIRS = {'tl', 'renpy', 'cache', 'saves', '__pycache__', 'python-packages'}
+
+
+def has_game_script_files(game_dir: str, extensions=('.rpy',)) -> bool:
+    """True when the game itself ships scripts with these extensions.
+
+    Unlike has_rpy_files(), files under tl/, the bundled renpy/ engine and
+    RenLocalizer's own zzz_* outputs do not count: a game whose scripts live
+    in .rpa archives still has those, and counting them made the pipeline
+    skip archive handling and "translate" only engine strings (issue #20).
+    """
+    from src.core.constants import is_renlocalizer_generated_script
+
+    exts = tuple(e.lower() for e in extensions)
+    for root, dirs, files in os.walk(game_dir):
+        dirs[:] = [d for d in dirs if d.lower() not in _NON_SOURCE_DIRS]
+        for f in files:
+            if f.lower().endswith(exts) and not is_renlocalizer_generated_script(f):
+                return True
+    return False
+
+
 def has_rpy_files(directory: str) -> bool:
     """Klasörde .rpy dosyası var mı?"""
     for root, dirs, files in os.walk(directory):

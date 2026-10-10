@@ -3,7 +3,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
 project_dir = os.path.abspath(os.getcwd())
@@ -114,6 +114,13 @@ datas_list = [
     # Add version.py for runtime reading
     (os.path.join(project_dir, 'src', 'version.py'), 'src'),
 ]
+
+# py3langid loads data/model.npz.xz at runtime and has no PyInstaller hook;
+# without it offline language detection silently never runs in the exe.
+try:
+    datas_list += collect_data_files('py3langid')
+except Exception:
+    pass
 
 # Add shell scripts only when building on non-Windows
 if os.path.exists(os.path.join(project_dir, 'RenLocalizer.sh')):
@@ -277,6 +284,16 @@ import shutil
 
 _gui_dist = os.path.join(project_dir, 'dist', 'RenLocalizer')
 _cli_dist = os.path.join(project_dir, 'dist', 'RenLocalizerCLI')
+
+# Windows: one-click launcher that skips GPU rendering entirely, for machines
+# where even the automatic OpenGL -> software GL -> raster chain cannot help.
+if sys.platform == 'win32' and os.path.isdir(_gui_dist):
+    try:
+        with open(os.path.join(_gui_dist, 'RenLocalizer_SafeGraphics.bat'), 'w', encoding='ascii', newline='\r\n') as _bf:
+            _bf.write('@echo off\nstart "" "%~dp0RenLocalizer.exe" --safe-graphics\n')
+        print("[SPEC POST-BUILD] Wrote RenLocalizer_SafeGraphics.bat")
+    except Exception as e:
+        print(f"[SPEC POST-BUILD] Warning: Could not write safe-graphics launcher: {e}")
 
 if os.path.isdir(_gui_dist) and os.path.isdir(_cli_dist):
     for item in os.listdir(_cli_dist):

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Import the whitelist and parser utilities from parser.py
 from .parser import DATA_KEY_WHITELIST, RenPyParser
+from .constants import is_renlocalizer_generated_script
 import ast
 import re
 import io
@@ -95,10 +96,16 @@ _RE_SNAKE_CASE = re.compile(r'^[a-z][a-z0-9]*(_[a-z0-9]+)+$') # Strictly ASCII f
 _RE_HAS_LETTER = re.compile(f'[{_UNICODE_RANGES}]')
 
 # Python Code Patterns (Combined for speed)
+# Statements are matched by their code shape at the start of a line: the
+# bare keywords also matched prose and dropped dialogue ("ask for help in any
+# way", "free to return to Eden", "I will return the Church").
 _PYTHON_CODE_PATTERNS = [
-    r'\bdef\s+\w+\s*\(', r'\bclass\s+\w+\s*[:\(]', r'\bfor\s+\w+\s+in\s+', 
-    r'\bif\s+\w+\s+in\s+\w+:', r'\bimport\s+\w+', r'\bfrom\s+\w+\s+import', 
-    r'\breturn\s+\w+', r'\braise\s+\w+', r'renpy\.\w+\.\w+', r'renpy\.\w+\(', 
+    r'(?m:^\s*def\s+\w+\s*\()', r'(?m:^\s*class\s+\w+\s*[:\(])',
+    r'(?m:^\s*for\s+\w+(?:\s*,\s*\w+)*\s+in\s+[^\n:]+:\s*$)',
+    r'(?m:^\s*if\s+\w+\s+in\s+\w+:)', r'(?m:^\s*import\s+[\w.]+(?:\s+as\s+\w+)?\s*$)',
+    r'(?m:^\s*from\s+[\w.]+\s+import\s+\w)',
+    r'(?m:^\s*return(?:\s+[\w.\[\]()\'"]+)?\s*$)', r'(?m:^\s*raise\s+[A-Z]\w*(?:Error|Exception)\b)',
+    r'renpy\.\w+\.\w+', r'renpy\.\w+\(',
     r'_\w+\[', r'\w+\s*=\s*True\b', r'\w+\s*=\s*False\b', r'\w+\s*=\s*None\b',
 ]
 _RE_PYTHON_CODE = re.compile('|'.join(f'(?:{p})' for p in _PYTHON_CODE_PATTERNS))
@@ -153,6 +160,12 @@ class FakeASTBase:
     
     def __getattr__(self, name: str) -> Any:
         """Fallback for missing attributes in legacy/variant Ren'Py AST nodes."""
+        # Ren'Py 8.4+ pickles some fields under a private name (Label._name);
+        # without this every label read as "" and .rpyc-only games put all
+        # dialogue under "start_<hash>" ids that the game never looks up.
+        private = self.__dict__.get("_" + name, None) if not name.startswith("_") else None
+        if private is not None:
+            return private
         if name == "hide":
             return False
         if name == "code":
@@ -1365,6 +1378,11 @@ class ExtractedText:
     # TranslateSay node), when available. When present this is the exact id
     # Ren'Py's own runtime lookup_translate() will use — no hash guessing needed.
     identifier: str = ""
+    # Clauses after a say statement's text, as Say.get_code() writes them
+    # (" nointeract", " with vpunch"); the translation line must repeat them.
+    say_tail: str = ""
+    # The author wrapped this string in _(), __(), ___() or _p().
+    marked: bool = False
 
 
 class ASTTextExtractor:
@@ -1385,6 +1403,11 @@ class ASTTextExtractor:
         
         # Filter settings
         self.translate_character_names = False
+        # Label that names the next say statement's translation id. Ren'Py's
+        # Restructurer keeps one "current label" across the whole file in
+        # source order, so a label written inside a menu choice still names
+        # the lines that follow the menu.
+        self._linear_label = ""
         if self.config_manager is not None and not isinstance(self.config_manager, bool):
              self.translate_character_names = getattr(self.config_manager.translation_settings, 'translate_character_names', False)
 
@@ -1415,6 +1438,7 @@ class ASTTextExtractor:
             List of ExtractedText objects
         """
         self.extracted = []
+        self._linear_label = ""
         self.seen_texts = set()
         self.seen_map: Dict[tuple, ExtractedText] = {}
         self.current_file = str(file_path)
@@ -1422,10 +1446,85 @@ class ASTTextExtractor:
         try:
             ast_nodes = read_rpyc_file(file_path)
             self._walk_nodes(ast_nodes)
+            self._merge_marked_strings(ast_nodes)
         except RpycReadError as e:
             logger.exception(f"Failed to read {file_path}: {e}")
         
         return self.extracted
+
+    @staticmethod
+    def _code_sources(nodes: Any, limit: int = 200000) -> List[Any]:
+        """Every Python expression/code source kept in the AST (screens,
+        defines, $ lines): PyExpr strings and PyCode.source."""
+        sources: List[Any] = []
+        stack = [nodes]
+        seen: Set[int] = set()
+        while stack and len(seen) < limit:
+            obj = stack.pop()
+            if isinstance(obj, FakePyExpr):
+                sources.append(obj)
+                continue
+            if isinstance(obj, (str, bytes, int, float, bool)) or obj is None:
+                continue
+            if id(obj) in seen:
+                continue
+            seen.add(id(obj))
+            if isinstance(obj, FakePyCode):
+                if isinstance(obj.source, str):
+                    sources.append(obj.source)
+                continue
+            if isinstance(obj, dict):
+                stack.extend(obj.values())
+            elif isinstance(obj, (list, tuple, set, frozenset)):
+                stack.extend(obj)
+            elif hasattr(obj, '__dict__'):
+                stack.extend(vars(obj).values())
+        return sources
+
+    def _merge_marked_strings(self, ast_nodes: Any) -> None:
+        """Strings wrapped in _() are string translations in Ren'Py whatever
+        they look like; mark what was extracted and add what the filters dropped."""
+        from src.core.marked_strings import scan_source, worth_translating
+
+        path = Path(self.current_file)
+        lowered = [part.lower() for part in path.parts]
+        # Ren'Py leaves developer tools and obsolete layouts out of its template.
+        if (is_renlocalizer_generated_script(path.name)
+                or any(part in ('_developer', '_compat', '_layout') for part in lowered)
+                or path.name.lower().startswith('00layout.')):
+            return
+        by_text: Dict[str, List[ExtractedText]] = {}
+        for item in self.extracted:
+            by_text.setdefault(item.text, []).append(item)
+        for source in self._code_sources(ast_nodes):
+            if '_' not in source or '(' not in source:
+                continue
+            line = getattr(source, 'linenumber', 0) or 0
+            for text, _, is_name in scan_source(str(source)):
+                if (is_name and not self.translate_character_names) or not worth_translating(text):
+                    continue
+                existing = by_text.get(text, [])
+                for item in existing:
+                    item.marked = True
+                # A say line with the same text does not cover the _() string.
+                if any(not item.character and item.text_type not in ('dialogue', 'narration', 'extend', 'bubble_dialogue', 'nvl_dialogue')
+                       for item in existing):
+                    continue
+                item = ExtractedText(
+                    text=text,
+                    line_number=line,
+                    source_file=self.current_file,
+                    text_type='ui',
+                    context='',
+                    placeholder_map={},
+                    context_path=[],
+                    node_type='marked_string',
+                    confidence=1.0,
+                    confidence_band=confidence_band(1.0),
+                    marked=True,
+                )
+                self.extracted.append(item)
+                by_text[text] = [item]
     
     def _add_text(
         self,
@@ -1437,6 +1536,7 @@ class ASTTextExtractor:
         placeholder_map: Dict[str, str] = None,
         node_type: str = "",
         identifier: str = "",
+        say_tail: str = "",
     ) -> None:
         """Add extracted text if it's meaningful."""
         if not text or not text.strip():
@@ -1508,6 +1608,7 @@ class ASTTextExtractor:
             confidence=confidence,
             confidence_band=confidence_band(confidence),
             identifier=identifier or "",
+            say_tail=say_tail,
         )
         self.extracted.append(self.seen_map[key])
         logger.info(f"[AST ENTRY] {self.current_file}:{line_number} [{node_type or text_type}] ctx={context_path} text={text}")
@@ -1675,6 +1776,14 @@ class ASTTextExtractor:
         content = content.replace('\\n', '\n').replace('\\t', '\t')
         return content
     
+    def _enter_label(self, node: Any) -> None:
+        """Track the current label the way Ren'Py's translation Restructurer
+        does: hidden labels and "_"-prefixed (call-from return) labels do not
+        change it."""
+        name = getattr(node, 'name', '') or ''
+        if name and not name.startswith('_') and not getattr(node, 'hide', False):
+            self._linear_label = name
+
     def _walk_nodes(self, nodes: List[Any], context: str = "", identifier: str = "") -> None:
         """Recursively walk AST nodes and extract text.
 
@@ -1687,8 +1796,17 @@ class ASTTextExtractor:
             if not isinstance(nodes, (list, tuple)):
                 nodes = [nodes]
             
+            current_context = context
             for node in nodes:
-                self._process_node(node, context, identifier=identifier)
+                if isinstance(node, FakeLabel):
+                    self._enter_label(node)
+                    label_name = getattr(node, 'name', '')
+                    if label_name:
+                        current_context = f"label:{label_name}"
+                    if getattr(node, 'block', None):
+                        self._walk_nodes(node.block, current_context, identifier=identifier)
+                    continue
+                self._process_node(node, current_context, identifier=identifier)
         except RecursionError:
             pass # Stop processing this branch deeply to prevent crash
 
@@ -1880,9 +1998,16 @@ class ASTTextExtractor:
         elif isinstance(node, FakeSay):
             character = getattr(node, 'who', '') or ""
             what = getattr(node, 'what', '')
-            
+            if getattr(self, '_linear_label', ''):
+                context = f"label:{self._linear_label}"
+
             # Metadata optimization: what can be a FakePyExpr (subclass of str) or literal str
             if what and isinstance(what, str):
+                # Same order as Ren'Py's Say.get_code(): nointeract, then with.
+                say_tail = "" if getattr(node, 'interact', True) else " nointeract"
+                with_ = getattr(node, 'with_', None)
+                if with_ and isinstance(with_, str):
+                    say_tail += f" with {with_.strip()}"
                 self._add_text(
                     str(what),
                     getattr(node, 'linenumber', 0),
@@ -1891,6 +2016,7 @@ class ASTTextExtractor:
                     context=context,
                     node_type=node_type,
                     identifier=identifier,
+                    say_tail=say_tail,
                 )
             
             # Check arguments for additional text (e.g. what_prefix="...")
@@ -1999,6 +2125,7 @@ class ASTTextExtractor:
 
         # Label block
         elif isinstance(node, FakeLabel):
+            self._enter_label(node)
             label_name = getattr(node, 'name', '')
             new_context = f"label:{label_name}"
             if getattr(node, 'block', None):
@@ -2249,19 +2376,20 @@ class ASTTextExtractor:
             processed_text, placeholder_map = p.preserve_placeholders(text)
             self._add_text(processed_text, line_number, 'ui', context='notify', placeholder_map=placeholder_map)
         
-        # Match Character("Name", ...) pattern
-        char_pattern = r'Character\s*\(\s*["\'](.+?)["\']\s*[\),]'
-        for match in re.finditer(char_pattern, code):
-            text = match.group(1)
-            processed_text, placeholder_map = p.preserve_placeholders(text)
-            self._add_text(processed_text, line_number, 'string', context='character_define', placeholder_map=placeholder_map)
-        
-        # Match DynamicCharacter("Name", ...) pattern
-        dyn_char_pattern = r'DynamicCharacter\s*\(\s*["\'](.+?)["\']\s*[\),]'
-        for match in re.finditer(dyn_char_pattern, code):
-            text = match.group(1)
-            processed_text, placeholder_map = p.preserve_placeholders(text)
-            self._add_text(processed_text, line_number, 'string', context='character_define', placeholder_map=placeholder_map)
+        # Match Character("Name", ...) / DynamicCharacter("Name", ...) — only when
+        # the user opted in; names are kept as-is by default (same rule as .rpy).
+        if getattr(self, 'translate_character_names', False):
+            char_pattern = r'Character\s*\(\s*["\'](.+?)["\']\s*[\),]'
+            for match in re.finditer(char_pattern, code):
+                text = match.group(1)
+                processed_text, placeholder_map = p.preserve_placeholders(text)
+                self._add_text(processed_text, line_number, 'string', context='character_define', placeholder_map=placeholder_map)
+
+            dyn_char_pattern = r'DynamicCharacter\s*\(\s*["\'](.+?)["\']\s*[\),]'
+            for match in re.finditer(dyn_char_pattern, code):
+                text = match.group(1)
+                processed_text, placeholder_map = p.preserve_placeholders(text)
+                self._add_text(processed_text, line_number, 'string', context='character_define', placeholder_map=placeholder_map)
         
         # Match renpy.say(who, "text") pattern
         say_pattern = r'renpy\.say\s*\([^,]*,\s*["\'](.+?)["\']\s*[\),]'
@@ -2436,6 +2564,8 @@ class ASTTextExtractor:
                 placeholder_map=placeholder_map
             )
 
+        translate_names = bool(getattr(self, 'translate_character_names', False))
+
         class DeepStringVisitor(ast.NodeVisitor):
             def __init__(self, source_code):
                 self.source_code = source_code
@@ -2479,7 +2609,17 @@ class ASTTextExtractor:
                 # Tier-3 Blacklist: Skip all arguments from these calls FIRST
                 if func_name in DeepExtractionConfig.TIER3_BLACKLIST_CALLS:
                     return  # Don't generic_visit into blacklisted call args
-                
+
+                # Character("Name", ...): keep the display name out unless the
+                # user opted in; still visit the other arguments.
+                if func_name.endswith('Character') and not translate_names:
+                    for arg in node.args[1:]:
+                        self.visit(arg)
+                    for kw in node.keywords:
+                        if kw.arg != 'name':
+                            self.visit(kw.value)
+                    return
+
                 # 1. Functions where ALL arguments are potential text (Translation functions)
                 if func_name in ('_', '__', 'p'):
                     for arg in node.args:
@@ -2679,6 +2819,8 @@ def extract_texts_from_rpyc(
             'confidence_band': r.confidence_band,
             # Real Ren'Py-assigned translate id from the compiled AST, when available.
             'identifier': r.identifier,
+            'say_tail': r.say_tail,
+            'marked': r.marked,
         }
         for r in results
     ]
@@ -2723,6 +2865,9 @@ def extract_texts_from_rpyc_directory(
             # Allow renpy/common and project-copied renpy under subfolders
             # Exclude only if renpy/ sits at the root of the search (engine files)
             if rel_str.startswith('renpy/') and 'common' not in rel_str:
+                continue
+            # Compiled copies of RenLocalizer's own generated scripts
+            if is_renlocalizer_generated_script(f.name):
                 continue
             filtered_files.append(f)
         except ValueError:

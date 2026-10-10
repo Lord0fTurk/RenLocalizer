@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import importlib.util
+import json
 import logging
 import os
 import subprocess
 import sys
-from collections.abc import MutableMapping
+from collections.abc import Iterable, MutableMapping
 from dataclasses import dataclass
+from pathlib import Path
 
 
 SAFE_HIDPI_SCALE_THRESHOLD = 125
@@ -26,7 +29,16 @@ _GRAPHICS_OVERRIDE_KEYS = (
 _PLATFORM_OVERRIDE_KEY = "QT_QPA_PLATFORM"
 _PLATFORM_HINT_KEY = "RENLOCALIZER_QT_PLATFORM_HINT"
 _RECOVERY_ATTEMPT_KEY = "RENLOCALIZER_QT_RECOVERY_ATTEMPT"
-_VALID_RENDER_MODES = {"auto", "native", "opengl", "software"}
+_FAILED_MODES_KEY = "RENLOCALIZER_QT_FAILED_MODES"
+# "raster" = Qt Quick software scene graph: no OpenGL/D3D at all. Last resort
+# on Windows when neither the GPU driver nor opengl32sw.dll can create a GL
+# context (RDP sessions, VMs, legacy or broken drivers).
+_VALID_RENDER_MODES = {"auto", "native", "opengl", "software", "raster"}
+# Windows recovery order: desktop GL -> Mesa llvmpipe (opengl32sw.dll) -> raster.
+WINDOWS_FALLBACK_CHAIN = ("opengl", "software", "raster")
+GRAPHICS_STATE_FILENAME = "graphics_state.json"
+# Exit code the launcher uses to request a safe-mode relaunch.
+SCENEGRAPH_FAILURE_EXIT_CODE = 213
 _VALID_PLATFORM_MODES = {
     "auto",
     "native",
@@ -93,6 +105,98 @@ def _normalize_requested_platform(requested_platform: str | None) -> str:
     if normalized_platform not in _VALID_PLATFORM_MODES:
         return "auto"
     return normalized_platform
+
+
+# ── Persistent graphics failure state ─────────────────────────────────────
+# A mode that failed once is skipped on later launches, so the user does not
+# hit the same OpenGL error dialog every start. The state is tied to the app
+# version: an update (new Qt, new drivers bundled) retries the full chain.
+
+def default_graphics_state_path() -> Path | None:
+    try:
+        from src.utils.path_manager import get_data_path
+        return get_data_path() / GRAPHICS_STATE_FILENAME
+    except Exception:
+        return None
+
+
+def load_failed_graphics_modes(
+    state_path: Path | None,
+    app_version: str | None = None,
+) -> set[str]:
+    if state_path is None:
+        return set()
+    try:
+        data = json.loads(Path(state_path).read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    if app_version and data.get("app_version") not in (None, app_version):
+        return set()
+    modes = data.get("failed_modes") or []
+    return {m for m in modes if isinstance(m, str) and m in _VALID_RENDER_MODES}
+
+
+def remember_failed_graphics_mode(
+    state_path: Path | None,
+    mode: str,
+    app_version: str | None = None,
+) -> bool:
+    """Record *mode* as failed. Returns False when the state cannot be written."""
+    if state_path is None or mode not in _VALID_RENDER_MODES:
+        return False
+    failed = load_failed_graphics_modes(state_path, app_version)
+    failed.add(mode)
+    payload = {"app_version": app_version, "failed_modes": sorted(failed)}
+    try:
+        state_path = Path(state_path)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def parse_failed_modes_env(env: MutableMapping[str, str]) -> set[str]:
+    raw = env.get(_FAILED_MODES_KEY, "")
+    return {m.strip().lower() for m in raw.split(",") if m.strip().lower() in _VALID_RENDER_MODES}
+
+
+def windows_software_gl_available() -> bool:
+    """True when opengl32sw.dll (Mesa llvmpipe) can be found for QT_OPENGL=software."""
+    if sys.platform != "win32":
+        return False
+    candidates: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates += [Path(meipass), Path(meipass) / "PyQt6" / "Qt6" / "bin"]
+    candidates.append(Path(sys.executable).parent)
+    try:
+        spec = importlib.util.find_spec("PyQt6")
+        if spec and spec.submodule_search_locations:
+            for loc in spec.submodule_search_locations:
+                candidates.append(Path(loc) / "Qt6" / "bin")
+    except Exception:
+        pass
+    return any((c / "opengl32sw.dll").is_file() for c in candidates)
+
+
+def next_windows_render_mode(
+    start_mode: str,
+    failed_modes: Iterable[str] = (),
+    software_gl_available: bool = True,
+) -> str:
+    """First mode of the Windows chain at/after *start_mode* that has not failed."""
+    failed = set(failed_modes)
+    if not software_gl_available:
+        failed.add("software")
+    chain = WINDOWS_FALLBACK_CHAIN
+    start = chain.index(start_mode) if start_mode in chain else 0
+    for mode in chain[start:]:
+        if mode not in failed:
+            return mode
+    return chain[-1]
 
 
 def _probe_linux_glx_available() -> bool:
@@ -198,6 +302,8 @@ def select_qt_render_mode(
     scale_percent: int,
     requested_mode: str | None = None,
     frozen: bool = False,
+    failed_modes: Iterable[str] = (),
+    software_gl_available: bool = True,
 ) -> str:
     """Choose the safest render mode for the current platform and environment."""
     normalized_mode = _normalize_requested_mode(requested_mode)
@@ -205,9 +311,8 @@ def select_qt_render_mode(
         return normalized_mode
 
     if platform_name == "win32":
-        if scale_percent >= SAFE_HIDPI_SCALE_THRESHOLD:
-            return "software"
-        return "opengl"
+        start = "software" if scale_percent >= SAFE_HIDPI_SCALE_THRESHOLD else "opengl"
+        return next_windows_render_mode(start, failed_modes, software_gl_available)
 
     # Linux frozen builds: proactively verify GLX so we avoid a fatal SIGABRT
     # when the bundled Qt XCB-GLX integration plugin cannot create a context.
@@ -262,6 +367,9 @@ def resolve_qt_graphics_api(platform_name: str, mode: str) -> str | None:
     if mode == "opengl":
         return "opengl"
 
+    if mode == "raster":
+        return "software"
+
     if mode != "software":
         return None
 
@@ -287,6 +395,8 @@ def configure_qt_graphics_environment(
     platform_name: str | None = None,
     scale_percent: int | None = None,
     frozen: bool | None = None,
+    failed_modes: Iterable[str] | None = None,
+    software_gl_available: bool | None = None,
 ) -> QtGraphicsBootstrapResult:
     """
     Apply conservative Qt Quick rendering defaults across supported platforms.
@@ -322,11 +432,16 @@ def configure_qt_graphics_environment(
     requested_platform = target_env.get("RENLOCALIZER_QT_PLATFORM", "")
     requested_platform_hint = target_env.get(_PLATFORM_HINT_KEY, "")
     effective_requested_platform = requested_platform or requested_platform_hint
+    effective_failed = set(failed_modes or ()) | parse_failed_modes_env(target_env)
+    if effective_platform == "win32" and software_gl_available is None:
+        software_gl_available = windows_software_gl_available()
     effective_mode = select_qt_render_mode(
         platform_name=effective_platform,
         scale_percent=actual_scale,
         requested_mode=requested_mode,
         frozen=effective_frozen,
+        failed_modes=effective_failed,
+        software_gl_available=True if software_gl_available is None else software_gl_available,
     )
     platform_plugin = existing_platform_plugin or select_qt_platform_plugin(
         env=target_env,
@@ -352,6 +467,12 @@ def configure_qt_graphics_environment(
     elif graphics_api == "software":
         target_env["QT_QUICK_BACKEND"] = "software"
         applied["QT_QUICK_BACKEND"] = "software"
+
+    # After a recorded failure a stale/corrupt shader binary cache is a common
+    # culprit on Intel/AMD drivers; stop Qt from reusing it.
+    if effective_failed and not target_env.get("QT_DISABLE_SHADER_DISK_CACHE"):
+        target_env["QT_DISABLE_SHADER_DISK_CACHE"] = "1"
+        applied["QT_DISABLE_SHADER_DISK_CACHE"] = "1"
 
     _apply_qt_debug_settings(target_env, applied)
 
@@ -395,10 +516,17 @@ def should_attempt_qt_safe_relaunch(
     effective_platform = platform_name or sys.platform
     auto_applied_keys = set(bootstrap.applied) if bootstrap else set()
 
-    if effective_platform not in {"linux", "darwin"}:
+    if effective_platform not in {"linux", "darwin", "win32"}:
         return False
 
-    if target_env.get(_RECOVERY_ATTEMPT_KEY) == "1":
+    try:
+        attempts = int(target_env.get(_RECOVERY_ATTEMPT_KEY) or 0)
+    except ValueError:
+        attempts = 1
+    # Windows walks the whole chain (opengl -> software -> raster); the other
+    # platforms have a single software step.
+    max_attempts = len(WINDOWS_FALLBACK_CHAIN) - 1 if effective_platform == "win32" else 1
+    if attempts >= max_attempts:
         return False
 
     if any(target_env.get(key) for key in _GRAPHICS_OVERRIDE_KEYS if key not in auto_applied_keys):
@@ -413,6 +541,10 @@ def should_attempt_qt_safe_relaunch(
     if _normalize_requested_platform(target_env.get("RENLOCALIZER_QT_PLATFORM")) != "auto":
         return False
 
+    if effective_platform == "win32":
+        # Nothing left to fall back to once the GL-free raster path failed.
+        return not (bootstrap and bootstrap.mode == WINDOWS_FALLBACK_CHAIN[-1])
+
     if bootstrap and bootstrap.graphics_api == "software":
         return False
 
@@ -422,8 +554,9 @@ def should_attempt_qt_safe_relaunch(
 def build_qt_safe_relaunch_env(
     env: MutableMapping[str, str] | None = None,
     platform_name: str | None = None,
+    failed_mode: str | None = None,
 ) -> dict[str, str]:
-    """Build a sanitized environment for a one-shot Qt safe-mode relaunch."""
+    """Build a sanitized environment for a Qt safe-mode relaunch."""
     source_env = env if env is not None else os.environ
     effective_platform = platform_name or sys.platform
     safe_env = dict(source_env)
@@ -431,7 +564,23 @@ def build_qt_safe_relaunch_env(
     for key in (*_GRAPHICS_OVERRIDE_KEYS, _PLATFORM_OVERRIDE_KEY, "QSG_INFO"):
         safe_env.pop(key, None)
 
-    safe_env[_RECOVERY_ATTEMPT_KEY] = "1"
+    try:
+        attempts = int(source_env.get(_RECOVERY_ATTEMPT_KEY) or 0)
+    except ValueError:
+        attempts = 0
+    safe_env[_RECOVERY_ATTEMPT_KEY] = str(attempts + 1)
+
+    if effective_platform == "win32":
+        # Stay in "auto" so the child picks the next untried chain step; the
+        # env copy of the failed modes works even if the state file is not
+        # writable.
+        failed = parse_failed_modes_env(source_env)
+        if failed_mode:
+            failed.add(failed_mode)
+        safe_env[_FAILED_MODES_KEY] = ",".join(sorted(failed))
+        safe_env.pop("RENLOCALIZER_QT_RENDER_MODE", None)
+        return safe_env
+
     safe_env["RENLOCALIZER_QT_RENDER_MODE"] = "software"
     safe_env.pop("RENLOCALIZER_QT_PLATFORM", None)
     safe_env.pop(_PLATFORM_HINT_KEY, None)

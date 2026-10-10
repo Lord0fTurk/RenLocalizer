@@ -202,6 +202,8 @@ class RenPyOutputFormatter:
         r"""^\s*['"][^'"]+['"]\s+(?:not\s+)?in\s+[A-Za-z_]\w*\.\w+"""
     )
     # v2.7.3: Code logic with dotted access — not GAME.x.y(), khelara not in GAME.crew
+    # obj.attr / GAME.questSys.isDone: a dot between two identifier characters.
+    _DOTTED_NAME_RE = re.compile(r'[A-Za-z_]\w*\.[A-Za-z_]\w*')
     _CODE_LOGIC_RE = re.compile(
         r'^\s*(?:not\s+)?[A-Za-z_][\w.]*(?:\([^)]*\))?'
         r'\s+(?:not\s+)?in\s+[A-Za-z_][\w.]*'
@@ -309,7 +311,7 @@ class RenPyOutputFormatter:
             return True
         
         # Shader/GLSL check
-        if re.search(r'\b(?:uniform|attribute|varying|vec[234]|mat[234]|gl_FragColor|sampler2D|gl_Position|texture2D|v_tex_coord|a_tex_coord|a_position|u_transform|u_lod_bias)\b', text):
+        if re.search(r'\b(?:uniform|attribute|varying)\s+(?:lowp\s+|mediump\s+|highp\s+)?(?:float|int|bool|vec[234]|mat[234]|sampler2D)\b|\b(?:vec[234]|mat[234]|texture2D)\s*\(|\b(?:gl_FragColor|gl_Position|sampler2D|v_tex_coord|a_tex_coord|a_position|u_transform|u_lod_bias)\b', text):
             return True
         
         # --- PYTHON CODE / DOCSTRING DETECTION ---
@@ -348,7 +350,9 @@ class RenPyOutputFormatter:
         stripped_of_vars = self._VARIABLE_RE.sub('', stripped_of_tags)
         stripped_of_markup = stripped_of_vars.strip()
         # If after removing all tags/vars, only punctuation/numbers/spaces remain, skip
-        if stripped_of_markup and not re.search(r'[a-zA-Z\u00C0-\u024F\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]{2,}', stripped_of_markup):
+        # "I'm" counts as a word too ("[povname]... I'm...").
+        if (stripped_of_markup and not re.search(r'[a-zA-Z\u00C0-\u024F\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]{2,}', stripped_of_markup)
+                and not re.search(r"[A-Za-z]['\u2019][A-Za-z]", stripped_of_markup)):
             return True
         
         # --- SINGLE TECHNICAL WORDS ---
@@ -629,7 +633,9 @@ class RenPyOutputFormatter:
         #          GAME.hour < 18 and GAME.questSys.isDone(...)
         # IMPORTANT: Require at least one dotted path (obj.attr) to avoid
         # catching natural language like "Getting in Shape"
-        if self._CODE_LOGIC_RE.match(text_strip) and '.' in text_strip:
+        # A real obj.attr path, not a sentence's full stop: "Maybe in time.",
+        # "Keep in mind." and "But in the end, ..." are dialogue.
+        if self._CODE_LOGIC_RE.match(text_strip) and self._DOTTED_NAME_RE.search(text_strip):
             return True
         
         # Broader code detection: dotted access + comparison/boolean in same string

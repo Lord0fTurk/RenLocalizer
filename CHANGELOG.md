@@ -4,6 +4,156 @@ render_with_liquid: false
 
 # RenLocalizer Changelog
 
+#### [2.8.19] - 2026-10-10
+
+> **New Translation Editor, dialogue that never showed up in game fixed (Ren'Py id parity, verified on four games including `.rpyc`/`.rpa`-only ones), every `_()` string translated the way Ren'Py does it, AI engines fixed behind VPN/system proxies and failing fast instead of silently using Google, CLI on par with the GUI (#20), graphics fallback and non-admin startup fix, character names kept untranslated, Toolbox and font tools fixed for all 135 languages, faster parsing and caching, macOS-packaged games (`Game.app`) accepted and the tests run on macOS.**
+
+##### ✏️ Translation Editor (New Page)
+
+> **Browse and hand-fix a game's translation without opening `.rpy` files.** New sidebar page **Editor** reads `game/tl/<language>/*.rpy` and writes the edited lines back in place. (`src/core/editor/`, `src/backend/editor_backend.py`, `components/EditorPage.qml`, `tl_parser.py`, `test_editor_core.py`, `test_editor_backend.py`)
+> - **Find lines fast:** filter by status (untranslated, translated, unsaved, warnings), file and type (dialogue / interface text); search the original, the translation and the speaker at once — case- and accent-insensitive, Turkish `ı/İ` included. 20,000 lines load in about two seconds.
+> - **Context while editing:** speaker name as players see it (`m` → "Mia"), source file and line, the previous and next line, the original next to the translation, and clickable chips for the line's `[variables]`, `{tags}` and `%s` codes.
+> - **Same rules as the pipeline:** a warning appears when an edit would be thrown away by the next translation run (missing `[variable]`, changed tags or format codes, ...). An edit without a warning is never overwritten by a later run.
+> - **Safe saving:** only the edited lines change; speaker, `nointeract`/`with` clauses, indentation and line endings are kept. A line is written only if its source line is still where it was loaded, and a file changed on disk since loading (a translation run, another editor) is skipped with a notice. The first save of a session keeps a `.rpy.bak` copy under `tl/.diagnostics/<lang>/editor_backup/` (never `.rpy`, which Ren'Py would load). Saved edits also update `strings.json` and the project's translation cache, so a regenerated `tl/` folder keeps them.
+> - **Replace all** within the current filter without touching tags or variables; **Suggest** asks the selected engine for one line through the same protected path as a full run; `Ctrl+S` saves, `Ctrl+Enter` applies. The editor is read-only while a translation runs and reloads afterwards, keeping unsaved edits; switching language or quitting with unsaved edits (including text typed but not yet applied) asks first.
+
+##### 🛡️ Hand-Made Translations Are Kept
+
+> - **No overwrite by an identical sentence:** when a TL file was rewritten, a translation keyed by text filled every slot with that sentence, replacing lines the user had already translated by hand. Text-keyed translations now fill only empty slots or slots still holding the source text. (`tl_parser.py`, `test_tl_parser_roundtrip.py`)
+> - **Backslashes survive a rewrite:** string escapes were decoded with chained replacements, so a literal backslash followed by `n` (`C:\\new`) became a line break whenever a TL file was rewritten. Decoding is now a single pass that follows Ren'Py's lexer: `\{`, `\[` and `\%` are written back as they were, and a literal backslash (`¯\\_(ツ)_/¯`, Windows paths) stays escaped.
+> - **"Translation failed" on a finished game:** when every remaining line was filtered out as technical text, nothing was sent and the empty result was reported as a failure. Such a run now completes normally.
+
+##### 🎯 Dialogue and Strings That Never Showed Up In-Game (Ren'Py Parity)
+
+> **How it was checked:** each game's own Ren'Py builds its reference template (`translate <lang>`) from a scripts-only copy, and RenLocalizer's output is compared with it id by id; the game's Ren'Py also compiles every generated file. Lines still missing are only those with nothing to translate (`"..."`, `"?"`, image-only lines, `[name]`-only lines, `nvl clear`).
+>
+> | Game (Ren'Py) | Dialogue lines | Ren'Py's count with the old output | Lines with words left untranslated now | `.rpyc`-only copy: before → now |
+> |---|---|---|---|---|
+> | MILF Obsession (8.5.2) | 19,015 | 3,109 missing | 0 | 0 |
+> | Edge of Desire (8.5.3) | 1,378 | 61 missing | 0 | 0 |
+> | Den of the Defiant (8.4.1, scripts in `scripts.rpa`) | 27,905 | – | 0 | 5,183 → 0 |
+> | Willing Temptations (8.5.3) | 7,793 | – | 0 | 1,271 → 0 |
+>
+> Missing interface strings on MILF Obsession: 364 → 32 (the rest are Ren'Py's crash-screen texts and the deliberate exclusions below). (`parser.py`, `renpy_lexer.py`, `rpyc_reader.py`, `marked_strings.py`, `pipeline/extraction.py`, `tl_parser.py`, `output_formatter.py`, `test_renpy_id_parity.py`, `test_marked_strings.py`, `test_local_label_scoping.py`)
+
+> **🆔 Ids the game actually looks up:**
+> - **Named menus are labels:** `menu my_choice:` makes Ren'Py emit a label (`parser.menu_statement` → `ast.Label`), so every line after it gets a `my_choice_<hash>` id. The parser kept the previous label — the single largest cause on MILF Obsession (43 named menus, ~2,500 lines).
+> - **Say clauses:** `nointeract` and `with <transition>` after a line (`e "Ouch!" with vpunch`, `with Dissolve(0.5, alpha=True)`) are part of the id and are repeated on the translated line, from `.rpy` and from `.rpyc`. A menu question is stored with `nointeract` even when not written; without it the question waited for an extra click before the choices appeared, and shakes/transitions were lost in translation. Lines ending in `nointeract` or a transition with spaces were not extracted at all, and `tl/` lines carrying these clauses (or `id …`) are now parsed and filled.
+> - **Narrated menu questions are also strings:** a question without a speaker is passed to the choice screen as its caption, which Ren'Py translates as a string; it now gets that entry next to its dialogue block, as in Ren'Py's own template.
+> - **Speakers written as text (`"Shop Owner" "..."`, `"Agent" "..."`, `"[a] and [b]" "..."`):** Ren'Py hashes these with the quotes, so their translations were never shown; worse, the translated line was written as `Agent "..."`, which Ren'Py runs as a variable named `Agent` (a `NameError` crash once the id matches). Names with "and"/commas were also turned into plain strings. The speaker is now kept exactly as written.
+> - **Whitespace:** Ren'Py's lexer collapses runs of spaces in string literals before hashing (`"Perfect!  Catch ya"` → `…_62efc2e1`, verified); `.rpy` and `.rpyc` copies of a line are matched whitespace-insensitively.
+> - **Local labels:** sequential local labels (`label .continue:`, `label .monday:`, `label .morning:`) were nested into each other (`ch92.continue.monday.morning`); a local label belongs to the last global label (`ch92.morning`), which is what the game looks up (*Revelations*).
+> - **`call ... from <name>`:** the return label Ren'Py creates for `from <name>` names the following lines when it does not start with `_`, so lines after `call driveTo("Kari") from d95dt` no longer keep the previous scene's label.
+> - **Comment lines:** the `# who "what"` comment above each translated line is written like Ren'Py's template (`k "\"Hi.\""`, not `k ""Hi.""`), so the editor and TL mode read it back correctly.
+
+> **📦 Games shipped as `.rpyc` or `.rpa` only:**
+> - **Ren'Py 8.4+ labels:** label names are now stored as `_name`; the reader saw no label at all, so every line got a `start_<hash>` id the game never looks up.
+> - **One current label, in source order:** a label written inside a menu choice also names the lines after the menu, as Ren'Py's translation Restructurer does; hidden labels and `_call_*` return labels do not change it. The reader went back to the outer label instead.
+> - **Repeated sentences:** the same sentence in two scenes was kept once, while Ren'Py gives every say statement its own id; `.rpyc` lines are now only compared with their own `.rpy`.
+> - **Prose taken for Python:** the `.rpyc` reader had its own copy of the old code patterns — bare `for … in`, `return …` and `raise …` matched "ask for help in any way" or "free to return to Eden" and dropped those lines. It now looks for code shape, like the `.rpy` parser.
+
+> **🔍 Lines and strings that were never extracted:**
+> - **Strings marked with `_()` are always translated (Ren'Py's own rule):** Ren'Py's collector (`renpy/translation/scanstrings.py`) takes every literal passed to `_()`, `__()`, `___()` or `_p()` — no length, case or "looks like code" checks; an `old/new` entry that is never displayed simply stays unused. RenLocalizer's heuristics dropped many of them: all-caps buttons (`SWING`, `KISS`), "Age: 42", "Relationship: Single", chapter cards (`call splash_message(_("Chapter 5"))`), `renpy.notify(__(...))`, and Ren'Py's own interface strings with tags (`{#weekday}Monday`, `{#month}January`, save/quit confirmations). A scanner following Ren'Py's rule (`src/core/marked_strings.py`) runs on `.rpy` files and on the Python expressions stored in `.rpyc` files; `_p()` is reformatted exactly like Ren'Py so the `old` line matches. Left out on purpose: strings with no letters (`<`, `▸`, `- $300`), date formats (`%A, %B %d`), `snake_case` ids, paths/URLs, Ren'Py's developer-tool files, and `Character(_("Name"))` while "translate character names" is off.
+> - **Everyday words treated as code:** dialogue was dropped when it contained `empty`, `input`, `overlay`, `linear`, `vertical`, `uniform`, `attribute`, `class`, capitalised `None`/`True`/`False`, `return`, `python`, `for … in …` / `if … in …` ("thanks for believing in me"), any `/` (`and/or`, `24/7`), `www.` (`Awww...`) or a word followed by dots (`and...`). These checks now require real code, path or URL syntax.
+> - **More false positives found on the new games:** "Maybe in time.", "Keep in mind." and "But in the end, …" looked like `obj.attr in list` because a full stop counted as a dotted name; "Dorothan's Continuance = Yes" looked like an assignment; "[povname]... I'm..." counted as having no letters; `*Buzz* *Buzz* *Buzz*` and `*Knock* *Knock*` failed the "too many symbols" check.
+> - **Menu choices starting with a statement word:** the Ren'Py-command filter ran on lower-cased text, so "Call her naughty", "Show me", "Hide behind the door" or "Play with her" were dropped. Only lower-case statements (`jump chapter_two`) are filtered now.
+
+##### 🤖 AI Engines Actually Translate (2.8.18 User Reports)
+
+> **🔌 Local Models Behind a System Proxy (`ai_translator.py`, `local_llm_server.py`, `src/utils/net.py`, `test_ai_local_endpoint.py`):**
+> - **Root cause of "the AI acts like it works but nothing gets translated":** Windows VPN/proxy tools (v2rayN, Clash, Hiddify, corporate proxies) set a system proxy. The OpenAI SDK's httpx and urllib read it but ignore its bypass list, so every request to Ollama / LM Studio / llama-server on `127.0.0.1` went to the proxy and failed. Runs retried for 10+ minutes and wrote nothing. Requests to loopback, LAN (`192.168.*`, `10.*`, `*.local`, bare host names) and the built-in server's health check now always go direct; cloud APIs still use the proxy.
+> - **Fail Fast Instead of Silent Google:** Before translating, OpenAI-compatible engines (OpenAI, DeepSeek, OpenRouter, Local LLM) are probed with `GET /models`. An unreachable server or a rejected key (401/403) stops the run in seconds with a clear, localised error. Previously every line quietly fell back to Google after minutes of retries and the run reported success, so users judged "AI quality" by Google output.
+
+> **🦙 Built-in GGUF Runner (`local_llm_server.py`, `Main.qml`):**
+> - **Stable Port:** With port "auto" the server now uses `18080` when it is free (random only as a fallback) instead of a new random port on every launch.
+> - **Dashboard Shows What Matters:** In built-in mode the quick-config card shows the GGUF file (with a browse button) and the server state instead of the Ollama/LM Studio URL and model-name fields, which do nothing in this mode and led users to copy the log's port into them.
+
+> **📂 TL Mode Translates Ren'Py Templates (`tl_parser.py`, `orchestrator.py`):**
+> - **Template Copies Are Untranslated:** Ren'Py's "Generate Translations" pre-fills every dialogue line and `new` string with the source text. TL mode counted those as finished and reported "everything is already translated" on a fresh `tl/<lang>` folder. Lines whose translation equals the source are now translated in place.
+> - **Per-Game Cache in TL Mode:** TL mode named its cache after the `game` folder, so every TL-mode project shared one cache; it now uses the same project id as the normal mode.
+
+> **👤 Character Names Stay Untranslated (`parser.py`, `rpyc_reader.py`, `orchestrator.py`, `test_character_name_protection.py`):**
+> - **Setting Honoured Everywhere:** `translate_character_names` (off by default) was respected by the main extractor only; deep scan, the Python-AST pass and the `.rpyc` reader still extracted `Character("Rose")` names, so they were translated anyway.
+> - **Names Protected Inside Dialogue:** AutoProtect only looked at speaker variables (`e`, `mc`). It now also protects the display names from `Character(...)` definitions, so "Rose smiled at Hope" keeps both names. Capitalised names match case-sensitively ("Will" does not touch "will").
+> - **No Glossary Leak:** Names added by AutoProtect are removed from the in-memory glossary after the run instead of carrying over to the next game (or into `glossary.json` on the next save).
+
+##### 🌐 Language Activation & Toolbox
+
+> **🚩 Starting the Game in the Translated Language (`saving.py`, `runtime_hook_template.py`, `test_language_init.py`):**
+> - **Optional Activation File:** New setting "Start the game in the translated language" (Settings › General & Output; CLI `--language-init` / `--no-language-init`). On by default — the generated `game/zzz_<lang>_language.rpy` is what makes the translation show up in games without a language menu. Turned off, only `tl/<lang>` is written and a file left by an earlier run is removed, for translators who ship the `tl/` folder themselves.
+> - **Games That Hard-Code English:** some games set `config.language = "english"` in an early `init -1` block (e.g. *World of Secrets*), so the translation stayed off until chosen in the options menu. The activation file now also runs at `init 999`, after all game scripts, setting `config.language` and syncing `persistent.language` / `persistent.current_language`. `renpy.change_language()` is deliberately not called during init, where Ren'Py's style and store backups do not exist yet.
+> - **Runtime Hook Finds Its Strings:** while a game's loader keeps the active language at "english" or `None`, `_rl_find_strings_json()` also tries the generated target-language folder, so `strings.json` is still loaded.
+> - **Stale Compiled Activation Removed:** switching the target language deleted the old `zzz_<lang>_language.rpy` but left its `.rpyc`, which Ren'Py still loads — the game then forced both languages. The compiled copy is removed too.
+
+> **🧰 Toolbox (`app_backend.py`, `Main.qml`, `src/tools/`, `test_toolbox_fixes.py`, `test_language_activation_tool.py`):**
+> - **Language Activation Tool:** Ren'Py does not list `tl/` languages by itself, so a translation made with activation off (or by another tool) never shows up without an in-game language menu. A new card lists the game's `tl/` folders and writes or removes the activation file on demand; CLI: `RenLocalizerCLI activate-language <game> [--lang ru] [--remove]`. The folder name is used exactly as Ren'Py expects (case-sensitive, `ru` stays `ru`).
+> - **Tools Work With Any Selected Path:** every tool assumed the selected path was a folder; with the game **EXE** selected (as the dashboard allows) the font check found no fonts, the Font Injector and Glossary Extractor failed and Lint scanned the wrong place. They now resolve `game/` from the EXE, the project root, `game/` or a `tl/` path. The **Glossary Extractor** no longer reads `tl/` (translated text) or engine files, recognises `Character('Name')` with single quotes, adds character names as protected identity entries (`Rose → Rose`) instead of empty targets, and no longer writes `glossary.json` into the game folder. The language list ignores `tl/` helper folders such as the injected fonts, and the injected `zzz_renlocalizer_font.rpy` is not re-scanned as game text.
+> - **Font Tools for All 135 Languages (`src/tools/lang_scripts.py`):** the font check looked up the Ren'Py language name ("turkish") in tables keyed by ISO codes, so every font was reported 0% / incompatible, and the font check and Font Injector only knew ~21 / ~30 languages (Persian, Hindi, Bengali, Tamil, Georgian, Armenian, Thai-family, Dutch, Swedish... had no font at all). Languages now resolve through the app's language table to a writing system with sample letters and a matching Noto family (Noto Sans Devanagari, Georgian, Thaana, Ethiopic, Meetei Mayek...; all 38 families verified on the download service), RTL where needed. When a translation exists, fonts are checked against the **characters the translation actually uses** and the missing letters are named. `.ttc` font collections (most CJK fonts) were unreadable and are now checked (face 0, as Ren'Py uses).
+
+##### 💻 CLI Brought Up to Date with the GUI (GitHub #20)
+
+> **📦 Archives, Settings & Silent Failures (`cli_main.py`, `orchestrator.py`, `validating.py`, `test_cli_parity.py`):**
+> - **`.rpa` Archives Are Extracted (#20):** The CLI hard-coded `auto_unren=False`, so games whose scripts live in `.rpa` archives produced translations of Ren'Py engine strings only while reporting 100%. Extraction now follows the app setting (on by default) and can be forced with `--extract-rpa` / `--no-extract-rpa`.
+> - **No More "100%" on Nothing:** Only the game's own scripts count when the pipeline decides whether there is something to translate — `tl/`, the bundled `renpy/` engine and RenLocalizer's `zzz_*` files no longer make an archive-only game look ready. With extraction off it stops with a clear message; with no game scripts at all it fails instead of translating engine files. This applies to the GUI too.
+> - **Same Switches as the GUI:** `.rpyc` reading (`--rpyc` / `--no-rpyc`), deep scan, proxy and target-language normalisation (`-t tr` → `tl/turkish`, not `tl/tr`) now come from the user's settings, with command-line flags overriding them.
+> - **AI Engines Work from the CLI:** OpenAI and DeepSeek never received the API key; DeepSeek was sent to OpenAI's URL; Gemini was missing. New `--api-key`, `--model`, `--base-url` (plus `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `GEMINI_API_KEY`).
+> - **TL Mode Reachable:** `--tl`, auto-detected for `game/tl/<lang>` paths; the interactive "Translate Existing TL Folder" entry actually enables it now.
+> - **Argument Handling:** Options before `translate` are no longer overwritten by the subcommand, and the documented short form `RenLocalizerCLI <game> -t ru` parses again.
+> - **Exit Codes:** Failed runs exit with `1` (it was always `0`), so scripts and CI can detect them.
+
+##### 🛡️ Startup & Stability Hardening
+
+> **🖥️ Graphics Fallback Chain & Non-Admin Startup (`run.py`, `qt_runtime.py`, `RenLocalizer.spec`, `test_qt_runtime_fallback.py`):**
+> - **No More Fatal "Failed to initialize graphics backend for OpenGL" Box:** The launcher now listens to `QQuickWindow.sceneGraphError`. Without a receiver Qt showed that dialog and aborted; now the failed mode is recorded and the app relaunches one step down the Windows chain: desktop OpenGL → software OpenGL (`opengl32sw.dll`) → GL-free Qt Quick software raster. Windows previously had no relaunch at all.
+> - **Remembered Per Version:** Failed modes are stored in `graphics_state.json` in the data folder, so later launches start directly in a working mode; an app update retries the whole chain. After any recorded failure Qt's shader disk cache is disabled (`QT_DISABLE_SHADER_DISK_CACHE`). If `opengl32sw.dll` is missing the software-GL step is skipped.
+> - **Manual Escape Hatch:** `RenLocalizer.exe --safe-graphics` (and the bundled `RenLocalizer_SafeGraphics.bat`) start straight in software raster mode.
+> - **Crash Log Without Admin Rights:** The fault handler wrote to `<install>\_internal\logs`. Under Program Files a standard user cannot write there, and the fallback `faulthandler.enable()` raised `RuntimeError` in the windowed build (`sys.stderr is None`), so the app crashed at import unless run as administrator. Crash logs now go to the data folder, then `%APPDATA%`, then the install folder, then temp.
+
+> **🔒 Concurrency, Cache & Filesystem Safety (`app_backend.py`, `manager.py`, `encoding.py`, `orchestrator.py`, `validating.py`, `Main.qml`):**
+> - **Thread-Safe Parser Context:** The context line used by the jump/call/font/style filters was a shared attribute written by every scanning thread; one file's line could decide whether another file's string was translated. It is now thread-local, and threaded scans return files in a stable order.
+> - **No Translator Swap Mid-Run:** Saving settings, switching engines or pressing "Start server" while a translation runs no longer replaces (and closes) the translator the pipeline is using. The engine selector is disabled during a run; changes apply to the next run.
+> - **Built-in GGUF Server Starts With the Translation:** A persisted `local_llm` + built-in selection no longer loads the model into VRAM on every app launch. The server is started on a worker thread when a translation begins, so the UI stays responsive while the model loads, and stopping during load is handled.
+> - **Checkpoints Fire Again:** After the cache fast path, progress starts mid-way and `current % 100` almost never matched, so periodic cache saves stopped. Checkpoints now trigger every 100 newly translated lines.
+> - **Cache Durability:** An unreadable `translation_cache.json` is backed up (`.bak`) before the next save would overwrite it; normalised translations written with `cache_update_text` are now flagged for saving; `save_json_safely` serialises before opening the temp file (no leaked handle or stray `.tmp`), falls back to stdlib JSON for strings with lone surrogates, and reports unwritable folders instead of raising.
+> - **Write Pre-Flight:** Before extraction the game (or `tl/<lang>`) folder is probed by actually creating a file — `os.access()` ignores Windows ACLs — so games under Program Files fail immediately with a clear, localised message instead of a `PermissionError` mid-run.
+> - **Output File Names:** Translation files are named after the script they come from by comparing normalised paths; when the game path was given with `/` (or different drive-letter case) every script went into a single `external_libs.rpy`.
+> - **Generated Scripts Are Not Re-Scanned:** On a second run the parser and `.rpyc` reader picked up RenLocalizer's own `zzz_<lang>_language.rpy` / `zzz_renlocalizer_runtime.rpy` (and their `.rpyc`), sent their helper docstrings to the translator and made source-language detection report the *target* language. They are now excluded (`is_renlocalizer_generated_script()`).
+> - **No "Export failed" Noise in Native Mode:** The automatic strings.json → `.rpy` export only runs when a `strings.json` exists; Native TLID mode intentionally writes none.
+
+> **💾 Engine Selection Is Remembered (`config.py`, `app_backend.py`, `settings_backend.py`, `Main.qml`):**
+> - **No Reset to Google:** a leftover debug line in `AppBackend.__init__` set the engine back to `"google"` on every start, and `"deepseek"` was missing from the allowed engines, so saving the settings silently replaced it with Google.
+> - **All Engines Saved as Chosen:** the settings backend stores the engine id directly instead of mapping it through an enum that lacked DeepSeek, so every engine (Google, Bing, OpenAI, DeepSeek, Local LLM, Gemini) survives a restart.
+> - **Dropdown Keeps the Selection:** the engine list is rebuilt when the UI language changes; it now re-selects the active engine instead of jumping back to the first entry.
+
+##### 🍎 macOS Games, macOS Tests & Release Builds
+
+> **📦 Games Packaged for macOS (`path_manager.py`, `app_backend.py`, `orchestrator.py`, `cli_main.py`, `Main.qml`, `test_mac_app_bundle.py`):**
+> - **`Game.app` Can Be Selected:** Ren'Py's mac package keeps the game in `Game.app/Contents/Resources/autorun` with no `game/` next to the app, so selecting it ended in "game/ folder not found". The GUI, the pipeline and the CLI now use the app's `autorun` folder, also when a file inside the app is chosen; paths already inside it, such as a `tl/` folder, are left as they are. On macOS the game picker lists `.app` files, and the cache is named after the app instead of `autorun`.
+> - **Checked:** Edge of Desire laid out as a mac package gives the same output as the regular folder (5,435 texts, 72 files), and the game's own Ren'Py compiles it.
+
+> **🧪 Builds and Tests (`.github/workflows/tests.yml`, `constraints-release.txt`, `test_qml_integrity.py`):**
+> - **Tests Run on macOS:** the test workflow also runs the full suite and a startup smoke test on macOS (Apple Silicon, Python 3.12). Until now macOS was only built and started at release time.
+> - **QML Load Test Covers the Editor:** the test gave the editor page an unowned backend that Python could collect at once, so the page bound against nothing and its script errors went unnoticed. The backend is kept alive and the test fails on any QML `TypeError` or `ReferenceError`.
+> - **Pinned Release Dependencies:** `orjson`, `py3langid` and `numpy`, new in this release, are pinned in `constraints-release.txt` like the other packages of the release builds.
+
+##### ⚡ Faster Parsing, Caching & JSON
+
+> **🏎️ Parsing (`parser.py`, `orchestrator.py`, `test_performance_and_offline_detect.py`):**
+> - **Threaded Script Extraction:** `extract_from_directory_parallel()` and `extract_from_directory_with_deep_scan()` read and parse files on a `ThreadPoolExecutor` (`min(8, os.cpu_count())`); results come back in discovery order, so output is identical to a sequential scan. Parsing is pure-Python regex work, so on a standard (GIL) CPython the gain comes mostly from overlapping file I/O.
+> - **No Double Scan:** template generation no longer scans the game a second time with `extract_from_directory_with_deep_scan()` and `extract_texts_from_rpyc_directory()` after `extract_combined()` already did, and the parsing stage no longer repeats a deep scan the template stage completed — about 10–25 seconds on large games.
+> - **Each Script Once on Windows:** `glob("**/*.rpy")` and `glob("**/*.RPY")` returned the same files twice on case-insensitive file systems.
+> - **Decompile Only When Needed:** `unrpyc` runs only for `.rpyc` files that have no `.rpy` next to them.
+
+> **💽 Cache (`manager.py`, `orchestrator.py`, `test_fast_path_cache.py`):**
+> - **Cached Lines Skip the Translation Loop:** a single pre-pass in `_translate_entries()` resolves cached and external-TM lines before batching. When everything is cached (a 14,300-line re-run), batching, task spawning and the guard loop are skipped entirely — from 4+ minutes to under a second.
+> - **Indexed Lookups:** `_ObservableCacheDict` keeps per-engine and per-target indexes, so cross-engine and auto-source lookups are hash lookups instead of scans over tens of thousands of entries; the remaining full scan on a cache miss was removed.
+> - **Save Only When Changed:** `save_cache()` skips writing when nothing was added, changed or removed since the last save.
+
+> **📦 JSON and Language Detection (`encoding.py`, `saving.py`, `src/utils/lang_detect.py`, `requirements.txt`):**
+> - **orjson With Fallback:** `strings.json`, `translation_cache.json` and diagnostic reports are read and written with `orjson` when available, the standard `json` module otherwise; `save_json_safely()` / `read_json_safely()` write atomically and retry when Windows holds a file lock.
+> - **Offline Source-Language Detection:** for `source_language == "auto"` the source language is classified locally with py3langid before any HTTP probe. Only a confident answer is used (normalised probability ≥ 0.90 on markup-stripped, sentence-like lines sampled across the whole project); otherwise the run keeps `"auto"` and Google's online detection remains the fallback. Without the threshold, character names and UI words were labelled Shona/Uzbek and that wrong source language was applied to the entire run. The model data is bundled in the Windows build (`collect_data_files('py3langid')`).
+
+
 #### [2.8.18] - 2026-09-24
 
 > **Custom & Obfuscated RPA Archive Extraction (Non-Standard Magic Headers and SHA-256 Keystream XOR Deobfuscation), Linear Label Scoping & Innermost Native TLID Resolution, Self-Healing Translation Cache Architecture, Nested Placeholder Collision Guard, Script-Priority Archive Ordering.**

@@ -77,12 +77,16 @@ class RenPyLexer:
         'label': 'ui',
     }
 
+    CALL_FROM_RE = re.compile(r'^call\s+(?!screen\b)[^#\n]+?\bfrom\s+(\.?[A-Za-z_]\w*)')
+    NAMED_MENU_RE = re.compile(r'^menu\s+(\.?[A-Za-z_]\w*(?:\.\w+)?)\s*(?:\(.*\))?\s*:')
+
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
         """Reset internal lexer state."""
         self.current_label: Optional[str] = None
+        self.current_global_label: Optional[str] = None
         self.in_python_block: bool = False
         self.python_indent: int = 0
         self._bracket_depth: int = 0
@@ -159,8 +163,36 @@ class RenPyLexer:
                 parts = stripped.split()
                 if len(parts) >= 2:
                     label_name = parts[1].split(':')[0].strip('"\'')
-                    self.current_label = label_name
+                    if label_name.startswith('.'):
+                        parent = self.current_global_label or 'start'
+                        self.current_label = f"{parent}{label_name}"
+                    else:
+                        self.current_global_label = label_name.split('.')[0]
+                        self.current_label = label_name
                 continue
+
+            # Named menu ("menu my_choice:") is a label in Ren'Py too.
+            named_menu = self.NAMED_MENU_RE.match(stripped)
+            if named_menu:
+                menu_label = named_menu.group(1)
+                if menu_label.startswith('.'):
+                    parent = self.current_global_label or 'start'
+                    self.current_label = f"{parent}{menu_label}"
+                else:
+                    self.current_global_label = menu_label.split('.')[0]
+                    self.current_label = menu_label
+
+            # Check call ... from <label> definition
+            call_from_match = self.CALL_FROM_RE.match(stripped)
+            if call_from_match:
+                from_name = call_from_match.group(1)
+                if not from_name.startswith('_'):
+                    if from_name.startswith('.'):
+                        parent = self.current_global_label or 'start'
+                        self.current_label = f"{parent}{from_name}"
+                    else:
+                        self.current_global_label = from_name.split('.')[0]
+                        self.current_label = from_name
 
             # Check triple quote start
             if '"""' in stripped or "'''" in stripped:

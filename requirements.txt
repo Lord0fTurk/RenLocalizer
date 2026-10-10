@@ -7,8 +7,10 @@ PyQt6>=6.6,<6.11
 aiohttp>=3.11.0
 requests>=2.32.0
 
-# Text Encoding Detection
+# Text Encoding, Serialization & Language Detection
 charset-normalizer>=3.3.0
+orjson>=3.10.0
+py3langid>=0.2.0
 
 # AI Translation Engines (OpenAI, DeepSeek, LocalLLM)
 openai>=1.14.0

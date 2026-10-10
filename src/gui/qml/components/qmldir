@@ -1,3 +1,4 @@
 ToastNotification 1.0 ToastNotification.qml
 GlossaryAddDialog 1.0 GlossaryAddDialog.qml
 WarningDialog 1.0 WarningDialog.qml
+EditorPage 1.0 EditorPage.qml

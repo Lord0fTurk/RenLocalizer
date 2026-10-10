@@ -205,6 +205,48 @@ ApplicationWindow {
         logConsoleListView.positionViewAtEnd()
     }
 
+    Connections {
+        target: editorBackend
+        function onNotify(level, message) {
+            appendLog(level, message)
+            showToast(message, level)
+        }
+    }
+
+    property bool editorCloseConfirmed: false
+    onClosing: function(close) {
+        // Text typed into the editor but not applied yet counts as unsaved too.
+        if (!editorCloseConfirmed) pageEditor.commitPending()
+        if (!editorCloseConfirmed && editorBackend.hasUnsavedChanges) {
+            close.accepted = false
+            editorCloseDialog.open()
+        }
+    }
+
+    Dialog {
+        id: editorCloseDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        title: appBackend.uiTrigger, appBackend.getTextWithDefault("editor_unsaved_title", "Unsaved changes")
+        Label {
+            text: appBackend.uiTrigger, appBackend.getTextWithDefault("editor_unsaved_close", "The editor has unsaved edits. Quit without saving?")
+            color: clrTxt; wrapMode: Text.WordWrap
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: appBackend.uiTrigger, appBackend.getTextWithDefault("editor_go_to_editor", "Go to editor")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                onClicked: { editorCloseDialog.close(); navIndex = 5 }
+            }
+            Button {
+                text: appBackend.uiTrigger, appBackend.getTextWithDefault("editor_quit_discard", "Quit without saving")
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: { editorCloseConfirmed = true; editorCloseDialog.close(); root.close() }
+            }
+        }
+    }
+
     function showToast(msg, type) {
         toast.show(msg, type)
     }
@@ -266,6 +308,10 @@ ApplicationWindow {
         title: appBackend.uiTrigger, appBackend.getTextWithDefault("select_game_exe_title", "Oyun EXE Dosyasını Seç")
         nameFilters: Qt.platform.os === "windows"
             ? [appBackend.getTextWithDefault("renpy_games_filter", "Ren'Py Games") + " (*.exe)",
+               appBackend.getTextWithDefault("all_files_filter", "All files") + " (*)"]
+            : (Qt.platform.os === "osx" || Qt.platform.os === "macos")
+            // Ren'Py's mac package is Game.app (game files in Contents/Resources/autorun)
+            ? [appBackend.getTextWithDefault("renpy_games_filter", "Ren'Py Games") + " (*.app *.sh)",
                appBackend.getTextWithDefault("all_files_filter", "All files") + " (*)"]
             : [appBackend.getTextWithDefault("shell_scripts_filter", "Shell scripts") + " (*.sh)",
                appBackend.getTextWithDefault("all_files_filter", "All files") + " (*)"]
@@ -579,6 +625,50 @@ ApplicationWindow {
                             Label {
                                 text: appBackend.uiTrigger, appBackend.getTextWithDefault("nav_glossary", "📚 Glossary")
                                 font.pixelSize: 13; font.bold: navIndex === 4; color: navIndex === 4 ? clrAccent : clrTxt
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                            }
+                        }
+                    }
+
+                    Button {
+                        id: btnNavEditor
+                        Layout.fillWidth: true; height: 44
+                        scale: down ? 0.97 : 1.0
+                        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                        onClicked: navIndex = 5
+                        background: Rectangle {
+                            radius: 10
+                            color: navIndex === 5 ? Qt.rgba(0, 242, 254, 0.14) : (btnNavEditor.hovered ? clrCardHover : "transparent")
+                            border.color: navIndex === 5 ? Qt.rgba(0, 242, 254, 0.7) : "transparent"
+                            border.width: 1
+                            Behavior on color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                            // Sol aktif neon gösterge çizgisi
+                            Rectangle {
+                                anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                anchors.leftMargin: 4
+                                width: 3; height: navIndex === 5 ? 22 : 0
+                                radius: 1.5; color: clrAccent
+                                opacity: navIndex === 5 ? 1.0 : 0.0
+                                Behavior on height { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                                Behavior on opacity { NumberAnimation { duration: 150 } }
+                            }
+                        }
+                        contentItem: RowLayout {
+                            spacing: 14
+                            transform: Translate {
+                                x: (btnNavEditor.hovered && navIndex !== 5) ? 4 : 0
+                                Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                            }
+                            Label {
+                                text: "✏️"; font.pixelSize: 17
+                                scale: navIndex === 5 ? 1.15 : 1.0
+                                Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                            }
+                            Label {
+                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("nav_editor", "Editor")
+                                font.pixelSize: 13; font.bold: navIndex === 5; color: navIndex === 5 ? clrAccent : clrTxt
                                 Behavior on color { ColorAnimation { duration: 150 } }
                             }
                         }
@@ -1066,6 +1156,8 @@ ApplicationWindow {
                                     ComboBox {
                                         id: engineComboBox
                                         Layout.fillWidth: true; height: 40
+                                        // Swapping engines mid-run would replace the translator the pipeline is using
+                                        enabled: !isTranslating
                                         function engineModel() {
                                             appBackend.uiTrigger // Re-eval on language change
                                             return [
@@ -1081,7 +1173,18 @@ ApplicationWindow {
                                         }
                                         model: engineModel()
                                         textRole: "name"; valueRole: "id"
-                                        Component.onCompleted: currentIndex = indexOfValue(appBackend.selectedEngine || "google")
+                                        function syncIndex() {
+                                            var idx = indexOfValue(appBackend.selectedEngine || "google");
+                                            if (idx >= 0 && currentIndex !== idx) {
+                                                currentIndex = idx;
+                                            }
+                                        }
+                                        Component.onCompleted: syncIndex()
+                                        Connections {
+                                            target: appBackend
+                                            function onSelectedEngineChanged(eng) { engineComboBox.syncIndex() }
+                                            function onUiTriggerChanged() { engineComboBox.syncIndex() }
+                                        }
                                         onActivated: { appBackend.setSelectedEngine(currentValue); appBackend.refreshUI() }
                                         background: Rectangle {
                                             radius: 8; color: clrInput; border.color: parent.hovered ? clrAccent : clrCardBorder; border.width: 1
@@ -1743,11 +1846,73 @@ ApplicationWindow {
                                 }
                             }
 
-                            // 3) Local LLM Hızlı Yapılandırma
+                            // 3a) Local LLM — built-in GGUF runner: the URL/model fields do
+                            // nothing in this mode (the port is chosen by RenLocalizer), so
+                            // show the model file and server state instead of inviting users
+                            // to copy the log's port into the URL field.
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 14
-                                visible: appBackend.selectedEngine === "local_llm"
+                                visible: appBackend.selectedEngine === "local_llm" && appBackend.localLlmMode === "builtin"
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true; Layout.preferredWidth: 7; spacing: 4
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("local_llm_gguf_label", "GGUF Model File:"); color: clrTxt2; font.pixelSize: 11; font.bold: true }
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 6
+                                        TextField {
+                                            Layout.fillWidth: true; height: 38
+                                            text: appBackend.localLlmGgufPath; placeholderText: "C:/models/model-Q4_K_M.gguf"
+                                            onEditingFinished: appBackend.localLlmGgufPath = text
+                                            background: Rectangle {
+                                                radius: 8; color: clrInput; border.color: parent.activeFocus ? clrAccent : clrCardBorder; border.width: 1
+                                                Behavior on border.color { ColorAnimation { duration: 150 } }
+                                            }
+                                        }
+                                        Button {
+                                            id: btnQuickGguf
+                                            Layout.preferredWidth: 38; Layout.preferredHeight: 38
+                                            onClicked: ggufDialog.open()
+                                            ToolTip.visible: hovered
+                                            ToolTip.delay: 250
+                                            ToolTip.text: appBackend.uiTrigger, appBackend.getTextWithDefault("select_gguf_title", "Select GGUF model file")
+                                            background: Rectangle {
+                                                radius: 8; color: btnQuickGguf.hovered ? clrCardHover : clrInput
+                                                border.color: btnQuickGguf.hovered ? clrAccent : clrCardBorder; border.width: 1
+                                            }
+                                            contentItem: Label {
+                                                text: "📂"; font.pixelSize: 15
+                                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                            }
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true; Layout.preferredWidth: 4; spacing: 4
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("local_llm_server_state_label", "Built-in server:"); color: clrTxt2; font.pixelSize: 11; font.bold: true }
+                                    Label {
+                                        Layout.fillWidth: true; Layout.preferredHeight: 38
+                                        verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                                        font.pixelSize: 12
+                                        color: appBackend.localServerStatus === "ready" ? clrSuccess
+                                             : appBackend.localServerStatus === "error" ? clrError : clrTxt2
+                                        text: appBackend.uiTrigger, appBackend.localServerStatus === "ready"
+                                              ? appBackend.getTextWithDefault("local_server_ready", "Server running") + " · " + appBackend.localServerDetail
+                                              : appBackend.localServerStatus === "error"
+                                                ? appBackend.localServerDetail
+                                                : appBackend.localServerStatus === "starting"
+                                                  ? appBackend.getTextWithDefault("local_server_starting", "Loading model...")
+                                                  : appBackend.getTextWithDefault("local_llm_server_auto_start", "Starts automatically with the translation")
+                                    }
+                                }
+                            }
+
+                            // 3) Local LLM Hızlı Yapılandırma (Ollama / LM Studio)
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 14
+                                visible: appBackend.selectedEngine === "local_llm" && appBackend.localLlmMode !== "builtin"
 
                                 ColumnLayout {
                                     Layout.fillWidth: true; Layout.preferredWidth: 6; spacing: 4
@@ -2565,6 +2730,19 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                            }
+
+                            Rectangle { Layout.fillWidth: true; height: 1; color: clrCardBorder }
+
+                            // Dil etkinleştirme dosyası (game/zzz_<lang>_language.rpy)
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 10
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("activate_language_title", "Start the game in the translated language"); color: clrTxt; font.bold: true; font.pixelSize: 13 }
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("activate_language_desc", "Adds a small file to game/ that switches the game to the target language at launch. Turn off if you only want the tl/ files (e.g. to ship the translation yourself and let players choose the language)."); color: clrTxt2; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                }
+                                Switch { checked: appBackend.activateLanguageOnLaunch; onToggled: appBackend.activateLanguageOnLaunch = checked }
                             }
 
                             Rectangle { Layout.fillWidth: true; height: 1; color: clrCardBorder }
@@ -4016,6 +4194,131 @@ ApplicationWindow {
                         }
                     }
 
+                    // ── KART: DİL ETKİNLEŞTİRME (zzz_<lang>_language.rpy) ───────
+                    // Ren'Py does not list tl/ folders by itself: this writes (or
+                    // removes) the file that starts the game in a translated language.
+                    Rectangle {
+                        id: langActivateCard
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: langActCol.implicitHeight + 36
+                        radius: 14; color: clrCard; border.color: clrCardBorder; border.width: 1
+
+                        property var tlLangs: []
+                        function refreshLangs() {
+                            tlLangs = appBackend.toolListTlLanguages()
+                            var pre = appBackend.toolDefaultTlLanguage()
+                            var idx = tlLangs.indexOf(pre)
+                            langActCombo.currentIndex = idx >= 0 ? idx : (tlLangs.length > 0 ? 0 : -1)
+                        }
+                        Connections {
+                            target: viewToolbox
+                            function onVisibleChanged() { if (viewToolbox.visible) langActivateCard.refreshLangs() }
+                        }
+                        Component.onCompleted: refreshLangs()
+
+                        ColumnLayout {
+                            id: langActCol
+                            anchors.fill: parent; anchors.margins: 18; spacing: 14
+
+                            RowLayout {
+                                spacing: 12; Layout.fillWidth: true
+                                Rectangle {
+                                    width: 38; height: 38; radius: 8; color: Qt.rgba(0, 242, 254, 0.1)
+                                    border.color: Qt.rgba(0, 242, 254, 0.3); border.width: 1
+                                    Label { anchors.centerIn: parent; text: "🏳️"; font.pixelSize: 18 }
+                                }
+                                ColumnLayout {
+                                    spacing: 1; Layout.fillWidth: true
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("tool_lang_activate_title", "Language Activation"); font.pixelSize: 15; font.bold: true; color: clrTxt }
+                                    Label { text: "zzz_<lang>_language.rpy"; font.pixelSize: 11; color: clrTxtDim }
+                                }
+                                Rectangle {
+                                    radius: 6; color: Qt.rgba(0, 242, 254, 0.15)
+                                    Layout.preferredHeight: 20; Layout.preferredWidth: 48
+                                    Label { anchors.centerIn: parent; text: "LANG"; font.pixelSize: 9; font.bold: true; color: clrAccent }
+                                }
+                            }
+
+                            Label {
+                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("tool_lang_activate_desc", "Ren'Py does not list the languages in the tl/ folder by itself. Pick a translation below to make the game start in that language, or remove the activation to return to the original language.")
+                                font.pixelSize: 12; color: clrTxt2; wrapMode: Text.Wrap; Layout.fillWidth: true
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 8
+                                ComboBox {
+                                    id: langActCombo
+                                    objectName: "toolLangActivateCombo"
+                                    Layout.fillWidth: true; height: 38
+                                    model: langActivateCard.tlLangs
+                                    enabled: langActivateCard.tlLangs.length > 0
+                                    displayText: langActivateCard.tlLangs.length > 0 ? currentText
+                                                 : (appBackend.uiTrigger, appBackend.getTextWithDefault("tool_lang_no_tl", "No translation folders found in game/tl. Translate the game first."))
+                                    background: Rectangle { radius: 8; color: clrInput; border.color: parent.hovered ? clrAccent : clrCardBorder; border.width: 1 }
+                                    contentItem: Label {
+                                        leftPadding: 14; rightPadding: 30
+                                        text: langActCombo.displayText; elide: Text.ElideRight
+                                        color: langActivateCard.tlLangs.length > 0 ? clrTxt : clrTxtDim
+                                        font.pixelSize: 12; verticalAlignment: Text.AlignVCenter
+                                    }
+                                    delegate: ItemDelegate {
+                                        width: langActCombo.width
+                                        contentItem: Label { text: modelData; color: clrTxt; font.pixelSize: 12; leftPadding: 14; elide: Text.ElideRight }
+                                        background: Rectangle { color: hovered ? Qt.rgba(0, 242, 254, 0.12) : "transparent" }
+                                    }
+                                    popup: Popup {
+                                        y: langActCombo.height; width: langActCombo.width
+                                        implicitHeight: Math.min(contentItem.implicitHeight, 220); padding: 4
+                                        contentItem: ListView { clip: true; implicitHeight: contentHeight; model: langActCombo.delegateModel; ScrollBar.vertical: ScrollBar {} }
+                                        background: Rectangle { color: clrCard; radius: 8; border.color: clrCardBorder; border.width: 1 }
+                                    }
+                                }
+                                // Rescan game/tl (e.g. after translating another language)
+                                Button {
+                                    id: btnRefreshTlLangs
+                                    Layout.preferredWidth: 38; Layout.preferredHeight: 38
+                                    onClicked: langActivateCard.refreshLangs()
+                                    ToolTip.visible: hovered
+                                    ToolTip.delay: 250
+                                    ToolTip.text: appBackend.uiTrigger, appBackend.getTextWithDefault("tool_lang_refresh", "Rescan the game's tl/ folder")
+                                    background: Rectangle {
+                                        radius: 8; color: btnRefreshTlLangs.hovered ? clrCardHover : clrInput
+                                        border.color: btnRefreshTlLangs.hovered ? clrAccent : clrCardBorder; border.width: 1
+                                    }
+                                    contentItem: Label {
+                                        text: "⟳"; color: btnRefreshTlLangs.hovered ? clrAccent : clrTxt2
+                                        font.pixelSize: 17; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 8
+                                Button {
+                                    Layout.fillWidth: true; height: 38
+                                    enabled: langActivateCard.tlLangs.length > 0
+                                    text: appBackend.uiTrigger, "🏳️ " + appBackend.getTextWithDefault("btn_activate_language", "Start game in this language")
+                                    onClicked: appBackend.runToolActivateLanguage(langActCombo.currentText)
+                                    background: Rectangle {
+                                        radius: 8; color: parent.hovered ? clrCardHover : clrInput
+                                        border.color: parent.hovered ? clrAccent : clrCardBorder; border.width: 1
+                                    }
+                                    contentItem: Label { text: parent.text; color: clrAccent; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                                }
+                                Button {
+                                    Layout.fillWidth: true; height: 38
+                                    text: appBackend.uiTrigger, appBackend.getTextWithDefault("btn_remove_language_activation", "Remove activation")
+                                    onClicked: appBackend.runToolRemoveLanguageActivation()
+                                    background: Rectangle {
+                                        radius: 8; color: parent.hovered ? clrCardHover : clrInput
+                                        border.color: parent.hovered ? clrError : clrCardBorder; border.width: 1
+                                    }
+                                    contentItem: Label { text: parent.text; color: clrTxt2; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                                }
+                            }
+                        }
+                    }
+
                     // ── KART 4: RPA & ARŞİV KORUMA DOKTORU ─────────────────────
                     Rectangle {
                         Layout.fillWidth: true
@@ -4303,6 +4606,17 @@ ApplicationWindow {
                 }
             }
         }
+
+        // ═════════════════════════════════════════════════════════════
+        // SEKME 5: ÇEVİRİ EDİTÖRÜ (tl/<dil> satır satır düzenleme)
+        // ═════════════════════════════════════════════════════════════
+        EditorPage {
+            id: pageEditor
+            ui: root
+            visible: navIndex === 5
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
         }
     }
 
@@ -4514,7 +4828,6 @@ ApplicationWindow {
                     }
                 }
             }
-
             // 3. Alt Butonlar Grubu
             RowLayout {
                 Layout.fillWidth: true

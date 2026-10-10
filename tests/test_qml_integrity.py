@@ -23,6 +23,11 @@ def test_qml_loads_cleanly():
 
     engine = QQmlApplicationEngine(app)
     engine.rootContext().setContextProperty("appBackend", backend)
+    from src.backend.editor_backend import EditorBackend
+    # Parented so Python keeps it alive; an unowned object is collected at once
+    # and the editor page would bind against null.
+    editor_backend = EditorBackend(backend, parent=app)
+    engine.rootContext().setContextProperty("editorBackend", editor_backend)
 
     qml_root = os.path.abspath("src/gui/qml")
     engine.addImportPath(qml_root)
@@ -37,6 +42,8 @@ def test_qml_loads_cleanly():
     engine.load(QUrl.fromLocalFile(qml_path))
 
     assert len(engine.rootObjects()) > 0, f"QML failed to load: {errors}"
+    script_errors = [e for e in errors if "TypeError" in e or "ReferenceError" in e]
+    assert not script_errors, "QML script errors:\n" + "\n".join(script_errors)
 
 
 def test_no_helper_receives_ui_trigger_as_argument():

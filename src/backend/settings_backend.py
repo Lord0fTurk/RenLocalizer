@@ -232,6 +232,13 @@ class SettingsBackend:
         self.config.translation_settings.enable_deep_scan = bool(val)
         self._emit("deep_scan")
 
+    def get_activate_language_on_launch(self) -> bool:
+        return bool(getattr(self.config.translation_settings, "activate_language_on_launch", True))
+
+    def set_activate_language_on_launch(self, val: bool) -> None:
+        self.config.translation_settings.activate_language_on_launch = bool(val)
+        self._emit("activate_language_on_launch")
+
     def get_enable_stateful_lexer(self) -> bool:
         return getattr(self.config.translation_settings, "enable_stateful_lexer", False)
 
@@ -244,17 +251,18 @@ class SettingsBackend:
     # ═══════════════════════════════════════════════════════════════════════════
 
     def get_selected_engine(self) -> str:
-        return self._selected_engine.value
+        return self.config.translation_settings.selected_engine or self._selected_engine.value
 
     def set_selected_engine(self, engine_str: str) -> None:
         """Changes the active translation engine and persists to config."""
-        new_engine = self._engine_getter(engine_str)
-        self.config.translation_settings.selected_engine = engine_str.lower()
+        clean_str = (engine_str or 'google').lower()
+        new_engine = self._engine_getter(clean_str)
+        old_str = (self.config.translation_settings.selected_engine or '').lower()
+        self.config.translation_settings.selected_engine = clean_str
         self.config.save_config()
-        if new_engine == self._selected_engine:
-            return
         self._selected_engine = new_engine
-        self._emit("selected_engine", engine_str)
+        if clean_str != old_str:
+            self._emit("selected_engine", clean_str)
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  OpenAI Settings

@@ -69,6 +69,11 @@ def _reference_renpy_encode_say_string(s: str) -> str:
 
 
 def _reference_renpy_tlid(label: str, who: str, text: str) -> str:
+    # Source text first goes through Ren'Py's lexer, which collapses runs of
+    # plain spaces ("a  b" -> "a b"). Verified against Ren'Py 8.5.2's own
+    # generated template: 'ca "Perfect!  Catch ya later!"' is expected as
+    # dia12_cafeteria_manha_62efc2e1, the hash of the single-space text.
+    text = re.sub(r"(?<!\\)[ \t]{2,}", " ", text)
     code_parts = [who] if who else []
     code_parts.append(_reference_renpy_encode_say_string(text))
     code = " ".join(code_parts)

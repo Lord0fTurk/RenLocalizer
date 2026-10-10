@@ -44,6 +44,8 @@ from src.utils.constants import (
     AI_LOCAL_URL,
 )
 
+from src.utils.net import is_local_endpoint
+
 logger = logging.getLogger(__name__)
 
 # ── Optional dependency guard ─────────────────────────────────────────────────
@@ -635,6 +637,15 @@ class AsyncBaseAITranslator(BaseTranslator):
             }
             if self._base_url:
                 kwargs["base_url"] = self._base_url
+                if is_local_endpoint(self._base_url):
+                    # A Windows/VPN system proxy would otherwise swallow every
+                    # request to Ollama / LM Studio / llama-server (see src/utils/net.py).
+                    try:
+                        from openai import DefaultAsyncHttpxClient
+                        kwargs["http_client"] = DefaultAsyncHttpxClient(trust_env=False)
+                    except Exception:
+                        import httpx
+                        kwargs["http_client"] = httpx.AsyncClient(trust_env=False)
             self._client = AsyncOpenAI(**kwargs)
         return self._client
 
@@ -1448,6 +1459,31 @@ class AsyncBaseAITranslator(BaseTranslator):
             except Exception:
                 pass
             self._client = None
+
+    async def probe_endpoint(self, timeout: float = 10.0) -> Optional[str]:
+        """Cheap reachability/auth check before a run. None = usable, else a reason.
+
+        Without it an unreachable server or a rejected key only showed up as
+        per-batch retries for minutes, after which every line silently went to
+        the Google fallback — users saw "translated" and Google-quality text
+        while believing the AI engine did the work.
+        """
+        if not _OPENAI_AVAILABLE:
+            return None
+        try:
+            client = self._get_client().with_options(timeout=timeout, max_retries=0)
+            await client.models.list()
+            return None
+        except APIConnectionError as exc:
+            return f"cannot connect to {self._base_url or 'the API'} ({exc.__class__.__name__})"
+        except APIStatusError as exc:
+            if exc.status_code in (401, 403):
+                return f"the API rejected the key (HTTP {exc.status_code})"
+            # 404/405/501: many OpenAI-compatible servers have no /models.
+            return None
+        except Exception as exc:
+            self.logger.debug(f"[{self.__class__.__name__}] endpoint probe inconclusive: {exc}")
+            return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

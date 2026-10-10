@@ -11,7 +11,9 @@ import asyncio
 import ast
 import json
 import logging
+import os
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -19,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from src.utils.encoding import read_text_safely
+from src.core.constants import is_renlocalizer_generated_script
 import configparser
 import yaml
 from src.core.deep_extraction import (
@@ -94,6 +97,14 @@ class ContextNode:
     indent: int
     kind: str
     name: str = ""
+    # "menu my_choice:" — a named menu is also a label in Ren'Py
+    # (parser.menu_statement emits ast.Label before the Menu), so dialogue
+    # after it gets "<menu name>_<hash>" translation ids.
+    defines_label: str = ""
+    # Menus: indent of the first statement inside the block. A say statement
+    # at this level (not a "choice":) is the menu's caption, which Ren'Py
+    # stores as 'who "what" nointeract'.
+    child_indent: int = -1
 
 
 #: Escaped brackets/braces (\[ \] \{ \}) render as decoration around the words;
@@ -101,6 +112,142 @@ class ContextNode:
 _RENPY_ESCAPED_MARKUP_RE = re.compile(r'\\[\[\]{}]')
 #: Other Ren'Py escapes (\" \' \\) render as the character itself.
 _RENPY_ESCAPED_LITERAL_RE = re.compile(r'\\(["\'\\])')
+#: "menu name:" / "menu .local:" / "menu name(args):" — a named menu, which
+#: Ren'Py turns into a label (unlike "menu:" or 'menu "caption":').
+_URL_RE = re.compile(r'https?://|\bwww\.[a-z0-9-]+\.[a-z]{2,}', re.IGNORECASE)
+#: A sentence token that is a path: two+ separators, or one plus a file extension.
+_PATH_TOKEN_RE = re.compile(r'(?:^|\s)[\w.\-]+(?:[\\/][\w.\-]+){2,}(?=\s|$)|(?:^|\s)[\w.\-]+[\\/][\w.\-]+\.[a-z0-9]{1,5}(?=\s|[.,!?]?$)', re.IGNORECASE)
+
+
+def _looks_like_path_or_url(text: str) -> bool:
+    """URL or file path — but not dialogue like "and/or", "24/7" or "Awww...".
+
+    The old check rejected any line containing "/", "\\" or "www.", which
+    silently dropped such dialogue from translation.
+    """
+    if not text:
+        return False
+    if _URL_RE.search(text):
+        return True
+    stripped = text.strip()
+    if ' ' not in stripped:
+        return '/' in stripped or '\\' in stripped
+    return bool(_PATH_TOKEN_RE.search(stripped))
+
+
+_WS_RUN_RE = re.compile(r'\s+')
+
+
+def _ws_key(text: str) -> str:
+    """Whitespace-collapsed form used to match .rpy and .rpyc copies of a line."""
+    return _WS_RUN_RE.sub(' ', text or '').strip()
+
+
+_NAMED_MENU_RE = re.compile(r'^menu\s+(\.?[A-Za-z_]\w*(?:\.\w+)?)\s*(?:\(.*\))?\s*:')
+
+#: Display name passed to Character()/DynamicCharacter()/... as first argument
+#: or as name=, optionally wrapped in _().
+_CHARACTER_NAME_ARG_RE = re.compile(
+    r'\b(?:Dynamic|NVL|ADV)?Character\s*\(\s*(?:name\s*=\s*)?(?:_\s*\(\s*)?'
+    r'[rRuU]?(?P<q>["\'])(?P<name>(?:(?!(?P=q))[^\\]|\\.)*)(?P=q)'
+)
+_PLAIN_NAME_RE = re.compile(r"^[^\W\d_][\w'\- .]{1,38}$", re.UNICODE)
+
+
+# name = value / obj.attr += 1 / data['k'] = x: an assignment, not prose.
+_ASSIGNMENT_SHAPE_RE = re.compile(r"^\$?\s*[A-Za-z_][\w.]*(?:\[[^\]]*\])*\s*(?:(?:[-+*/%]|//)?=(?!=)|[=!<>]=)")
+
+# *Knock* *Knock*: emphasis around a word (not multiplication or globs).
+_ASTERISK_EMPHASIS_RE = re.compile(r'\*([^\s*][^*]*?[^\s*]|[^\s*])\*')
+
+# Cheap pre-check before scanning a file for _(), __(), ___() or _p().
+_MARKER_CALL_HINT_RE = re.compile(r'\b(?:_{1,3}|_p)\s*\(')
+
+# Last string literal of a say line, followed by the rest of the line.
+_SAY_LAST_STRING_RE = re.compile(r'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')(?P<rest>[^"']*)$''')
+
+
+def _read_expression(text: str, pos: int) -> int:
+    """End of a simple expression starting at *pos* (spaces allowed inside brackets)."""
+    depth = 0
+    i = pos
+    while i < len(text):
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth < 0:
+                return i
+        elif depth == 0 and (ch.isspace() or ch == "#"):
+            break
+        i += 1
+    return i if depth == 0 else -1
+
+
+def say_tail_of(line: str) -> str:
+    """The say statement's tail in Ren'Py's own order (Say.get_code()):
+    " nointeract" then " with <transition>". Part of the translation id, and
+    the translated line must repeat it (or a menu question waits for a click,
+    a "with vpunch" shake is lost). Anything else after the text (arguments,
+    an explicit id) returns "" so nothing is written that Ren'Py might reject.
+    """
+    m = _SAY_LAST_STRING_RE.search(line or "")
+    if not m:
+        return ""
+    rest = m.group("rest")
+    nointeract = False
+    with_expr = ""
+    i = 0
+    while i < len(rest):
+        if rest[i].isspace():
+            i += 1
+            continue
+        if rest[i] == "#":
+            break
+        word = re.match(r"(nointeract|with)\b", rest[i:])
+        if not word:
+            return ""
+        i += len(word.group(1))
+        if word.group(1) == "nointeract":
+            nointeract = True
+            continue
+        while i < len(rest) and rest[i].isspace():
+            i += 1
+        end = _read_expression(rest, i)
+        if end <= i:
+            return ""
+        with_expr = rest[i:end]
+        i = end
+    return (" nointeract" if nointeract else "") + (f" with {with_expr}" if with_expr else "")
+
+
+def collect_character_display_names(game_dir: Union[str, Path]) -> Set[str]:
+    """Display names from Character("...") definitions in the game's .rpy files.
+
+    Used to protect names inside dialogue ("Rose smiled") from the translator;
+    the speaker variables seen on entries ("e", "mc") are not the names
+    players actually read. tl/, renpy/ and RenLocalizer's own files are skipped.
+    """
+    names: Set[str] = set()
+    root = Path(game_dir)
+    if not root.is_dir():
+        return names
+    from src.core.constants import is_renlocalizer_generated_script
+
+    for path in root.rglob("*.rpy"):
+        rel_parts = {part.lower() for part in path.relative_to(root).parts[:-1]}
+        if rel_parts & {"tl", "renpy", "cache", "saves"} or is_renlocalizer_generated_script(path.name):
+            continue
+        text = read_text_safely(path)
+        if not text or "Character" not in text:
+            continue
+        for match in _CHARACTER_NAME_ARG_RE.finditer(text):
+            name = match.group("name").strip()
+            # Skip interpolated / tagged / empty names ("[mc_name]", "{b}?{/b}").
+            if name and _PLAIN_NAME_RE.match(name) and not any(ch in name for ch in "[]{}%"):
+                names.add(name)
+    return names
 
 
 class RenPyParser:
@@ -149,7 +296,8 @@ class RenPyParser:
         }
 
         # New: CamelCase or dot notation strings that are likely technical
-        self.technical_id_re = re.compile(r'^[a-z]+(?:[A-Z][a-z0-9]+)+$|^[a-z0-9_]+\.[a-z0-9_.]+$')
+        # dotted ids need a name after every dot: "config.name" yes, "and..." / "yes...." no
+        self.technical_id_re = re.compile(r'^[a-z]+(?:[A-Z][a-z0-9]+)+$|^[a-z0-9_]+(?:\.[a-z0-9_]+)+$')
 
         # Edge-case: Ren'Py screen language - ignore technical screen elements
         self.technical_screen_elements = {
@@ -197,39 +345,47 @@ class RenPyParser:
             r'^#[0-9a-fA-F]+$',
             r'\.ttf$|\.otf$|\.woff2?$',
             r'^%s[%\s]*$',
-            r'fps|renderer|ms$',
+            r'^(?:fps|renderer|ms)$',
             r'^[0-9.]+$',
-            r'game_menu|sync|input|overlay',
-            r'vertical|horizontal|linear',
-            r'touch_keyboard|subtitle|empty',
+            r'^(?:game_menu|sync|input|overlay)$',
+            r'^(?:vertical|horizontal|linear)$',
+            r'^(?:touch_keyboard|subtitle|empty)$',  # whole-token only: "an empty glass" is dialogue
             r'\*\*?/\*\*?', # Glob patterns
             r'\.old$|\.new$|\.bak$',
             r'^[a-z0-9_]+\.[a-z0-9_]+(?:\.[a-z0-9_]+)*$', # module.sub.attr (won't match "wow..." or "oh...")
             r'^[a-z0-9_]+=[^=]+$', # Assignment without double equals
             r'^(?:config|gui|preferences|style)\.[a-z0-9_.]+$', # Internal variables
-            r'\b(?:uniform|attribute|varying|vec[234]|mat[234]|gl_FragColor|sampler2D|gl_Position|texture2D|v_tex_coord|a_tex_coord|a_position|u_transform|u_lod_bias)\b', # Shader/GLSL keywords
+            r'\b(?:uniform|attribute|varying)\s+(?:lowp\s+|mediump\s+|highp\s+)?(?:float|int|bool|vec[234]|mat[234]|sampler2D)\b|\b(?:vec[234]|mat[234]|texture2D)\s*\(|\b(?:gl_FragColor|gl_Position|sampler2D|v_tex_coord|a_tex_coord|a_position|u_transform|u_lod_bias)\b', # Shader/GLSL syntax (not the English words "uniform"/"attribute")
             r'^--?[a-z0-9_\-]+$', # Command line arguments (e.g. --force, -o)
             r'^[a-z0-9_/.]+\.(?:png|jpg|mp3|ogg|wav|webp|ttf|otf|woff2?|rpyc?|rpa)$', # Asset paths
             r'^[a-zA-Z0-9_]+/[a-zA-Z0-9_/.\-]+$', # Path fragments (folder/file)
-            r'^\s*(?:jump|call|show|hide|scene|play|stop|queue)\s+[a-zA-Z0-9_]+(?:\s+[a-zA-Z0-9_]+){0,4}$', # Ren'Py commands (max 5 args)
             r'^\s*(?:if|elif|else|while|for)\s+.*:$', # Control flow (must end with colon)
             r'^\s*\$?\s*[a-zA-Z_]\w*\s*=\s*(?:[a-zA-Z_]\w*|[0-9.]+|\[.*\]|\{.*\})$',  # Variable assignment (strict bounds)
-            r'^[\w\-. ]+(?:/[\w\-. ]+)+$',     # Strict path (e.g. audio/bgm.ogg)
+            r'^[\w\-.]+(?:/[\w\-.]+)+$',     # Strict path (e.g. audio/bgm.ogg) — no spaces, or "open 24/7 for you." matched
         ]
         # Combine patterns into one regex: (?:pattern1)|(?:pattern2)|...
         # Using IgnoreCase flag for broad matching
         self.technical_re = re.compile(r'(?:' + r')|(?:'.join(technical_patterns) + r')', re.IGNORECASE)
+        # Ren'Py commands (max 5 args), matched case-sensitively on the original
+        # text: statements are lower case, and as part of technical_re (run on
+        # lower-cased text) menu choices such as "Call her naughty", "Show me"
+        # or "Hide behind the door" were dropped.
+        self.renpy_command_re = re.compile(
+            r'^\s*(?:jump|call|show|hide|scene|play|stop|queue)\s+[a-zA-Z0-9_]+(?:\s+[a-zA-Z0-9_]+){0,4}$'
+        )
 
         code_patterns = [
             r'renpy\.\w+',           # renpy.store, renpy.config, etc.
             r'\w+\s*=\s*\[',         # list assignment
             r'\w+\s*=\s*\{',         # dict assignment
-            r'for\s+\w+\s+in\s+',    # for loop
-            r'if\s+\w+\s+in\s+',     # if x in y
+            # for/if ... in ...: only as a statement ending in ":" — "thanks for
+            # believing in me" and "wait for her in my room" are dialogue.
+            r'(?m:\b(?:for|if)\s+\w+(?:\s*,\s*\w+)*\s+in\s+[^\n:]+:\s*$)',
             r'\w+\[\w+\]',           # dict/list access
             r'km\[',                 # keymap access
             r'_\w+\s*\(',            # private function call
-            r'True\b|False\b|None\b', # Python literals
+            # Python literals in code position only — "None at all" / "True story" are dialogue
+            r'(?:==|!=|(?<![=!<>])=|\bis(?:\s+not)?|\breturn)\s*(?:True|False|None)\b',
             r'import\s+|from\s+\w+\s+import', # imports
         ]
         self.code_patterns_re = re.compile(r'(?:' + r')|(?:'.join(code_patterns) + r')')
@@ -267,10 +423,10 @@ class RenPyParser:
         self.char_dialog_re = re.compile(
             rf'^(?P<indent>\s*)(?P<char>{_dialogue_speaker_or_quoted}){_dialogue_attr_tail}\s*'
             r'(?P<quote>"(?:[^"\\]|\\.)*"|\'(?:[^\\\']|\\.)*\')'
-            r'(?P<trailing>\s*(?:(?:with|nointeract|at)\s+\S+)?\s*(?:#.*)?)$'
+            r'(?P<trailing>(?:\s*(?:nointeract\b|(?:with|at)\s+[^\s(#]+(?:\((?:[^()]|\([^()]*\))*\))?|id\s+\w+))*\s*(?:#.*)?)$'
         )
         self.narrator_re = re.compile(
-            r'^(?P<indent>\s+)(?P<quote>"(?:[^"\\]|\\.)*"|\'(?:[^\\\']|\\.)*\')(?P<trailing>\s*(?:(?:with|nointeract|at)\s+\S+)?\s*(?:#.*)?)$'
+            r'^(?P<indent>\s+)(?P<quote>"(?:[^"\\]|\\.)*"|\'(?:[^\\\']|\\.)*\')(?P<trailing>(?:\s*(?:nointeract\b|(?:with|at)\s+[^\s(#]+(?:\((?:[^()]|\([^()]*\))*\))?|id\s+\w+))*\s*(?:#.*)?)$'
         )
 
         self.char_multiline_re = re.compile(
@@ -530,6 +686,11 @@ class RenPyParser:
         self.screen_call_start_re = re.compile(
             r'^\s*(?P<stmt>call|show)\s+screen\s+(?P<screen_name>[A-Za-z_]\w*)\s*(?P<paren>\()'
         )
+        # call splash_message(_("Chapter 5")): a label called with marked strings.
+        self.label_call_args_re = re.compile(r'^\s*call\s+(?!screen\b)\.?[A-Za-z_][\w.]*\s*\(')
+        self.marked_string_re = re.compile(
+            r'''(?<![\w.])_\(\s*(?P<lit>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)'''
+        )
         self.screen_displayable_call_re = re.compile(
             r'^\s*(?P<property>idle|hover|selected|selected_idle|selected_hover|background|foreground|add)\s+'
             r'(?P<expr>(?:[A-Za-z_][\w.]*)\s*\(.*)$'
@@ -552,6 +713,8 @@ class RenPyParser:
         self.label_def_re = re.compile(r'^label\s+(\.?[A-Za-z_][\w\.]*)\s*(?!hide):')
         # Hidden label definition (label xxx hide:) - these should be skipped
         self.hidden_label_re = re.compile(r'^label\s+\.?[A-Za-z_][\w\.]*\s+hide\s*:')
+        # Call statement with 'from <label>' return label
+        self.call_from_re = re.compile(r'^call\s+(?!screen\b)[^#\n]+?\bfrom\s+(\.?[A-Za-z_]\w*)')
         # -------------------------------------------------------------------------
         
         # Initialize v2.4.1 patterns
@@ -560,8 +723,24 @@ class RenPyParser:
         # Populate pattern registry for regex extraction pass (3rd pass)
         self._register_patterns()
         
-        # State tracking for context-aware filtering
+        # State tracking for context-aware filtering. Thread-local because the
+        # directory scanners run extract_* on worker threads that share this
+        # parser; a plain attribute let one file's line steer another file's
+        # jump/call/font/style filtering.
+        self._tls = threading.local()
         self._current_context_line = ""
+
+    @property
+    def _current_context_line(self) -> str:
+        tls = self.__dict__.get("_tls")
+        return getattr(tls, "context_line", "") if tls is not None else ""
+
+    @_current_context_line.setter
+    def _current_context_line(self, value: str) -> None:
+        tls = self.__dict__.get("_tls")
+        if tls is None:
+            tls = self.__dict__["_tls"] = threading.local()
+        tls.context_line = value
 
     def _warn_once_for_excessive_line(
         self,
@@ -1136,12 +1315,25 @@ class RenPyParser:
             # 3. If it's a new context node, push it to stack AFTER building path for current strings 
             # (unless it's a one-line block? Ren'Py usually isn't)
             if new_node:
-                if new_node.kind in ('label', 'hidden_label'):
+                if new_node.kind in ('label', 'hidden_label') or new_node.defines_label:
                     # In Ren'Py, labels are global state machines, not indentation-nested blocks.
                     # A new label replaces the previous active label scope entirely.
                     context_stack[:] = [n for n in context_stack if n.kind not in ('label', 'hidden_label')]
+                if new_node.defines_label:
+                    # Named menu: the label comes first, exactly as Ren'Py's AST has it.
+                    context_stack.append(ContextNode(indent=new_node.indent, kind='label', name=new_node.defines_label))
                 context_stack.append(new_node)
             
+            # Menu caption: the say statement at the first level inside a
+            # menu block (choices at that level end with ':'). Ren'Py adds
+            # "nointeract" to it, which changes its translation id.
+            is_menu_caption = False
+            top_node = context_stack[-1] if context_stack else None
+            if top_node is not None and top_node.kind == 'menu' and new_node is None and indent > top_node.indent:
+                if top_node.child_indent < 0:
+                    top_node.child_indent = indent
+                is_menu_caption = indent == top_node.child_indent and not stripped_line.rstrip().endswith(':')
+
             # --- String Extraction ---
             # ReDoS Prevention: Skip overly long lines before ANY regex processing
             if len(raw_line) > MAX_LINE_LENGTH:
@@ -1205,10 +1397,13 @@ class RenPyParser:
                             continue
 
                 character = ""
+                speaker_source = ""
                 char_group = descriptor.get('character_group')
                 if char_group and match.groupdict().get(char_group):
                     character = match.group(char_group)
                     if character and len(character) >= 2 and character[0] == character[-1] and character[0] in ('"', "'"):
+                        # Ren'Py hashes and runs the speaker as written: "Shop Owner".
+                        speaker_source = character
                         character = character[1:-1]
                 
                 for quote in quotes:
@@ -1237,6 +1432,14 @@ class RenPyParser:
                     )
                     
                     if entry:
+                        if speaker_source:
+                            entry['speaker_source'] = speaker_source
+                        if is_menu_caption and is_dialogue:
+                            entry['menu_caption'] = True
+                        if is_dialogue:
+                            say_tail = say_tail_of(stripped_line)
+                            if say_tail:
+                                entry['say_tail'] = say_tail
                         entries.append(entry)
                         seen_texts.add(key)
                         log_line = f"{file_path}:{idx+1} [{text_type}] ctx={current_path} text={text}"
@@ -1568,6 +1771,30 @@ class RenPyParser:
                             log_label='SCREEN_CALL',
                         )
 
+            # Labels called with _("...") arguments (chapter title cards such as
+            # call splash_message(_("Chapter 5"))). Ren'Py collects every _()
+            # string as a translation; the candidates still pass the normal filters.
+            if '_(' in raw_line and self.label_call_args_re.match(raw_line):
+                for marked in self.marked_string_re.finditer(raw_line):
+                    raw_literal = marked.group('lit')
+                    try:
+                        literal_text = ast.literal_eval(raw_literal)
+                    except (ValueError, SyntaxError):
+                        continue
+                    if isinstance(literal_text, str) and literal_text.strip():
+                        self._record_secondary_text_candidate(
+                            text=literal_text,
+                            raw_text=raw_literal,
+                            text_type=TextType.UI_ACTION,
+                            idx=idx,
+                            stripped_line=stripped_line,
+                            current_path=current_path,
+                            seen_texts=seen_texts,
+                            entries=entries,
+                            file_path=file_path,
+                            log_label='LABEL_CALL_ARG',
+                        )
+
             # --- v2.7.7: Secondary Pass for screen helper/displayable call args ---
             # Captures UI labels embedded in helper calls such as:
             #   idle build_loc_icon("pool_icon.png", "Pool", overlay)
@@ -1619,7 +1846,60 @@ class RenPyParser:
         except Exception:
             self.logger.warning("Failed to process entry for text=%r", text)
 
+        self._merge_marked_strings(file_path, content, entries)
         return entries
+
+    def _merge_marked_strings(self, file_path: Union[str, Path], content: str,
+                              entries: List[Dict[str, Any]]) -> None:
+        """Strings the author wrapped in _(), __(), ___() or _p() are string
+        translations in Ren'Py whatever they look like (renpy/translation/
+        scanstrings.py). Mark the entries already found and add the ones the
+        heuristics dropped ("SWING", "Age: 42", chapter cards...)."""
+        from src.core.marked_strings import scan_source, worth_translating
+        from src.core.constants import is_renlocalizer_generated_script
+
+        path = Path(file_path)
+        lowered = [part.lower() for part in path.parts]
+        # Ren'Py leaves developer tools and obsolete layouts out of its template.
+        if (any(part in ('_developer', '_compat', '_layout') for part in lowered)
+                or path.name.lower() == '00layout.rpy'
+                or is_renlocalizer_generated_script(path.name)
+                or not _MARKER_CALL_HINT_RE.search(content)):
+            return
+        ts = getattr(self.config, 'translation_settings', None)
+        names_allowed = bool(getattr(ts, 'translate_character_names', False))
+        by_text: Dict[str, List[Dict[str, Any]]] = {}
+        for entry in entries:
+            by_text.setdefault(entry.get('text', ''), []).append(entry)
+        added = 0
+        for text, line_number, is_name in scan_source(content):
+            if is_name and not names_allowed:
+                continue
+            if not worth_translating(text):
+                continue
+            existing = by_text.get(text, [])
+            for entry in existing:
+                entry['marked'] = True
+            # A dialogue line with the same text does not cover the _() string:
+            # say translations never apply to buttons or screen text.
+            if any(not entry.get('character') and entry.get('text_type') not in ('dialogue', 'narration', 'extend', 'bubble_dialogue', 'nvl_dialogue')
+                   for entry in existing):
+                continue
+            entry = self._record_entry(
+                text=text,
+                line_number=line_number,
+                context_line='',
+                text_type='ui',
+                context_path=[],
+                file_path=str(file_path),
+                marked=True,
+            )
+            if entry:
+                entries.append(entry)
+                by_text[text] = [entry]
+                added += 1
+        if added:
+            self.logger.debug("[MARKED] %s: %d strings marked with _() added", file_path, added)
 
     def _process_secondary_extraction(
         self,
@@ -2171,19 +2451,46 @@ class RenPyParser:
             iterator = list(search_root.glob("**/*.rpy")) + list(search_root.glob("**/*.RPY"))
         else:
             iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
-        rpy_files = [f for f in iterator if not self._is_excluded_rpy(f, search_root)]
+        seen_rpy = set()
+        rpy_files = []
+        for f in iterator:
+            norm_key = os.path.normcase(os.path.normpath(str(f)))
+            if norm_key in seen_rpy:
+                continue
+            seen_rpy.add(norm_key)
+            if not self._is_excluded_rpy(f, search_root):
+                rpy_files.append(f)
 
         self.logger.info(
             "Found %s .rpy files for parallel processing (excluding Ren'Py engine & tl folders)",
             len(rpy_files),
         )
 
-        for rpy_file in rpy_files:
-            try:
-                results[rpy_file] = self.extract_translatable_text(rpy_file)
-            except Exception as exc:
-                self.logger.error("Error processing file %s: %s", rpy_file, exc)
-                results[rpy_file] = set()
+        if len(rpy_files) <= 2 or max_workers <= 1:
+            for rpy_file in rpy_files:
+                try:
+                    results[rpy_file] = self.extract_translatable_text(rpy_file)
+                except Exception as exc:
+                    self.logger.error("Error processing file %s: %s", rpy_file, exc)
+                    results[rpy_file] = set()
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            workers = min(max_workers, len(rpy_files))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_file = {
+                    executor.submit(self.extract_translatable_text, rpy_file): rpy_file
+                    for rpy_file in rpy_files
+                }
+                for future in as_completed(future_to_file):
+                    rpy_file = future_to_file[future]
+                    try:
+                        results[rpy_file] = future.result()
+                    except Exception as exc:
+                        self.logger.error("Error processing file %s: %s", rpy_file, exc)
+                        results[rpy_file] = set()
+            # as_completed() yields in finish order; keep the discovery order so
+            # first-wins string dedup assigns each UI string to a stable file.
+            results = {f: results[f] for f in rpy_files if f in results}
 
         total_texts = sum(len(texts) for texts in results.values())
         self.logger.info(
@@ -2204,7 +2511,15 @@ class RenPyParser:
             iterator = list(search_root.glob("**/*.rpy")) + list(search_root.glob("**/*.RPY"))
         else:
             iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
-        rpy_files = [f for f in iterator if not self._is_excluded_rpy(f, search_root)]
+        seen_seq = set()
+        rpy_files = []
+        for f in iterator:
+            norm_key = os.path.normcase(os.path.normpath(str(f)))
+            if norm_key in seen_seq:
+                continue
+            seen_seq.add(norm_key)
+            if not self._is_excluded_rpy(f, search_root):
+                rpy_files.append(f)
 
         for rpy_file in rpy_files:
             try:
@@ -2268,6 +2583,10 @@ class RenPyParser:
 
         # Exclude specific technical extensions that might be caught by glob
         if file_path.suffix.lower() == '.rpyb':
+            return True
+
+        # Our own language-init / runtime-hook / export files from earlier runs
+        if is_renlocalizer_generated_script(file_path.name):
             return True
 
         return False
@@ -2419,12 +2738,43 @@ class RenPyParser:
             if raw_name.startswith('.') and stack:
                 parent_label = 'start'
                 for node in reversed(stack):
-                    if node.kind == 'label' and not node.name.startswith('.'):
-                        parent_label = node.name
+                    if node.kind == 'label':
+                        # In Ren'Py, local labels (.sub) are always scoped to the root
+                        # global label, never cumulatively nested across sibling local labels.
+                        parent_label = node.name.split('.')[0]
                         break
                 full_name = f"{parent_label}{raw_name}"
                 return ContextNode(indent=indent, kind='label', name=full_name)
             return ContextNode(indent=indent, kind='label', name=raw_name)
+
+        call_from_match = self.call_from_re.match(stripped_line)
+        if call_from_match:
+            from_name = call_from_match.group(1)
+            # In Ren'Py, 'call ... from <name>' creates an internal return label.
+            # If name starts with '_', it is an alternate label (does not replace primary label).
+            # If name does not start with '_', it becomes the active primary label scope.
+            if not from_name.startswith('_'):
+                if from_name.startswith('.') and stack:
+                    parent_label = 'start'
+                    for node in reversed(stack):
+                        if node.kind == 'label':
+                            parent_label = node.name.split('.')[0]
+                            break
+                    full_name = f"{parent_label}{from_name}"
+                    return ContextNode(indent=indent, kind='label', name=full_name)
+                return ContextNode(indent=indent, kind='label', name=from_name)
+
+        named_menu = _NAMED_MENU_RE.match(stripped_line)
+        if named_menu:
+            label_name = named_menu.group(1)
+            if label_name.startswith('.'):
+                parent_label = 'start'
+                for node in reversed(stack or []):
+                    if node.kind == 'label':
+                        parent_label = node.name.split('.')[0]
+                        break
+                label_name = f"{parent_label}{label_name}"
+            return ContextNode(indent=indent, kind='menu', name='', defines_label=label_name)
 
         menu_match = self.menu_def_re.match(stripped_line)
         if menu_match:
@@ -2478,10 +2828,12 @@ class RenPyParser:
             )
 
             character = ''
+            speaker_source = ''
             char_group = descriptor.get('character_group')
             if char_group and match.groupdict().get(char_group):
                 character = match.group(char_group)
                 if character and len(character) >= 2 and character[0] == character[-1] and character[0] in ('"', "'"):
+                    speaker_source = character
                     character = character[1:-1]
 
             entry = self._record_entry(
@@ -2494,6 +2846,8 @@ class RenPyParser:
                 file_path=file_path,
                 raw_text='\n'.join(lines[index:end_index+1]) if end_index >= index else None,
             )
+            if entry and speaker_source:
+                entry['speaker_source'] = speaker_source
             return entry, end_index
 
         return None, index
@@ -2587,6 +2941,7 @@ class RenPyParser:
         character: str = '',
         file_path: str = '',
         raw_text: Optional[str] = None,
+        marked: bool = False,
     ) -> Optional[Dict[str, Any]]:
         if not text:
             return None
@@ -2609,7 +2964,7 @@ class RenPyParser:
         # Set state for context-aware filtering used in following checks
         self._current_context_line = context_line or ""
         
-        if not self._is_force_translatable_text(
+        if not marked and not self._is_force_translatable_text(
             text=analysis_text,
             resolved_type=resolved_type,
             context_line=context_line,
@@ -2650,7 +3005,11 @@ class RenPyParser:
                     resolved_type = 'menu'
 
         # Apply user-configurable type filters (e.g. translate_ui)
-        if not self._should_translate_text(text, resolved_type):
+        if marked:
+            ts = getattr(self.config, 'translation_settings', None)
+            if ts is not None and not getattr(ts, 'translate_ui', True):
+                return None
+        elif not self._should_translate_text(text, resolved_type):
             return None
 
         confidence = score_extraction_confidence(
@@ -2662,7 +3021,7 @@ class RenPyParser:
         )
         minimum_confidence = resolve_minimum_extraction_confidence(self.config, default=0.0)
 
-        if confidence < minimum_confidence:
+        if confidence < minimum_confidence and not marked:
             # Keep high-confidence translated strings, but drop ambiguous candidates.
             return None
 
@@ -2692,6 +3051,7 @@ class RenPyParser:
             'confidence_band': confidence_band(confidence),
             'translation_id': translation_id,  # v2.8.3: Ren'Py-compatible ID
             '_disambig_stripped_text': _disambig_stripped_text,
+            'marked': marked,
         }
 
     def _is_python_context(self, context_path: List[str]) -> bool:
@@ -2938,7 +3298,7 @@ class RenPyParser:
                 _text_no_tags = re.sub(r'\{/?[^}]*\}', '', text) if '{' in text else text
         else:
             _text_no_tags = text
-        if any(ind in _text_no_tags for ind in self.path_indicators):
+        if _looks_like_path_or_url(_text_no_tags):
             return False
             
         text_lower = text.lower().strip()
@@ -3063,7 +3423,7 @@ class RenPyParser:
                     return False
 
         # --- O(1) Optimization: Use Pre-compiled Regex ---
-        if self.technical_re.search(text_lower):
+        if self.technical_re.search(text_lower) or self.renpy_command_re.match(text):
              return False
 
         if any(ext in text_lower for ext in ['.png', '.jpg', '.mp3', '.ogg']):
@@ -3079,6 +3439,9 @@ class RenPyParser:
             # FIX v2.7.1: Strip Ren'Py display tags before counting symbols
             # so that {b}, {/b}, {color=#f00}, [player] don't inflate the ratio.
             _stripped_for_sym = re.sub(r'\{/?[^}]*\}|\[[^\]]*\]', '', text_strip)
+            # *Knock* *Knock* / *sigh*: asterisks around words are emphasis,
+            # not code symbols (sound-effect lines were dropped as code).
+            _stripped_for_sym = _ASTERISK_EMPHASIS_RE.sub(lambda m: m.group(1), _stripped_for_sym)
             symbol_count = len(re.findall(r'[\\#\[\](){}|*+?^$]', _stripped_for_sym))
             if symbol_count > len(_stripped_for_sym) * 0.25 if _stripped_for_sym else False:
                 return False
@@ -3144,24 +3507,32 @@ class RenPyParser:
         if '=' in text_strip and not (text_strip.startswith('{') or '[' in text_strip):
             # Likely an assignment if it has '=' but no Ren'Py tags/interpolations nearby
             # Dialogue rarely has '=' unless it's a tag like {color=#f00}
-            if not re.search(r'\{[^}]*=[^}]*\}', text_strip):
+            # Only "name = value" is code: the left side is one identifier.
+            # "Dorothan's Continuance = Yes" (status text) and "1 + 1 = 2" are not.
+            if not re.search(r'\{[^}]*=[^}]*\}', text_strip) and _ASSIGNMENT_SHAPE_RE.match(text_strip):
                 return False
         
         # Docstring / Embedded Code detection: Reject strings containing Python code
         # These are often docstrings or code blocks captured by mistake from .rpyc files
-        if '\n' in text_strip or len(text_strip) > 60:
-            # Check for Python function/class definitions
-            if re.search(r'\bdef\s+\w+\s*\(|\bclass\s+\w+', text_strip):
+        is_multiline = '\n' in text_strip
+        if is_multiline or len(text_strip) > 60:
+            # Python definitions as code, not prose: "the extra class isn't
+            # mandatory" is dialogue, "class Foo(object):" is not.
+            if re.search(r'(?m)^\s*(?:def\s+\w+\s*\(|class\s+\w+\s*[(:])|\bdef\s+\w+\s*\([^)]*\)\s*:', text_strip):
                 return False
             # Check for common Python/Ren'Py code patterns
             # O(1) Optimization: Use Pre-compiled Regex
             if self.code_patterns_re.search(text_strip):
                  return False
-            
-            # General tech word count
-            tech_word_count = sum(1 for word in text_lower.split() if word in self.renpy_technical_terms)
-            if tech_word_count >= 2 or 'python' in text_lower or 'return' in text_lower:
-                return False
+
+            # Word heuristics only for multi-line blocks (docstrings captured
+            # from .rpyc). On one long line they dropped real dialogue such as
+            # "what do they get in return?" or any sentence with two of the
+            # everyday words in renpy_technical_terms ("window", "quick"...).
+            if is_multiline:
+                tech_word_count = sum(1 for word in text_lower.split() if word in self.renpy_technical_terms)
+                if tech_word_count >= 2 or re.search(r'(?m)^\s*(?:return|import|python)\b', text_lower):
+                    return False
 
         # Remove placeholders/tags like [who.name] or {color=...} and check remaining content
         # BUT: Only apply this check if there's meaningful content after removal
@@ -3915,10 +4286,31 @@ class RenPyParser:
                     })
                     seen_texts.add(text)
                 
+                # Character("Name") / Character(name="Name") display names stay
+                # out unless translate_character_names is on (same rule as .rpy).
+                character_name_nodes: set = set()
+                if not getattr(getattr(self.config, 'translation_settings', None), 'translate_character_names', False):
+                    for call in python_ast.walk(tree):
+                        if not isinstance(call, python_ast.Call):
+                            continue
+                        fn = call.func
+                        fn_name = fn.id if isinstance(fn, python_ast.Name) else getattr(fn, 'attr', '')
+                        if not fn_name.endswith('Character'):
+                            continue
+                        name_args = list(call.args[:1]) + [kw.value for kw in call.keywords if kw.arg == 'name']
+                        for arg in name_args:
+                            # _("Name") wraps the literal in another call
+                            if isinstance(arg, python_ast.Call) and arg.args:
+                                arg = arg.args[0]
+                            if isinstance(arg, python_ast.Constant) and isinstance(arg.value, str):
+                                character_name_nodes.add(id(arg))
+
                 # Visit all nodes
                 for node in python_ast.walk(tree):
                     # String constants
                     if isinstance(node, python_ast.Constant) and isinstance(node.value, str):
+                        if id(node) in character_name_nodes:
+                            continue
                         add_entry(node.value, getattr(node, 'lineno', 1))
                     
                     # f-strings (JoinedStr) — Enhanced with FStringReconstructor
@@ -3946,7 +4338,8 @@ class RenPyParser:
                         
                         if func_name in ('_', '__', 'renpy_say', 'notify'):
                             for arg in node.args:
-                                if isinstance(arg, python_ast.Constant) and isinstance(arg.value, str):
+                                if (isinstance(arg, python_ast.Constant) and isinstance(arg.value, str)
+                                        and id(arg) not in character_name_nodes):
                                     add_entry(arg.value, getattr(node, 'lineno', 1), 'translatable_call')
                         
                         # V2.7.1: Tier-1 API call extraction
@@ -4413,6 +4806,20 @@ class RenPyParser:
             return triple_quoted[3:-3].strip()
         return triple_quoted.strip()
     
+    def _is_untranslatable_character_name(self, text: str, context_line: str) -> bool:
+        """Character("Name") display name while translate_character_names is off.
+
+        The regular extractor honours the setting (off by default), but the
+        deep-scan and AST passes picked the same literal up again, so names
+        like "Rose", "Hope" or "Mark" were translated anyway.
+        """
+        if not text or 'character' not in (context_line or '').lower():
+            return False
+        ts = getattr(self.config, 'translation_settings', None)
+        if ts is not None and getattr(ts, 'translate_character_names', False):
+            return False
+        return any(m.group('name') == text for m in _CHARACTER_NAME_ARG_RE.finditer(context_line))
+
     def _is_deep_scan_candidate(self, text: str, in_python: bool, context_line: str) -> bool:
         """
         Determine if a string is a candidate for deep scanning.
@@ -4437,7 +4844,10 @@ class RenPyParser:
         
         text_lower = analysis_text.lower().strip()
         context_lower = context_line.lower()
-        
+
+        if self._is_untranslatable_character_name(text, context_line):
+            return False
+
         # is_meaningful_text kontrolü (fix typo -> use is_meaningful_text)
         if not self.is_meaningful_text(analysis_text):
             return False
@@ -4507,6 +4917,8 @@ class RenPyParser:
         found_key: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Deep scan sonucu için entry oluştur"""
+        if self._is_untranslatable_character_name(text, context_line):
+            return None
         processed_text, placeholder_map = self.preserve_placeholders(text)
 
         text_type = 'deep_scan'
@@ -4597,12 +5009,15 @@ class RenPyParser:
         else:
             iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
         
-        rpy_files = [
-            f
-            for f in iterator
-            if not self._is_excluded_rpy(f, search_root)
-            and not self._is_in_manual_exclude_dirs(f, search_root, exclude_dirs)
-        ]
+        seen_rpy = set()
+        rpy_files = []
+        for f in iterator:
+            norm_key = os.path.normcase(os.path.normpath(str(f)))
+            if norm_key in seen_rpy:
+                continue
+            seen_rpy.add(norm_key)
+            if not self._is_excluded_rpy(f, search_root) and not self._is_in_manual_exclude_dirs(f, search_root, exclude_dirs):
+                rpy_files.append(f)
         
         self.logger.info(
             "Deep scan: Found %s .rpy files for processing",
@@ -4611,19 +5026,41 @@ class RenPyParser:
         )
         
         total_files = len(rpy_files)
-        for index, rpy_file in enumerate(rpy_files, start=1):
-            try:
-                if progress_callback is not None:
-                    progress_callback(index, total_files, rpy_file)
-                entries = self.extract_with_deep_scan(rpy_file, include_deep_scan, include_ast_scan=include_deep_scan)
-                results[rpy_file] = entries
-            except Exception as exc:
-                # Log full traceback to aid debugging of decompiled inputs
-                self.logger.exception("Error in deep scan for %s: %s", rpy_file, exc)
-                results[rpy_file] = []
-            if index % 5 == 0:
-                time.sleep(0.001)
-        
+        if total_files <= 2:
+            for index, rpy_file in enumerate(rpy_files, start=1):
+                try:
+                    if progress_callback is not None:
+                        progress_callback(index, total_files, rpy_file)
+                    entries = self.extract_with_deep_scan(rpy_file, include_deep_scan, include_ast_scan=include_deep_scan)
+                    results[rpy_file] = entries
+                except Exception as exc:
+                    self.logger.exception("Error in deep scan for %s: %s", rpy_file, exc)
+                    results[rpy_file] = []
+                if index % 5 == 0:
+                    time.sleep(0.001)
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            workers = min(8, max(2, (os.cpu_count() or 4)))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_file = {
+                    executor.submit(self.extract_with_deep_scan, rpy_file, include_deep_scan, include_deep_scan): rpy_file
+                    for rpy_file in rpy_files
+                }
+                for completed_count, future in enumerate(as_completed(future_to_file), start=1):
+                    rpy_file = future_to_file[future]
+                    try:
+                        results[rpy_file] = future.result()
+                    except Exception as exc:
+                        self.logger.exception("Error in deep scan for %s: %s", rpy_file, exc)
+                        results[rpy_file] = []
+                    if progress_callback is not None:
+                        try:
+                            progress_callback(completed_count, total_files, rpy_file)
+                        except Exception:
+                            pass
+            # Stable file order regardless of which worker finished first.
+            results = {f: results[f] for f in rpy_files if f in results}
+
         total_normal = sum(
             len([e for e in entries if not e.get('is_deep_scan')])
             for entries in results.values()
@@ -4721,7 +5158,9 @@ class RenPyParser:
         """
         results: Dict[Path, List[Dict[str, Any]]] = {}
         all_texts: Set[str] = set()
-        
+        # Texts the .rpy parser found, per script (path without extension).
+        rpy_texts_by_file: Dict[str, Set[str]] = {}
+
         # .rpy dosyalarından çıkar
         if include_rpy:
             rpy_results = self.extract_from_directory_with_deep_scan(
@@ -4733,9 +5172,12 @@ class RenPyParser:
             )
             for file_path, entries in rpy_results.items():
                 results[file_path] = entries
+                rpy_texts_by_file[os.path.normcase(os.path.splitext(str(file_path))[0])] = {
+                    _ws_key(entry.get('text', '')) for entry in entries
+                }
                 for entry in entries:
-                    all_texts.add(entry.get('text', ''))
-        
+                    all_texts.add(_ws_key(entry.get('text', '')))
+
         # .rpyc dosyalarından çıkar (opsiyonel)
         if include_rpyc:
             try:
@@ -4743,12 +5185,19 @@ class RenPyParser:
                 
                 # RPYC sonuçlarını ekle (duplicate'leri atla)
                 for file_path, entries in rpyc_results.items():
-                    # Sadece .rpy'de bulunmayan metinleri ekle
+                    # Skip only what this script's own .rpy already gave
+                    # (compared whitespace-collapsed: Ren'Py stores "a  b" as
+                    # "a b"). Matching against every file dropped the same
+                    # sentence in other scenes, and an .rpyc-only game kept
+                    # just the first of each repeated line, while Ren'Py gives
+                    # every say statement its own id.
+                    sibling_texts = rpy_texts_by_file.get(
+                        os.path.normcase(os.path.splitext(str(file_path))[0]), set())
                     new_entries = [
-                        e for e in entries 
-                        if e.get('text', '') not in all_texts
+                        e for e in entries
+                        if _ws_key(e.get('text', '')) not in sibling_texts
                     ]
-                    
+
                     if new_entries:
                         if file_path not in results:
                             results[file_path] = []
@@ -4756,7 +5205,7 @@ class RenPyParser:
                         
                         # Yeni metinleri kaydet
                         for entry in new_entries:
-                            all_texts.add(entry.get('text', ''))
+                            all_texts.add(_ws_key(entry.get('text', '')))
                 
                 rpyc_only = sum(
                     len([e for e in entries if e.get('is_rpyc')])

@@ -165,10 +165,72 @@ def get_project_id(project_path: str, game_exe_path: Optional[str] = None) -> st
         pass
 
     # Strategy 4: Fallback to normalized project directory basename
-    base = os.path.basename(os.path.normpath(project_path))
+    norm = os.path.normpath(project_path)
+    base = os.path.basename(norm)
+    parts = norm.split(os.sep)
+    # A macOS app's game sits in Game.app/Contents/Resources/autorun:
+    # name the project after the app, not "autorun".
+    if (len(parts) >= 4 and [p.lower() for p in parts[-3:]] == ['contents', 'resources', 'autorun']
+            and parts[-4].lower().endswith('.app')):
+        base = parts[-4][:-4]
     if base:
         cleaned = normalize_project_name(base)
         if cleaned:
             return cleaned
 
     return "default_project"
+
+
+def unwrap_mac_app(path: str) -> str:
+    """The folder that holds ``game/`` when *path* is a macOS Ren'Py app or a file in it.
+
+    Ren'Py's mac package keeps the game in ``Game.app/Contents/Resources/autorun``
+    (launcher/game/distribute.rpy). A path already inside ``autorun`` (such as a
+    tl/ folder) and every other path are returned unchanged.
+    """
+    if not path:
+        return path
+    norm = os.path.normpath(path)
+    current = norm
+    while True:
+        if os.path.basename(current).lower().endswith('.app'):
+            autorun = os.path.join(current, 'Contents', 'Resources', 'autorun')
+            if not os.path.isdir(os.path.join(autorun, 'game')):
+                return path
+            inside = os.path.normcase(norm + os.sep).startswith(os.path.normcase(autorun + os.sep))
+            return path if inside else autorun
+        parent = os.path.dirname(current)
+        if parent == current:
+            return path
+        current = parent
+
+
+def resolve_project_root(path: str) -> str:
+    """Project root (the folder that contains ``game/``) for a folder, ``game/`` or an executable."""
+    if not path:
+        return ""
+    path = unwrap_mac_app(path)
+    candidate = path if os.path.isdir(path) else os.path.dirname(path)
+    if os.path.basename(os.path.normpath(candidate)).lower() == 'game':
+        return os.path.dirname(os.path.normpath(candidate))
+    if not os.path.isdir(os.path.join(candidate, 'game')):
+        parent = os.path.dirname(os.path.normpath(candidate))
+        if os.path.isdir(os.path.join(parent, 'game')):
+            return parent
+    return candidate
+
+
+def translation_cache_file(config, project_path: str, game_exe_path: Optional[str], target_language: str) -> str:
+    """Path of the translation cache the pipeline uses for this project and language."""
+    if getattr(config.translation_settings, 'use_global_cache', True):
+        id_path = project_path
+        # TL mode points project_path at <project>/game; naming the cache
+        # after "game" made every TL-mode project share one cache folder.
+        if id_path and os.path.basename(os.path.normpath(id_path)).lower() == 'game':
+            id_path = os.path.dirname(os.path.normpath(id_path))
+        project_name = get_project_id(id_path, game_exe_path)
+        base_cache_dir = os.path.join(config.data_dir, getattr(config.translation_settings, 'cache_path', 'cache'))
+        cache_dir = os.path.join(base_cache_dir, project_name, target_language)
+    else:
+        cache_dir = os.path.join(project_path, 'game', 'tl', target_language)
+    return os.path.join(cache_dir, "translation_cache.json")

@@ -73,6 +73,10 @@ class NetworkConnectionError(TranslationError):
         super().__init__(message=message, **kwargs)
 
 
+class EngineUnavailableError(TranslationError):
+    """Raised before a run when the selected engine cannot be reached or rejects the key."""
+
+
 class ParseError(RenLocalizerError):
     """Raised when parsing-related errors occur."""
 

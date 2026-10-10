@@ -37,6 +37,38 @@ def test_create_language_init_file_forces_target_language(tmp_path):
     # their own language on load.
     assert 'persistent.language = "turkish"' in content
 
+    # Phase 4: late-binding boot enforcement (init 999) to override developer init -1 hardcoded scripts
+    assert 'init 999 python:' in content
+    assert 'config.language = "turkish"' in content
+
+    # ...but never switch languages during init: style/store backups do not
+    # exist yet, so change_language() may only run from start callbacks.
+    init_999 = content.split("init 999 python:", 1)[1]
+    assert "change_language" not in init_999.split("# ====", 1)[0]
+
+    # Hotkey overlay is intentionally omitted to avoid key collisions with game UI (log/load/input)
+    assert 'screen _rl_hotkey_overlay' not in content
+    assert 'screen _rl_toast_overlay' not in content
+
+
+def test_language_activation_can_be_turned_off(tmp_path):
+    """Off = only tl/<lang> is written, and an earlier run's file is removed."""
+    game_dir = tmp_path / "game"
+    game_dir.mkdir(parents=True)
+    (game_dir / "zzz_turkish_language.rpy").write_text("# old\n", encoding="utf-8-sig")
+    (game_dir / "zzz_turkish_language.rpyc").write_bytes(b"compiled")
+    (game_dir / "zzz_ending.rpy").write_text("# the game's own file\n", encoding="utf-8")
+
+    config = ConfigManager()
+    config.translation_settings.activate_language_on_launch = False
+    create_language_init_file(str(game_dir), "turkish", config, lambda level, msg: None)
+
+    assert sorted(p.name for p in game_dir.iterdir()) == ["zzz_ending.rpy"]
+
+    config.translation_settings.activate_language_on_launch = True
+    create_language_init_file(str(game_dir), "turkish", config, lambda level, msg: None)
+    assert (game_dir / "zzz_turkish_language.rpy").exists()
+
 
 def test_create_language_init_file_cleans_stale_init_files(tmp_path):
     """A previous language init file for a different language is removed."""
@@ -80,7 +112,7 @@ def test_generated_file_only_uses_names_the_game_has(tmp_path):
     assert "logger" not in code_only, "RenLocalizer's logger does not exist in the game"
 
     # Every python block must at least parse on its own.
-    blocks = re.findall(r"^init python:\n((?:(?: {4}.*)?\n)+)", content, re.MULTILINE)
+    blocks = re.findall(r"^init(?:\s+\d+)?\s+python:\n((?:(?: {4}.*)?\n)+)", content, re.MULTILINE)
     assert blocks, "the file should contain init python blocks"
     for block in blocks:
         dedented = "\n".join(line[4:] if line.startswith("    ") else line

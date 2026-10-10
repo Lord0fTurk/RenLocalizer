@@ -91,6 +91,9 @@ def test_qml_comboboxes_sync_persisted_languages():
 
     engine = QQmlApplicationEngine(app)
     engine.rootContext().setContextProperty("appBackend", backend)
+    from src.backend.editor_backend import EditorBackend
+    editor_backend = EditorBackend(backend, parent=app)
+    engine.rootContext().setContextProperty("editorBackend", editor_backend)
 
     qml_root = os.path.abspath("src/gui/qml")
     engine.addImportPath(qml_root)
@@ -104,7 +107,9 @@ def test_qml_comboboxes_sync_persisted_languages():
     combos = {}
     def walk(obj):
         name = obj.metaObject().className()
-        if "ComboBox" in name:
+        # The Toolbox language-activation combo lists game/tl folders of the
+        # last opened project, which can be "turkish" too — not a settings combo.
+        if "ComboBox" in name and obj.objectName() != "toolLangActivateCombo":
             val = obj.property("currentValue")
             text = obj.property("displayText")
             idx = obj.property("currentIndex")

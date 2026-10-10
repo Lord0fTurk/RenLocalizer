@@ -15,6 +15,8 @@ from typing import Dict, List, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
+_SKIP_DIRS = {"tl", "renpy", "cache", "saves", "__pycache__", "python-packages"}
+
 class GlossaryExtractor:
     """Analyzes Ren'Py files to find potential glossary terms."""
     
@@ -38,11 +40,15 @@ class GlossaryExtractor:
         
         character_map = {}  # var_name -> display_name
         term_counter = Counter()
-        
-        # 1. Scan for character definitions
-        for root, _, files in os.walk(game_dir):
+
+        from src.core.constants import is_renlocalizer_generated_script
+
+        # 1. Scan the game's own scripts. tl/ holds translated text (it would
+        # feed back target-language words), renpy/ is the engine's UI.
+        for root, dirs, files in os.walk(game_dir):
+            dirs[:] = [d for d in dirs if d.lower() not in _SKIP_DIRS]
             for file in files:
-                if file.lower().endswith('.rpy'):
+                if file.lower().endswith('.rpy') and not is_renlocalizer_generated_script(file):
                     file_path = os.path.join(root, file)
                     self._scan_file(file_path, character_map, term_counter)
         
@@ -59,7 +65,9 @@ class GlossaryExtractor:
                 and clean_name.lower() not in COMMON_ENGLISH_STOPWORDS
                 and clean_name not in results
             ):
-                results[clean_name] = ""  # Empty translation by default
+                # Name -> same name: an empty target protects nothing, the
+                # identity entry keeps the name untranslated everywhere.
+                results[clean_name] = clean_name
         
         # Add common terms
         for term, count in term_counter.most_common(50):
@@ -90,11 +98,14 @@ class GlossaryExtractor:
             return
 
         try:
-            # Find definitions
-            for match in self.char_def_pattern.finditer(content):
-                var_name = match.group(1)
-                display_name = match.group(2)
-                char_map[var_name] = display_name
+            # Find definitions: Character("Name"), Character('Name'),
+            # Character(_("Name")), DynamicCharacter(...), name="..."
+            from src.core.parser import _CHARACTER_NAME_ARG_RE
+
+            for match in _CHARACTER_NAME_ARG_RE.finditer(content):
+                display_name = match.group('name')
+                if display_name and not any(ch in display_name for ch in '[]{}%'):
+                    char_map[display_name] = display_name
 
             # Simple string extraction
             strings = re.findall(r'"([^"]+)"', content)
