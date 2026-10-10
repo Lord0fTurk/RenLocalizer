@@ -464,13 +464,21 @@ class EditorBackend(QObject):
                 original_text=row["original"], translated_text="", file_path=row["file_path"],
                 line_number=row["line"], entry_type=row["kind"], translation_id="editor_suggestion",
             )
-            return pipeline._translate_entries([entry]).get("editor_suggestion", "")
+            # The cache holds this line's current translation (or the hand edit
+            # synced on save); a suggestion has to come from the engine.
+            with app.translation_manager.bypass_cache():
+                return pipeline._translate_entries([entry]).get("editor_suggestion", "")
 
         entry_id = row["id"]
 
         def done(text: Any) -> None:
             if not text or text == row["original"]:
                 self.notify.emit("warning", self._t("editor_suggest_failed", "No suggestion was returned."))
+                return
+            current = self.store.get(entry_id)
+            if current and text == current["translated"]:
+                self.notify.emit("info", self._t(
+                    "editor_suggest_same", "The engine suggests the current translation."))
                 return
             self._replace_row(self.store.update(entry_id, text))
 

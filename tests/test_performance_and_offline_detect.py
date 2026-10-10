@@ -155,6 +155,36 @@ def test_parallel_scan_is_deterministic_and_ordered():
             assert [e["text"] for e in first[path]] == [e["text"] for e in second[path]]
 
 
+
+def test_scans_do_not_depend_on_the_file_system_order(tmp_path, monkeypatch):
+    """NTFS lists files alphabetically, ext4/APFS do not: the scan must sort.
+
+    Windows CI could never see this, so the listing is reversed here.
+    """
+    from src.core.rpyc_reader import extract_texts_from_rpyc_directory
+
+    sub = tmp_path / "chapters"
+    sub.mkdir()
+    for folder, names in ((tmp_path, ("b.rpy", "a.rpy", "C.rpy")), (sub, ("z.rpy", "m.rpy"))):
+        for name in names:
+            (folder / name).write_text('label x:\n    "Some words here."\n', encoding="utf-8")
+            (folder / (name + "c")).write_bytes(b"")
+
+    real_glob = Path.glob
+    monkeypatch.setattr(Path, "glob", lambda self, pattern, **kw: list(reversed(list(real_glob(self, pattern, **kw)))))
+
+    parser = RenPyParser(ConfigManager())
+    expected = ["a.rpy", "b.rpy", "C.rpy", "chapters/m.rpy", "chapters/z.rpy"]
+    for scan in (parser.extract_from_directory_with_deep_scan(tmp_path, include_deep_scan=False),
+                 parser.extract_from_directory_parallel(tmp_path),
+                 parser.extract_from_directory(tmp_path)):
+        assert [p.relative_to(tmp_path).as_posix() for p in scan] == expected
+
+    import src.core.rpyc_reader as reader
+    monkeypatch.setattr(reader, "extract_texts_from_rpyc", lambda path, *a, **kw: [])
+    rpyc = extract_texts_from_rpyc_directory(tmp_path)
+    assert [p.relative_to(tmp_path).as_posix() for p in rpyc] == [n + "c" for n in expected]
+
 def test_parser_multithreaded_directory_scan():
     """Verify that ThreadPoolExecutor parallel directory extraction correctly processes multiple files."""
     with tempfile.TemporaryDirectory() as tmpdir:

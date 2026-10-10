@@ -250,6 +250,16 @@ def collect_character_display_names(game_dir: Union[str, Path]) -> Set[str]:
     return names
 
 
+
+def _in_stable_order(paths):
+    """*paths* in the same order on every OS.
+
+    glob/os.walk return the file system's order: alphabetical on NTFS,
+    arbitrary on ext4 and APFS. Extraction keeps the first file that has a UI
+    string, so an unsorted scan gave different output on Linux and macOS.
+    """
+    return sorted(paths, key=lambda p: (Path(p).as_posix().casefold(), Path(p).as_posix()))
+
 class RenPyParser:
     def __init__(self, config_manager=None):
         self.logger = logging.getLogger(__name__)
@@ -2403,6 +2413,7 @@ class RenPyParser:
         files: List[Path] = []
         for ext in extensions:
             files.extend(list(search_root.glob(ext)))
+        files = _in_stable_order(files)
 
         processable_files = [
             file_path
@@ -2451,6 +2462,7 @@ class RenPyParser:
             iterator = list(search_root.glob("**/*.rpy")) + list(search_root.glob("**/*.RPY"))
         else:
             iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
+        iterator = _in_stable_order(iterator)
         seen_rpy = set()
         rpy_files = []
         for f in iterator:
@@ -2511,6 +2523,7 @@ class RenPyParser:
             iterator = list(search_root.glob("**/*.rpy")) + list(search_root.glob("**/*.RPY"))
         else:
             iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
+        iterator = _in_stable_order(iterator)
         seen_seq = set()
         rpy_files = []
         for f in iterator:
@@ -5008,6 +5021,7 @@ class RenPyParser:
             iterator = list(search_root.glob("**/*.rpy")) + list(search_root.glob("**/*.RPY"))
         else:
             iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
+        iterator = _in_stable_order(iterator)
         
         seen_rpy = set()
         rpy_files = []

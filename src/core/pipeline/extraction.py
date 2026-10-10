@@ -277,8 +277,8 @@ def _block_has_textual_hint(parser, block_lines: List[str]) -> bool:
 
 def _iter_audit_files(game_dir: str, extension: str):
     for root, dirs, files in os.walk(game_dir):
-        dirs[:] = [d for d in dirs if d.lower() not in COVERAGE_AUDIT_EXCLUDE_DIRS]
-        for filename in files:
+        dirs[:] = sorted(d for d in dirs if d.lower() not in COVERAGE_AUDIT_EXCLUDE_DIRS)
+        for filename in sorted(files):
             if filename.lower().endswith(extension):
                 yield Path(root) / filename
 

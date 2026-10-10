@@ -1453,6 +1453,7 @@
   "editor_write_error": "{files} فایل نوشته نشد.",
   "editor_suggest_server": "ابتدا سرور مدل محلی را راه‌اندازی کنید (تنظیمات هوش مصنوعی).",
   "editor_suggest_failed": "پیشنهادی دریافت نشد.",
+  "editor_suggest_same": "موتور همان ترجمه فعلی را پیشنهاد داد.",
   "editor_problem_placeholder": "یک [متغیر] یا جای‌نگهدار از متن اصلی حذف یا تغییر کرده است.",
   "editor_problem_tags": "برچسب‌های متن ({i}, {color}, ...) با متن اصلی متفاوت است.",
   "editor_problem_printf": "کدهای قالب (%s, %d, ...) با متن اصلی متفاوت است.",

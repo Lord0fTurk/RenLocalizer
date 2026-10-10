@@ -1453,6 +1453,7 @@
   "editor_write_error": "{files} files could not be written.",
   "editor_suggest_server": "Start the local model server first (AI settings).",
   "editor_suggest_failed": "No suggestion was returned.",
+  "editor_suggest_same": "The engine suggests the current translation.",
   "editor_problem_placeholder": "A [variable] or placeholder from the original is missing or changed.",
   "editor_problem_tags": "Text tags ({i}, {color}, ...) differ from the original.",
   "editor_problem_printf": "Format codes (%s, %d, ...) differ from the original.",

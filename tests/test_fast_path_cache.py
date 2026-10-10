@@ -274,3 +274,62 @@ def test_all_technical_entries_are_not_reported_as_a_failed_translation(tmp_path
         mock_batch.return_value = []
         pipeline._translate_entries([TranslationEntry("Hello there", "", "s.rpy", 1, "dialogue", translation_id="d1")])
     assert pipeline._sent_for_translation == 1
+
+
+def test_bypass_cache_reaches_the_engine_and_leaves_the_cache_alone(tmp_path):
+    """Editor suggestions: the cached line is neither returned nor replaced or removed."""
+    import asyncio
+
+    manager = TranslationManager()
+    key = ("google", "en", "tr", "Options")
+    manager._cache[key] = TranslationResult(
+        original_text="Options", translated_text="Seçenekler", source_lang="en",
+        target_lang="tr", engine=TranslationEngine.GOOGLE, success=True,
+    )
+
+    class Engine:
+        calls = 0
+
+        async def translate_single(self, req):
+            Engine.calls += 1
+            return TranslationResult(
+                original_text=req.text, translated_text="Ayarlar", source_lang=req.source_lang,
+                target_lang=req.target_lang, engine=req.engine, success=True,
+            )
+
+    manager.translators[TranslationEngine.GOOGLE] = Engine()
+    request = TranslationRequest(text="Options", source_lang="en", target_lang="tr",
+                                 engine=TranslationEngine.GOOGLE)
+    cache_file = tmp_path / "translation_cache.json"
+
+    with manager.bypass_cache():
+        assert manager.get_cached_translation("Options", "en", "tr", TranslationEngine.GOOGLE) is None
+        result = asyncio.run(manager.translate_with_retry(request))
+        asyncio.run(manager.cache_remove(key))
+        manager.save_cache(str(cache_file))
+
+    assert result.translated_text == "Ayarlar" and Engine.calls == 1
+    assert manager._cache[key].translated_text == "Seçenekler"
+    assert not cache_file.exists()
+    assert manager.use_cache
+
+
+def test_bypass_cache_is_per_thread():
+    """A translation run on another thread keeps its cache during a suggestion."""
+    import threading
+
+    manager = TranslationManager()
+    seen = {}
+
+    def other_thread():
+        seen["other"] = manager.use_cache
+
+    with manager.bypass_cache():
+        worker = threading.Thread(target=other_thread)
+        worker.start()
+        worker.join()
+        seen["here"] = manager.use_cache
+    assert seen == {"other": True, "here": False}
+
+    manager.use_cache = False  # the settings switch still works
+    assert manager.use_cache is False

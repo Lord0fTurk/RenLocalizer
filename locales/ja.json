@@ -1453,6 +1453,7 @@
   "editor_write_error": "{files} 個のファイルを書き込めませんでした。",
   "editor_suggest_server": "先にローカルモデルサーバーを起動してください（AI 設定）。",
   "editor_suggest_failed": "提案は返されませんでした。",
+  "editor_suggest_same": "エンジンの提案は現在の翻訳と同じです。",
   "editor_problem_placeholder": "原文の [変数] またはプレースホルダーが欠けているか変更されています。",
   "editor_problem_tags": "テキストタグ（{i}、{color} など）が原文と異なります。",
   "editor_problem_printf": "書式コード（%s、%d など）が原文と異なります。",

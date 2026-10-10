@@ -1452,6 +1452,7 @@
   "editor_write_error": "{files} 个文件无法写入。",
   "editor_suggest_server": "请先启动本地模型服务器（AI 设置）。",
   "editor_suggest_failed": "未返回任何建议。",
+  "editor_suggest_same": "引擎建议的与当前译文相同。",
   "editor_problem_placeholder": "原文中的 [变量] 或占位符缺失或被更改。",
   "editor_problem_tags": "文本标签（{i}、{color} 等）与原文不同。",
   "editor_problem_printf": "格式代码（%s、%d 等）与原文不同。",

@@ -9,8 +9,10 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from collections import OrderedDict, deque
+from contextlib import contextmanager
 from typing import Dict, List, Optional, Tuple, Callable, Union
 
 from .base import (
@@ -108,6 +110,7 @@ class _ObservableCacheDict(OrderedDict):
 
 class TranslationManager:
     def __init__(self, proxy_manager=None, config_manager=None):
+        self._cache_bypass = threading.local()
         self.proxy_manager = proxy_manager
         self.config_manager = config_manager
         self.logger = logging.getLogger(__name__)
@@ -275,8 +278,36 @@ class TranslationManager:
             if len(self._cache) > self.cache_capacity:
                 self._cache.popitem(last=False)
 
+    @property
+    def use_cache(self) -> bool:
+        """Cache switch; always False on a thread inside ``bypass_cache()``."""
+        bypass = getattr(self, "_cache_bypass", None)
+        return getattr(self, "_use_cache", True) and not getattr(bypass, "active", False)
+
+    @use_cache.setter
+    def use_cache(self, value: bool) -> None:
+        self._use_cache = bool(value)
+
+    @contextmanager
+    def bypass_cache(self):
+        """Neither read nor write the cache on the calling thread.
+
+        Used by the editor's suggestions: the cache holds the line's current
+        translation (or the hand edit synced on save), so a lookup would just
+        return it. Thread-local, so a translation run on another thread keeps
+        using the cache.
+        """
+        previous = getattr(self._cache_bypass, "active", False)
+        self._cache_bypass.active = True
+        try:
+            yield
+        finally:
+            self._cache_bypass.active = previous
+
     async def cache_remove(self, key: Tuple[str, str, str, str]):
         """Remove a specific key from memory cache (e.g. when rejected by output guard)."""
+        if not self.use_cache:
+            return
         async with self._cache_lock:
             self._cache.pop(key, None)
 

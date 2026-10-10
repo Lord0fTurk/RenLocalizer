@@ -1452,6 +1452,7 @@
   "editor_write_error": "Impossible d'écrire {files} fichiers.",
   "editor_suggest_server": "Démarrez d'abord le serveur de modèle local (paramètres IA).",
   "editor_suggest_failed": "Aucune suggestion n'a été renvoyée.",
+  "editor_suggest_same": "Le moteur propose la traduction actuelle.",
   "editor_problem_placeholder": "Une [variable] ou un espace réservé de l'original manque ou a changé.",
   "editor_problem_tags": "Les balises de texte ({i}, {color}, ...) diffèrent de l'original.",
   "editor_problem_printf": "Les codes de format (%s, %d, ...) diffèrent de l'original.",

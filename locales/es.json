@@ -1452,6 +1452,7 @@
   "editor_write_error": "No se pudieron escribir {files} archivos.",
   "editor_suggest_server": "Primero inicia el servidor del modelo local (ajustes de IA).",
   "editor_suggest_failed": "No se recibió ninguna sugerencia.",
+  "editor_suggest_same": "El motor sugiere la traducción actual.",
   "editor_problem_placeholder": "Falta o cambió una [variable] o marcador del original.",
   "editor_problem_tags": "Las etiquetas de texto ({i}, {color}, ...) difieren del original.",
   "editor_problem_printf": "Los códigos de formato (%s, %d, ...) difieren del original.",

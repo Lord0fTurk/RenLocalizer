@@ -1453,6 +1453,7 @@
   "editor_write_error": "{files} dosya yazılamadı.",
   "editor_suggest_server": "Önce yerel model sunucusunu başlatın (Yapay Zeka ayarları).",
   "editor_suggest_failed": "Öneri alınamadı.",
+  "editor_suggest_same": "Motor mevcut çevirinin aynısını önerdi.",
   "editor_problem_placeholder": "Orijinaldeki bir [değişken] veya yer tutucu eksik ya da değişmiş.",
   "editor_problem_tags": "Metin etiketleri ({i}, {color}, ...) orijinalden farklı.",
   "editor_problem_printf": "Biçim kodları (%s, %d, ...) orijinalden farklı.",

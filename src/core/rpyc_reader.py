@@ -2852,6 +2852,8 @@ def extract_texts_from_rpyc_directory(
     pattern_rpyc = "**/*.rpyc" if recursive else "*.rpyc"
     pattern_rpymc = "**/*.rpymc" if recursive else "*.rpymc"
     rpyc_files = list(search_root.glob(pattern_rpyc)) + list(search_root.glob(pattern_rpymc))
+    # Same order on every OS (NTFS lists alphabetically, ext4/APFS do not).
+    rpyc_files.sort(key=lambda p: (p.as_posix().casefold(), p.as_posix()))
 
     # Exclude tl/ folder and renpy engine files, except renpy/common
     filtered_files = []

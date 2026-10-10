@@ -546,9 +546,10 @@ class TLParser:
         for i, (root, dirs, filenames) in enumerate(os.walk(lang_dir)):
             # GÜVENLİK: 'renpy' adlı klasörleri tamamen atla (içine girme)
             # Linux ve Mac'te olası farklı isimleri de düşünerek lower() kontrolü ekliyoruz
-            dirs[:] = [d for d in dirs if d.lower() != 'renpy']
+            # Sorted: os.walk order is the file system's (arbitrary on ext4/APFS).
+            dirs[:] = sorted(d for d in dirs if d.lower() != 'renpy')
             
-            for filename in filenames:
+            for filename in sorted(filenames):
                 if filename.lower().endswith('.rpy'):
                     file_path = os.path.join(root, filename)
                     tl_file = self.parse_file(file_path)

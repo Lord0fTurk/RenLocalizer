@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """EditorBackend: load, filter, edit, save, and the lock during translation runs."""
+import contextlib
 import os
 import time
 from types import SimpleNamespace
@@ -126,26 +127,45 @@ def test_replace_all_respects_filters(editor):
     assert editor.rows[0]["translated"] == "Bye."
 
 
-def test_suggest_fills_the_editor_without_saving(editor, monkeypatch):
-    import src.core.pipeline as pipeline_pkg
+class _FakeManager:
+    """Records whether the cache was bypassed while the pipeline ran."""
 
-    calls = {}
+    def __init__(self):
+        self.bypassed = False
+
+    @contextlib.contextmanager
+    def bypass_cache(self):
+        self.bypassed = True
+        try:
+            yield
+        finally:
+            self.bypassed = False
+
+
+def _fake_pipeline(monkeypatch, calls, answer):
+    import src.core.pipeline as pipeline_pkg
 
     class FakePipeline:
         def __init__(self, config, manager):
-            pass
+            self.manager = manager
 
         def configure(self, **kwargs):
             calls.update(kwargs)
 
         def _translate_entries(self, entries):
             calls["text"] = entries[0].original_text
-            return {entries[0].translation_id: "Merhaba, [name]!"}
+            calls["cache_bypassed"] = self.manager.bypassed
+            return {entries[0].translation_id: answer}
 
     monkeypatch.setattr(pipeline_pkg, "TranslationPipeline", FakePipeline)
+
+
+def test_suggest_fills_the_editor_without_saving(editor, monkeypatch):
+    calls = {}
+    _fake_pipeline(monkeypatch, calls, "Merhaba, [name]!")
     app = editor.fake_app
     app._selected_engine = "google"
-    app.translation_manager = object()
+    app.translation_manager = _FakeManager()
     app._is_builtin_local_llm = lambda: False
     app._refresh_active_translator = lambda: None
     app.config.proxy_settings = SimpleNamespace(enabled=False)
@@ -155,6 +175,27 @@ def test_suggest_fills_the_editor_without_saving(editor, monkeypatch):
     editor.suggest()
     wait_idle(editor)
     assert calls["text"] == "Hello, [name]!" and calls["target_language"] == "turkish"
+    # The cache would only hand back the current translation.
+    assert calls["cache_bypassed"] and not app.translation_manager.bypassed
     assert editor.selected["translated"] == "Merhaba, [name]!" and editor.selected["modified"]
     path = os.path.join(app._game_dir, "tl", "turkish", "script.rpy")
     assert "Merhaba" not in open(path, encoding="utf-8").read()
+
+
+def test_suggest_says_so_when_the_engine_repeats_the_translation(editor, monkeypatch):
+    calls = {}
+    _fake_pipeline(monkeypatch, calls, "Başla")
+    app = editor.fake_app
+    app._selected_engine = "bing"
+    app.translation_manager = _FakeManager()
+    app._is_builtin_local_llm = lambda: False
+    app._refresh_active_translator = lambda: None
+    app.config.proxy_settings = SimpleNamespace(enabled=False)
+
+    load(editor)
+    editor.setSearch("start")
+    editor.suggest()
+    wait_idle(editor)
+    assert calls["text"] == "Start" and calls["cache_bypassed"]
+    assert editor.selected["translated"] == "Başla" and not editor.selected["modified"]
+    assert editor.messages[-1][0] == "info"

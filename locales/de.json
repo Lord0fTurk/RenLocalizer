@@ -1452,6 +1452,7 @@
   "editor_write_error": "{files} Dateien konnten nicht geschrieben werden.",
   "editor_suggest_server": "Starte zuerst den lokalen Modellserver (KI-Einstellungen).",
   "editor_suggest_failed": "Es wurde kein Vorschlag geliefert.",
+  "editor_suggest_same": "Die Engine schlägt die aktuelle Übersetzung vor.",
   "editor_problem_placeholder": "Eine [Variable] oder ein Platzhalter aus dem Original fehlt oder wurde geändert.",
   "editor_problem_tags": "Text-Tags ({i}, {color}, ...) weichen vom Original ab.",
   "editor_problem_printf": "Formatcodes (%s, %d, ...) weichen vom Original ab.",
