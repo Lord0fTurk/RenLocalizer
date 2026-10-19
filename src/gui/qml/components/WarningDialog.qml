@@ -17,12 +17,6 @@ Dialog {
     property string titleText: ""
     property string bodyText: ""
 
-    property color clrCard: "#151A29"
-    property color clrWarn: "#F59E0B"
-    property color clrWarnDim: "#26F59E0B"
-    property color clrTxt: "#F3F4F6"
-    property color clrTxtDim: "#6B7280"
-    property color clrInput: "#0E121D"
 
     enter: Transition {
         NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 180; easing.type: Easing.OutCubic }
@@ -34,13 +28,13 @@ Dialog {
     }
 
     Overlay.modal: Rectangle {
-        color: Qt.rgba(0, 0, 0, 0.65)
+        color: Theme.alpha(Theme.black, 0.65)
     }
 
     background: Rectangle {
-        color: warningDialog.clrCard
+        color: Theme.card
         radius: 18
-        border.color: Qt.rgba(245, 158, 11, 0.5)
+        border.color: Theme.alpha(Theme.warn, 0.5)
         border.width: 1.5
         clip: true
 
@@ -49,7 +43,7 @@ Dialog {
             anchors.left: parent.left
             anchors.right: parent.right
             height: 3
-            color: warningDialog.clrWarn
+            color: Theme.warn
         }
     }
 
@@ -65,13 +59,14 @@ Dialog {
 
             Rectangle {
                 width: 40; height: 40; radius: 20
-                color: warningDialog.clrWarnDim
-                border.color: warningDialog.clrWarn; border.width: 1.5
+                color: Theme.warnDim
+                border.color: Theme.warn; border.width: 1.5
 
-                Label {
+                Icon {
                     anchors.centerIn: parent
-                    text: "⚠️"
-                    font.pixelSize: 20
+                    glyph: Icons.triangleAlert
+                    size: 20
+                    color: Theme.warn
                 }
             }
 
@@ -81,13 +76,14 @@ Dialog {
 
                 Label {
                     text: warningDialog.titleText.length > 0 ? warningDialog.titleText : appBackend.getTextWithDefault("warning_title", "Uyarı")
-                    font.pixelSize: 17; font.bold: true; color: warningDialog.clrTxt
+                    font.pixelSize: 18; font.bold: true; color: Theme.txt
                 }
             }
 
+            Item { Layout.fillWidth: true }
             Rectangle {
                 width: 30; height: 30; radius: 15
-                color: closeWarnMa.containsMouse ? Qt.rgba(255, 255, 255, 0.12) : "transparent"
+                color: closeWarnMa.containsMouse ? Theme.alpha(Theme.white, 0.12) : "transparent"
                 scale: closeWarnMa.pressed ? 0.92 : (closeWarnMa.containsMouse ? 1.08 : 1.0)
                 Behavior on scale { NumberAnimation { duration: 120 } }
                 Behavior on color { ColorAnimation { duration: 120 } }
@@ -95,7 +91,7 @@ Dialog {
                 Label {
                     anchors.centerIn: parent
                     text: "✕"
-                    color: closeWarnMa.containsMouse ? "#FFFFFF" : warningDialog.clrTxtDim
+                    color: closeWarnMa.containsMouse ? Theme.white : Theme.txtDim
                     font.pixelSize: 13
                     font.bold: true
                 }
@@ -115,8 +111,8 @@ Dialog {
             Layout.rightMargin: 20
             Layout.preferredHeight: warnBodyLbl.implicitHeight + 24
             radius: 12
-            color: warningDialog.clrInput
-            border.color: Qt.rgba(255, 255, 255, 0.08)
+            color: Theme.input
+            border.color: Theme.alpha(Theme.white, 0.08)
             border.width: 1
 
             Label {
@@ -124,7 +120,7 @@ Dialog {
                 anchors.fill: parent
                 anchors.margins: 14
                 text: warningDialog.bodyText
-                color: warningDialog.clrTxt
+                color: Theme.txt
                 wrapMode: Text.Wrap
                 font.pixelSize: 13
                 lineHeight: 1.3
@@ -149,12 +145,12 @@ Dialog {
 
                 background: Rectangle {
                     radius: 10
-                    color: parent.hovered ? "#FBBF24" : warningDialog.clrWarn
+                    color: parent.hovered ? Theme.warnHover : Theme.warn
                     Behavior on color { ColorAnimation { duration: 140 } }
                 }
                 contentItem: Label {
                     text: appBackend.uiTrigger, appBackend.getTextWithDefault("dialog_ok", "Tamam")
-                    color: "#0B0F17"
+                    color: Theme.textOnAccent
                     font.bold: true
                     font.pixelSize: 13
                     horizontalAlignment: Text.AlignHCenter

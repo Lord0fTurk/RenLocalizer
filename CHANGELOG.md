@@ -4,6 +4,67 @@ render_with_liquid: false
 
 # RenLocalizer Changelog
 
+#### [2.8.20] - 2026-10-19
+
+> **Swapped text tags no longer break lines in the game, for every engine; escaped quotes before `with` in `tl/` files no longer corrupt Ren'Py syntax (#22); empty translation slots fall back to source text instead of blank dialogue (#22); mixed UTF-8/cp1252 files are decoded line-by-line without `U+FFFD` replacement characters (#22); the editor's Apply button is gone; interface colors, the smallest window size and dialog layouts fixed; the dashboard checks a game before you start and remembers your recent games; AI Concurrency now applies to the Scene, JSON and XML modes and to OpenAI/Gemini semaphores (#21); explicit `--no-rpyc` is respected across the pipeline (#20).**
+
+##### 🛡️ Text Tags, Escaped Quotes & TL Integrity (GitHub #22)
+
+> **(`pipeline/translating.py`, `pipeline/orchestrator.py`, `pipeline/extraction.py`, `tl_parser.py`, `tag_structure.py`, `utils/encoding.py`, `test_tag_order.py`, `test_fixes_20261018.py`)**
+> - **Escaped Quotes Before `with` (`tl_parser.py`, `extraction.py`):** dialogue and string regexes now use escape-aware string matching (`(?:\\.|(?!(?P=quote))[^\\])*`) so lines like `s "Bring the \"results\" with you."` are parsed in full instead of treating `with you."` as a transition suffix and writing `s "Trae los \"resultados\"" with you."`. Lines already damaged by earlier runs are detected via `_corrupt_tail`, repaired from the `# comment` line, and queued for retranslation.
+> - **No Silent Line Drops (`tl_parser.py`):** `update_translations()` no longer drops a translation line when it follows a `# comment` line but does not match the dialogue regex; unmatched lines are preserved verbatim.
+> - **Empty Slots Fall Back to Source (`tl_parser.py`, `orchestrator.py`):** untranslated `e ""` and `new ""` slots are written with the original source text instead of empty strings so Ren'Py never shows blank dialogue boxes when an engine fails or a run is stopped mid-way.
+> - **Honest Completion Stats & Partial Runs (`tl_parser.py`, `orchestrator.py`):** `get_translation_stats()` separates `translated`, `same_as_source`, and `empty`; both `_run_pipeline` and `translate_existing_tl` share `_collect_entries_to_translate()`, `_save_tl_files()`, `_completion_stats()`, and `_completion_message()`, reporting engine failures, syntax-guard blocks, quote-balance checks, and quota stops accurately.
+> - **Mixed-Encoding Files & `U+FFFD` Guard (`utils/encoding.py`, `tag_structure.py`, `translating.py`):** `read_text_safely()` decodes mostly-UTF-8 files with isolated cp1252 lines line-by-line without producing `U+FFFD` or whole-file mojibake; `normalize_to_utf8_sig()` skips rewriting files that are already UTF-8-SIG with `\n`; `classify_translation_corruption()` rejects translations that introduce `U+FFFD` (`replacement_char`).
+> - **Lines That Made Ren'Py Show an Error:** when word order changes, Google and Bing can return a tag pair the wrong way round: "what we're {i}supposed{/i} to be doing" came back as "… gereken {/i} şeyi{i}yapıyoruz". Ren'Py stops with "closes a text tag that isn't open" when it reaches such a line. The check before saving only compared which tags were present, so the line was written. It now also applies Ren'Py's own rule: a close tag must close the most recently opened tag.
+> - **Repaired, Not Dropped:** a pair that was only swapped is put back in order around the words the engine placed between them, with the spacing of the original, so the line stays translated ("… gereken {i}şeyi{/i} yapıyoruz"). Other tag-order errors are rejected like any broken translation.
+> - **Earlier Translations:** such lines in translations made with earlier versions are translated again on the next run (from the translation memory when it has them) and are marked with a warning in the editor.
+> - **Every Engine:** the check runs after any engine. With Google and Bing the line went through a step that removes a lone close tag and puts it back in the same wrong place; AI engines (OpenAI, DeepSeek, local models, Gemini) passed a swapped pair through unchanged. Both are now repaired the same way, in every AI batch format (scene, XML, JSON, single line).
+> - **Checked:** Ren'Py's own lint reports the swapped line and accepts the repaired one.
+> - **AI Answers in the Example Style (`syntax_guard.py`):** the AI prompts show placeholders as `__PH_0__`, while the protected text uses `<ph id="0">…</ph>`. A model answering in the example style lost every tag and `[variable]` of the line, which then stayed in the original language. Such answers are now restored.
+
+##### ✏️ Editor
+
+> **(`components/EditorPage.qml`, `editor_backend.py`, `test_editor_backend.py`)**
+> - **No Apply Button:** what you type is kept as soon as you move to another line, change a filter or page, save or close, so the button did nothing on its own. **Save** writes the files, as before.
+> - **Ctrl+Enter Goes to the Next Line:** keeps the edit and moves on, to the next page at the end of the list.
+> - **Warnings While Typing:** problems such as a missing `[variable]` or a tag closed before it is opened are shown as you type, not only after leaving the line.
+> - **Selected Line Stays in View:** after an edit is kept, the list scrolls to the line you clicked.
+> - **Short Windows:** the edit panel gives way on short windows instead of pushing its buttons off the page.
+
+
+##### 🧭 Dashboard
+
+> **(`core/project_info.py`, `app_backend.py`, `config.py`, `Main.qml`, `locales/`, `test_project_info.py`, `test_dashboard_backend.py`)**
+> - **Drag and Drop:** drop the game folder, its EXE / `.sh` or a macOS `.app` anywhere on the window.
+> - **Recent Projects:** the button next to the path field lists the last eight games you picked; folders that are not Ren'Py games are not added.
+> - **Project Card:** after you pick a game, the dashboard shows its name and version, the Ren'Py version, how many scripts and archives it has and the translations already in `tl/`, plus anything that would stop the run (no `game/` folder, scripts only inside archives, a folder RenLocalizer cannot write to, `.rpyc`-only scripts with the RPYC reader off), before you press Start. The "Project loaded" badge appears only for a real game, and the Start button stays dimmed until a game is picked.
+> - **Output Mode on the Dashboard:** Native TLID or Standard can be chosen next to the engine, with the explanation on the info icon; the amber tip that was always on screen became one short line.
+> - **After a Run:** the summary offers **Launch Game** and **Review in Editor**, which opens the new translation in the editor.
+> - **Quieter Start-up:** the automatic update check no longer shows "You are up to date"; a manual check still does.
+
+##### ⚡ AI Concurrency in Every Batch Mode (GitHub #21)
+
+> **(`pipeline/translating.py`, `ai_translator.py`, `pipeline/orchestrator.py`, `test_ai_concurrency.py`)**
+> - **One Request at a Time:** in the Scene, JSON and XML modes the AI engines sent one request at a time whatever **AI Concurrency** said; only Single Line mode used it. The engine can run several requests at once, but the pipeline handed it one request's worth of lines (the AI batch size) per step, so there was never a second request to send. Each step now holds one request per parallel slot (15 lines × 4 = 60), so a local server with 4 parallel slots (LM Studio, Ollama, the built-in llama.cpp server) works on 4 requests at once.
+> - **Same Context:** every request carries the same lines in the same order as before. Scene blocks never shared context with each other, so running them side by side does not change the translations.
+> - **Scene Block Size Works:** a scene block larger than the AI batch size was cut down to the batch size; it now sets the size of each scene request.
+> - **Cloud Engines:** OpenAI, DeepSeek and Gemini also go from one request to up to AI Concurrency (2 by default) at a time in these modes, within their own limits (OpenAI 5, DeepSeek 12, Gemini 3). If a free-tier key starts hitting rate limits, lower AI Concurrency.
+
+##### 🎨 Interface
+
+> **(`Main.qml`, `components/`, `fonts/`, `scripts/build_icon_font.py`, `settings_backend.py`, `app_backend.py`, `config.py`, `locales/`, `test_qml_integrity.py`, `test_ui_icons.py`)**
+> - **Icons Instead of Emoji:** the sidebar, buttons, section titles, dialogs, the toolbox and the editor draw their icons from a small built-in icon font ([Lucide](https://lucide.dev), ISC license, 57 icons, 24 KB). Emoji looked different on Windows, macOS and Linux, needed an emoji font on Linux, and appeared twice where a translation and the interface both added one. Translations no longer carry icons in button and title texts; log messages keep theirs.
+> - **One Page Header:** every page opens with the same header — icon, title, subtitle and the page's actions — aligned with the cards below it, instead of four different styles. The toolbox title no longer touches the top of the window, and the section titles in Settings are white with a colored icon instead of all cyan.
+> - **One Palette and Type Scale:** every page takes its colors from one place and its text sizes from one scale, so sibling titles no longer differ by a pixel or two; the smallest labels (language chips, tool badges) grew from 9 to 10 px.
+> - **Wrong Colors:** tinted backgrounds and borders were written with 0–255 channel values in `Qt.rgba()`, which takes 0–1. Amber, red and green tints came out grey-white (the native-mode tip, the Patreon button, the toolbox icons) and the ring behind the sidebar logo was light grey instead of dark. All 137 are fixed, and a test keeps them on the 0–1 scale.
+> - **Smallest Window Size:** at the minimum width (980 px) the engine and language row, the AI fields and two glossary buttons ran off the right edge. The engine now gets its own row when the four columns do not fit, the card grows with its content, and the glossary buttons move under the title.
+> - **Editor Without a Translation:** the title floated to the middle of the page and the notice to the bottom. Both now sit at the top, the notice in a card like the glossary's.
+> - **Hints Over Labels:** an example value (`gpt-4o-mini`, `http://localhost:11434/v1`, …) moved above a filled or focused field and overlapped its label. It now shows only in an empty field.
+> - **Alignment:** the two columns of sliders and switches in Settings have equal widths, the sidebar labels line up, the two output mode buttons center their content, and the close button sits in the top-right corner of every dialog.
+> - **Text:** the glossary buttons showed their icon twice; the log filters (All / Info / Warning / Error) follow the interface language; arrows read `→` instead of `->`; Turkish "Orjinal" is now "Orijinal".
+> - **Unused Theme Settings Removed:** six color themes existed in the settings code and the translation files but could never be chosen in the interface. They are gone; older `config.json` files load as before.
+
 #### [2.8.19] - 2026-10-10
 
 > **New Translation Editor, dialogue that never showed up in game fixed (Ren'Py id parity, verified on four games including `.rpyc`/`.rpa`-only ones), every `_()` string translated the way Ren'Py does it, AI engines fixed behind VPN/system proxies and failing fast instead of silently using Google, CLI on par with the GUI (#20), graphics fallback and non-admin startup fix, character names kept untranslated, Toolbox and font tools fixed for all 135 languages, faster parsing and caching, macOS-packaged games (`Game.app`) accepted and the tests run on macOS.**

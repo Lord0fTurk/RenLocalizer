@@ -710,7 +710,9 @@ def _extract_raw_mapping(
     skipped_reason_counts = {
         'separator_remnant': 0, 'placeholder_remnant': 0, 'html_leakage': 0,
         'length_inflation': 0, 'placeholder_set_mismatch': 0,
-        'renpy_tag_set_mismatch': 0, 'duplicate_key_conflict': 0,
+        'renpy_tag_set_mismatch': 0, 'renpy_tag_order_mismatch': 0,
+        'renpy_tag_order_invalid': 0, 'replacement_char': 0,
+        'printf_set_mismatch': 0, 'duplicate_key_conflict': 0,
         'case_insensitive_conflict': 0,
     }
     skipped_samples: List[Dict[str, Any]] = []

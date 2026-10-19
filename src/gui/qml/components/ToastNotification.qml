@@ -16,18 +16,13 @@ Rectangle {
     property string message: ""
     property string toastType: "info"
 
-    property color clrSuccess: "#10B981"
-    property color clrError: "#EF4444"
-    property color clrWarn: "#F59E0B"
-    property color clrAccent: "#00F2FE"
-    property color clrTxt: "#F3F4F6"
 
-    color: toastType === "success" ? "#064E3B" :
-           toastType === "error"   ? "#7F1D1D" :
-           toastType === "warning" ? "#78350F" : "#161D2E"
-    border.color: toastType === "success" ? clrSuccess :
-                  toastType === "error"   ? clrError :
-                  toastType === "warning" ? clrWarn : clrAccent
+    color: toastType === "success" ? Theme.toastSuccess :
+           toastType === "error"   ? Theme.toastError :
+           toastType === "warning" ? Theme.toastWarn : Theme.toastInfo
+    border.color: toastType === "success" ? Theme.success :
+                  toastType === "error"   ? Theme.error :
+                  toastType === "warning" ? Theme.warn : Theme.accent
     border.width: 1.5
 
     opacity: 0.0
@@ -52,20 +47,19 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: 14
         spacing: 12
-        Label {
-            text: toast.toastType === "success" ? "✓" :
-                  toast.toastType === "error"   ? "✕" :
-                  toast.toastType === "warning" ? "⚠️" : "ℹ"
-            color: toast.toastType === "success" ? toast.clrSuccess :
-                   toast.toastType === "error"   ? toast.clrError :
-                   toast.toastType === "warning" ? toast.clrWarn : toast.clrAccent
-            font.bold: true
-            font.pixelSize: 15
+        Icon {
+            glyph: toast.toastType === "success" ? Icons.circleCheck :
+                   toast.toastType === "error"   ? Icons.circleX :
+                   toast.toastType === "warning" ? Icons.triangleAlert : Icons.info
+            color: toast.toastType === "success" ? Theme.success :
+                   toast.toastType === "error"   ? Theme.error :
+                   toast.toastType === "warning" ? Theme.warn : Theme.accent
+            size: 18
         }
         Label {
             id: toastText
             text: toast.message
-            color: toast.clrTxt
+            color: Theme.txt
             font.pixelSize: 13
             Layout.fillWidth: true
             wrapMode: Text.WordWrap

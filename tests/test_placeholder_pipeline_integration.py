@@ -343,3 +343,17 @@ class TestLLMXMLProtectionCycle:
         
         restored = restore_renpy_syntax_xml(llm_response, glossary_ph)
         assert restored == "100 adet var altın."
+
+
+def test_xml_restore_accepts_the_ascii_placeholder_style():
+    """AI prompts show __PH_0__ examples; an answer in that style must restore."""
+    from src.core.syntax_guard import (
+        protect_renpy_syntax_xml, restore_renpy_syntax_xml, validate_translation_integrity,
+    )
+
+    protected, placeholders = protect_renpy_syntax_xml("Hello [name], press {i}Enter{/i}.")
+    restored = restore_renpy_syntax_xml("Merhaba __PH_0__, __PH_1__Enter__PH_2__ tuşuna bas.", placeholders)
+    assert restored == "Merhaba [name], {i}Enter{/i} tuşuna bas."
+    assert validate_translation_integrity(restored, placeholders) == []
+    # An id the request never had is left for the integrity check.
+    assert restore_renpy_syntax_xml("x __PH_9__", placeholders) == "x __PH_9__"

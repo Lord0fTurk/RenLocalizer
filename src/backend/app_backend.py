@@ -10,6 +10,7 @@ Google Translate ve AI motorları (OpenAI, DeepSeek, LocalLLM) ile
 
 import logging
 import os
+import subprocess
 import sys
 import threading
 import urllib.parse
@@ -103,6 +104,10 @@ class AppBackend(QObject):
         str, str, str, arguments=["currentVersion", "latestVersion", "releaseUrl"]
     )
     updateCheckFinished = pyqtSignal(bool, str, arguments=["hasUpdate", "message"])
+    projectInfoChanged = pyqtSignal()
+    recentProjectsChanged = pyqtSignal()
+    # Internal: project inspection thread -> GUI thread (generation, info)
+    _projectInfoReady = pyqtSignal(int, object)
     glossaryChanged = pyqtSignal()
     # ── Settings Signals (QML Two-way bindings) ────────────────────────
     maxThreadsChanged = pyqtSignal()
@@ -114,7 +119,6 @@ class AppBackend(QObject):
     useCacheChanged = pyqtSignal()
     uiTriggerChanged = pyqtSignal()
     languageChanged = pyqtSignal(str)
-    themeChanged = pyqtSignal(str)
     enableRpycReaderChanged = pyqtSignal()
     enableDeepScanChanged = pyqtSignal()
     activateLanguageOnLaunchChanged = pyqtSignal()
@@ -181,6 +185,9 @@ class AppBackend(QObject):
         self.config.translation_settings.enable_unrpyc_decompile = False
         # ── State ────────────────────────────────────────────────────────
         self._project_path: str = self.config.app_settings.last_input_directory or ""
+        # Dashboard project card (src/core/project_info.py), refreshed off the GUI thread
+        self._project_info: dict = {}
+        self._project_info_gen = 0
         self._target_language: str = (
             self.config.translation_settings.target_language or "turkish"
         )
@@ -268,9 +275,9 @@ class AppBackend(QObject):
         self.settings.on("ai_scene_batch_size", lambda: self.aiSceneBatchSizeChanged.emit())
         self.settings.on("output_mode", lambda: self.outputModeChanged.emit())
         self.settings.on("language", lambda lang_code: self.languageChanged.emit(lang_code))
-        self.settings.on("theme", lambda theme: self.themeChanged.emit(theme))
         self.settings.on("glossary", lambda: self.glossaryChanged.emit())
         self._builtinServerPrepared.connect(self._on_builtin_server_prepared)
+        self._projectInfoReady.connect(self._on_project_info_ready)
 
         # Google translator'ı her zaman hazırla (fallback)
         threading.Thread(target=self._setup_google_translator, daemon=True).start()
@@ -674,6 +681,7 @@ class AppBackend(QObject):
     @enableRpycReader.setter
     def enableRpycReader(self, val: bool) -> None:
         self.settings.set_enable_rpyc_reader(val)
+        self.refreshProjectInfo()  # the project card warns about .rpyc-only games
 
     @pyqtProperty(bool, notify=enableDeepScanChanged)
     def enableDeepScan(self) -> bool:
@@ -1259,20 +1267,6 @@ class AppBackend(QObject):
         self.settings.set_ui_language(lang_code)
         self.refreshUI()
 
-    # ── UI Theme Management ──
-    @pyqtSlot(result=list)
-    def getAvailableThemes(self) -> list:
-        return self.settings.get_available_themes()
-
-    @pyqtSlot(result=str)
-    def getCurrentTheme(self) -> str:
-        return self.settings.get_current_theme()
-
-    @pyqtSlot(str)
-    def setTheme(self, theme: str) -> None:
-        self.settings.set_theme(theme)
-        self.refreshUI()
-
     # ── Language Slots ───────────────────────────────────────────────────
 
     @pyqtSlot(result=list)
@@ -1349,6 +1343,7 @@ class AppBackend(QObject):
         if is_tl_folder and os.path.isdir(path):
             self._tl_mode = True
             self._tl_source_path = path
+            self.refreshProjectInfo()
             self.logMessage.emit(
                 "info",
                 self._t(
@@ -1366,6 +1361,7 @@ class AppBackend(QObject):
             if os.path.isdir(alt):
                 game_dir = alt
 
+        self.refreshProjectInfo()
         if os.path.isdir(game_dir):
             self.logMessage.emit(
                 "info",
@@ -1383,6 +1379,89 @@ class AppBackend(QObject):
     @pyqtSlot(result=str)
     def getLastProjectPath(self) -> str:
         return self.config.app_settings.last_input_directory or ""
+
+    # -- Dashboard project card, recent projects, game launch -----------------
+
+    @pyqtProperty("QVariantMap", notify=projectInfoChanged)
+    def projectInfo(self) -> dict:
+        return self._project_info
+
+    @pyqtProperty("QVariantList", notify=recentProjectsChanged)
+    def recentProjects(self) -> list:
+        return list(self.config.app_settings.recent_projects)
+
+    @pyqtSlot()
+    def refreshProjectInfo(self) -> None:
+        """Re-read the selected game (scripts, archives, tl/ languages) in a worker thread."""
+        self._project_info_gen += 1
+        gen = self._project_info_gen
+        path = self._tl_source_path if self._tl_mode else self._project_path
+        rpa_extraction = bool(self.config.app_settings.unren_auto_download)
+        rpyc_reader = bool(self.config.translation_settings.enable_rpyc_reader)
+
+        def work() -> None:
+            try:
+                from src.core.project_info import inspect_project
+                info = inspect_project(path, rpa_extraction=rpa_extraction, rpyc_reader=rpyc_reader)
+            except Exception as exc:
+                self.logger.warning("Project inspection failed for %s: %s", path, exc)
+                info = {"ok": False, "path": path, "notices": []}
+            try:
+                self._projectInfoReady.emit(gen, info)
+            except RuntimeError:
+                pass  # backend torn down while reading
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_project_info_ready(self, gen: int, info: dict) -> None:
+        if gen != self._project_info_gen:
+            return  # a newer selection is being read
+        self._project_info = info
+        self.projectInfoChanged.emit()
+        if info.get("ok") and info.get("path"):
+            self._remember_recent_project(info["path"])
+
+    def _remember_recent_project(self, path: str) -> None:
+        from src.utils.config import MAX_RECENT_PROJECTS
+
+        key = os.path.normcase(os.path.normpath(path))
+        recent = [p for p in self.config.app_settings.recent_projects
+                  if os.path.normcase(os.path.normpath(p)) != key]
+        recent = ([path] + recent)[:MAX_RECENT_PROJECTS]
+        if recent != self.config.app_settings.recent_projects:
+            self.config.app_settings.recent_projects = recent
+            self.config.save_config()
+            self.recentProjectsChanged.emit()
+
+    @pyqtSlot()
+    def clearRecentProjects(self) -> None:
+        self.config.app_settings.recent_projects = []
+        self.config.save_config()
+        self.recentProjectsChanged.emit()
+
+    @pyqtSlot(result=bool)
+    def launchGame(self) -> bool:
+        """Start the selected game with its own launcher (.exe / .sh / .app)."""
+        launcher = (self._project_info or {}).get("launcher") or ""
+        if not launcher or not os.path.exists(launcher):
+            self.logMessage.emit("warning", self._t(
+                "log_launcher_not_found",
+                "Could not find the game's launcher (.exe / .sh) in the project folder."))
+            return False
+        try:
+            if sys.platform == "darwin" and launcher.lower().endswith(".app"):
+                subprocess.Popen(["open", launcher])
+            elif launcher.lower().endswith(".sh"):
+                subprocess.Popen(["/bin/sh", launcher], cwd=os.path.dirname(launcher))
+            else:
+                subprocess.Popen([launcher], cwd=os.path.dirname(launcher))
+        except OSError as exc:
+            self.logMessage.emit("error", self._t(
+                "log_game_launch_failed", "Could not start the game: {error}").replace("{error}", str(exc)))
+            return False
+        self.logMessage.emit("info", self._t("log_game_launched", "Game started: {name}").replace(
+            "{name}", os.path.basename(launcher)))
+        return True
 
     # ── Translation Control Slots ────────────────────────────────────────
 
@@ -1595,6 +1674,7 @@ class AppBackend(QObject):
             )
 
         self.translationFinished.emit(success, message)
+        self.refreshProjectInfo()  # tl/ now has the new language
 
     @pyqtSlot()
     def saveSettings(self) -> None:
@@ -1731,8 +1811,9 @@ class AppBackend(QObject):
                     "update_check_no_update", "You are up to date."
                 )
                 if manual:
+                    # The automatic check stays quiet when there is nothing new
                     self.logMessage.emit("info", f"ℹ️ {msg}")
-                self.updateCheckFinished.emit(False, msg)
+                    self.updateCheckFinished.emit(False, msg)
         except RuntimeError as exc:
             # Underlying C++ object was destroyed while thread was finishing
             self.logger.debug(f"[AppBackend] Update check thread aborted due to object teardown: {exc}")

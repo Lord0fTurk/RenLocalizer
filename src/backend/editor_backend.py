@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtProperty, pyqtSignal, pyqtSlot
 
-from src.core.editor.checks import code_tokens
+from src.core.editor.checks import code_tokens, find_problem
 from src.core.editor.project import (
     LoadedLanguage, load_language, save_edits, sync_strings_json, sync_translation_cache,
 )
@@ -26,6 +26,8 @@ PAGE_SIZE = 50
 _PROBLEM_TEXT = {
     "placeholder_set_mismatch": ("editor_problem_placeholder", "A [variable] or placeholder from the original is missing or changed."),
     "renpy_tag_set_mismatch": ("editor_problem_tags", "Text tags ({i}, {color}, ...) differ from the original."),
+    "renpy_tag_order_mismatch": ("editor_problem_tag_order",
+                                 "A text tag is closed before it is opened (for example {/i} before {i}); the game shows an error on this line."),
     "printf_set_mismatch": ("editor_problem_printf", "Format codes (%s, %d, ...) differ from the original."),
     "length_inflation": ("editor_problem_length", "The translation is much longer than the original."),
     "html_leakage": ("editor_problem_html", "The translation contains HTML markup."),
@@ -331,6 +333,14 @@ class EditorBackend(QObject):
     @pyqtSlot(int)
     def select(self, entry_id: int) -> None:
         self._select(entry_id)
+
+    @pyqtSlot(str, result=str)
+    def problemFor(self, text: str) -> str:
+        """Warning for *text* as the selected line's translation, while it is typed."""
+        if not self._selected:
+            return ""
+        code = find_problem(self._selected.get("original", ""), text)
+        return self._problem_text(code) if code else ""
 
     @pyqtSlot(str)
     def applyEdit(self, text: str) -> None:

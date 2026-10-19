@@ -199,3 +199,13 @@ def test_suggest_says_so_when_the_engine_repeats_the_translation(editor, monkeyp
     assert calls["text"] == "Start" and calls["cache_bypassed"]
     assert editor.selected["translated"] == "Başla" and not editor.selected["modified"]
     assert editor.messages[-1][0] == "info"
+
+
+def test_warning_follows_the_text_being_typed(editor):
+    load(editor)
+    editor.setSearch("hello")
+    assert editor.problemFor("Merhaba, [name]!") == ""
+    assert "[variable]" in editor.problemFor("Merhaba!")
+    assert editor.problemFor("") == ""  # an empty slot is untranslated, not broken
+    # Nothing is applied while typing: the row still has its stored translation.
+    assert editor.selected["translated"] == "" and not editor.selected["modified"]

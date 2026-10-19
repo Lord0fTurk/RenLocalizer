@@ -111,9 +111,8 @@ class SettingsBackend:
             "ai_scene_batch_size": [],
             # Output mode
             "output_mode": [],
-            # UI / theme / language
+            # UI language
             "language": [],
-            "theme": [],
             # Glossary
             "glossary": [],
         }
@@ -674,28 +673,6 @@ class SettingsBackend:
             self._emit("language", lang_code)
         except Exception as e:
             self.logger.warning("Error setting UI language: %s", e)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    #  UI Theme
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def get_available_themes(self) -> list:
-        return [
-            {"code": "dark", "name": self.config.get_ui_text("theme_dark", "🌙 Dark")},
-            {"code": "light", "name": self.config.get_ui_text("theme_light", "☀️ Light")},
-            {"code": "red", "name": self.config.get_ui_text("theme_red", "🔴 Red")},
-            {"code": "turquoise", "name": self.config.get_ui_text("theme_turquoise", "🔵 Turquoise")},
-            {"code": "green", "name": self.config.get_ui_text("theme_green", "🌿 Green")},
-            {"code": "neon", "name": self.config.get_ui_text("theme_neon", "🌈 Neon")},
-        ]
-
-    def get_current_theme(self) -> str:
-        return self.config.app_settings.app_theme or "dark"
-
-    def set_theme(self, theme: str) -> None:
-        self.config.app_settings.app_theme = theme
-        self.config.save_config()
-        self._emit("theme", theme)
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  Target Language

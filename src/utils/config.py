@@ -13,7 +13,7 @@ import sys
 import threading
 from pathlib import Path
 from typing import Dict, Any, Optional
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, field, fields
 from enum import Enum
 from src.utils.constants import (
     AI_DEFAULT_TEMPERATURE,
@@ -65,17 +65,8 @@ TURKIC_LANGUAGE_CODES = {
     "kaa",
 }
 
-VALID_APP_THEMES: tuple[str, ...] = (
-    "dark",
-    "light",
-    "red",
-    "turquoise",
-    "green",
-    "neon",
-    "auto",
-)
-
 MAX_GENERAL_BATCH_SIZE = 10000
+MAX_RECENT_PROJECTS = 8
 MAX_AI_BATCH_SIZE = 10000
 ENGINE_BATCH_SIZE_CAPS: dict[str, int] = {
     "google": 1000,
@@ -88,11 +79,6 @@ EXTRACTION_MODE_THRESHOLDS: dict[str, float] = {
     "balanced": 0.58,
     "aggressive": 0.35,
 }
-
-LEGACY_APP_SETTING_ALIASES: dict[str, str] = {
-    "theme": "app_theme",
-}
-
 
 def _is_turkic_locale(code: str) -> bool:
     normalized = (code or "").lower().replace("_", "-")
@@ -542,7 +528,6 @@ class AppSettings:
     """General application settings."""
 
     ui_language: str = ""  # Will be auto-detected if empty
-    app_theme: str = "dark"  # Application theme preset
     last_input_directory: str = ""
     check_for_updates: bool = True
     # Output format: 'old_new' (Ren'Py official old/new blocks, recommended) or 'simple' (legacy)
@@ -553,16 +538,17 @@ class AppSettings:
     renpy_sdk_path: str = ""
     # Desktop notifications for translation completion and error events
     enable_desktop_notifications: bool = True
+    # Games picked before, newest first (dashboard's recent list)
+    recent_projects: list = field(default_factory=list)
 
     def __post_init__(self):
         """Validate enum/allowlist fields."""
-        normalized_theme = str(self.app_theme).strip().lower()
-        if normalized_theme not in VALID_APP_THEMES:
-            normalized_theme = "dark"
-        self.app_theme = normalized_theme
         if self.output_format not in ("old_new", "simple"):
             self.output_format = "old_new"
         self.ui_language = str(self.ui_language).strip()
+        if not isinstance(self.recent_projects, list):
+            self.recent_projects = []
+        self.recent_projects = [str(p) for p in self.recent_projects if isinstance(p, str) and p.strip()][:MAX_RECENT_PROJECTS]
 
 
 @dataclass
@@ -907,13 +893,7 @@ class ConfigManager:
 
                 # Load app settings
                 if "app_settings" in config_data:
-                    app_settings_data = dict(config_data["app_settings"])
-                    if (
-                        "theme" in app_settings_data
-                        and "app_theme" not in app_settings_data
-                    ):
-                        app_settings_data["app_theme"] = app_settings_data.pop("theme")
-                    app_data = self._filter_config_data(AppSettings, app_settings_data)
+                    app_data = self._filter_config_data(AppSettings, config_data["app_settings"])
                     self.app_settings = AppSettings(**app_data)
 
                 # Load proxy settings
@@ -967,13 +947,6 @@ class ConfigManager:
         validator = getattr(instance, "__post_init__", None)
         if callable(validator):
             validator()
-
-    @staticmethod
-    def _resolve_setting_alias(section: str, setting: str) -> str:
-        """Map legacy config keys to the current dataclass field names."""
-        if section in {"ui", "app"}:
-            return LEGACY_APP_SETTING_ALIASES.get(setting, setting)
-        return setting
 
     def _get_section_object(self, section: str) -> Any | None:
         """Return the config section object for dot-notation helpers."""
@@ -1048,12 +1021,11 @@ class ConfigManager:
         self.save_config()
 
     def get_setting(self, key: str, default: Any = None) -> Any:
-        """Get a setting value using dot notation (e.g., 'app.app_theme')."""
+        """Get a setting value using dot notation (e.g., 'app.ui_language')."""
         try:
             parts = key.split(".")
             if len(parts) == 2:
                 section, setting = parts
-                setting = self._resolve_setting_alias(section, setting)
                 section_obj = self._get_section_object(section)
                 if section_obj is not None:
                     return getattr(section_obj, setting, default)
@@ -1062,7 +1034,7 @@ class ConfigManager:
             return default
 
     def set_setting(self, key: str, value: Any) -> None:
-        """Set a setting value using dot notation (e.g., 'app.app_theme')."""
+        """Set a setting value using dot notation (e.g., 'app.ui_language')."""
         try:
             parts = key.split(".")
             if len(parts) != 2:
@@ -1072,7 +1044,6 @@ class ConfigManager:
                 return
 
             section, setting = parts
-            setting = self._resolve_setting_alias(section, setting)
             section_obj = self._get_section_object(section)
             if section_obj is None:
                 self.logger.warning("Unknown config section requested: %s", section)
@@ -1505,7 +1476,7 @@ class ConfigManager:
 
     def get_source_languages_for_ui(self) -> list:
         """Get languages for source language UI dropdown, with Auto-detect first."""
-        result = [("auto", "🤖 Auto-detect")]
+        result = [("auto", "Auto-detect")]
         for item in self.get_all_languages():
             name = item["native"]
             if item["english"].lower() != item["native"].lower():

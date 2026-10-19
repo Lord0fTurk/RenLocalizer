@@ -29,6 +29,16 @@ _KEPT_ESCAPES = '{[%'
 _ESCAPE_SEQ_RE = re.compile(r'\\(.)', re.S)
 
 
+def _corrupt_tail(tail: Optional[str]) -> bool:
+    """True when a say "tail" swallowed part of the text.
+
+    Lines damaged by the old escaped-quote bug look like
+    's "Y trae los \\"resultados\\"" with you."': the leftover ' with you."'
+    is read as a "with" clause. A real clause never contains a quote.
+    """
+    return bool(tail) and ('"' in tail or "'" in tail)
+
+
 def _unescape_match(m: "re.Match[str]") -> str:
     c = m.group(1)
     if c in _UNESCAPE_MAP:
@@ -85,6 +95,10 @@ class TranslationFile:
     language: str
     entries: List[TranslationEntry] = field(default_factory=list)
     file_type: str = "mixed"  # 'strings', 'dialogue', 'mixed'
+    # Set while parsing when the file must be rewritten even if no new
+    # translation arrives: empty slots (Ren'Py would show an empty line) or
+    # lines damaged by the old escaped-quote bug.
+    needs_rewrite: bool = False
     
     def get_untranslated(self) -> List[TranslationEntry]:
         """Çevrilmemiş girişleri döndürür"""
@@ -139,17 +153,26 @@ class TLParser:
         # line was not recognised and its translation was never filled in.
         _say_tail = r'(?P<tail>(?:\s+(?:nointeract|with\s+[^\s(]+(?:\((?:[^()]|\([^()]*\))*\))?|id\s+\w+))*)'
 
+        # Body of a quoted Ren'Py string. An escaped quote (\") or any other
+        # backslash escape is consumed as a unit, so the text can only end at a
+        # real, unescaped quote. The previous lazy ".*?" stopped at the escaped
+        # quote in 's "Bring the \"results\" with you."', took ' with you."'
+        # as a "with" clause, and the rewrite produced
+        # 's "Y trae los \"resultados\"" with you."' -> Ren'Py parse error
+        # ("is not terminated with a newline"), reported on 2026-10-18.
+        _string_body = r'(?P<text>(?:\\.|(?!(?P=quote))[^\\])*)'
+
         # # character "text" - dialogue orijinal yorum satırı (karakterli)
-        self._dialogue_comment_re = re.compile(rf'^\s*#\s*{_speaker_pattern}\s+(?P<quote>["\'])(?P<text>.*?)(?P=quote){_say_tail}\s*$')
+        self._dialogue_comment_re = re.compile(rf'^\s*#\s*{_speaker_pattern}\s+(?P<quote>["\'])' + _string_body + rf'(?P=quote){_say_tail}\s*$')
 
         # # "text" - narrator orijinal yorum satırı (karaktersiz)
-        self._narrator_comment_re = re.compile(rf'^\s*#\s*(?P<quote>["\'])(?P<text>(?:(?!(?P=quote)).|\\.)*)(?P=quote){_say_tail}\s*$')
+        self._narrator_comment_re = re.compile(r'^\s*#\s*(?P<quote>["\'])' + _string_body + rf'(?P=quote){_say_tail}\s*$')
 
         # character "" veya character "text" - dialogue çeviri satırı
-        self._dialogue_line_re = re.compile(rf'^\s*{_speaker_pattern}\s+(?P<quote>["\'])(?P<text>.*?)(?P=quote){_say_tail}\s*$')
+        self._dialogue_line_re = re.compile(rf'^\s*{_speaker_pattern}\s+(?P<quote>["\'])' + _string_body + rf'(?P=quote){_say_tail}\s*$')
 
         # "" veya "text" - narrator çeviri satırı (karaktersiz)
-        self._narrator_line_re = re.compile(rf'^\s*(?P<quote>["\'])(?P<text>(?:(?!(?P=quote)).|\\.)*)(?P=quote){_say_tail}\s*$')
+        self._narrator_line_re = re.compile(r'^\s*(?P<quote>["\'])' + _string_body + rf'(?P=quote){_say_tail}\s*$')
         
         # Sadece # path.rpy:123 veya # game/path.rpy:123 formatı - kaynak yorum
         self._source_comment_re = re.compile(r'^\s*#\s*([^:]+:\d+)\s*$')
@@ -268,8 +291,10 @@ class TLParser:
         )
         
         # Parse entries
+        self._needs_rewrite = False
         entries = self._parse_all_entries(lines, file_path)
         tl_file.entries = entries
+        tl_file.needs_rewrite = bool(self._needs_rewrite)
         
         # Dosya tipini belirle
         string_count = sum(1 for e in entries if e.entry_type == 'string')
@@ -330,15 +355,7 @@ class TLParser:
             # Context comment (# context: screen:x)
             ctx_match = self._context_comment_re.match(stripped)
             if ctx_match:
-                # Add to current context for the next entry
-                # We store it transiently.
-                # Note: This implementation assumes context comment comes immediately before the entry
-                # or inside the block.
                 extra_ctx = ctx_match.group(1).strip()
-                # If we are in a block, we can't easily append to current_block_id (it's a string)
-                # But we can use it when creating the Entry.
-                # Let's verify if we need a list for current_context
-                # For now, let's just append it to a temporary list
                 if not hasattr(self, '_temp_context_list'):
                      self._temp_context_list = []
                 self._temp_context_list.append(extra_ctx)
@@ -366,6 +383,8 @@ class TLParser:
                     new_match = self._new_re.match(next_stripped)
                     if new_match:
                         new_text = self._unescape_string(new_match.group('text'))
+                        if not new_text.strip() and old_text.strip():
+                            self._needs_rewrite = True
                         i += 1
                 
                 if not self.should_skip_text(old_text):
@@ -403,6 +422,13 @@ class TLParser:
                         if dialogue_match:
                             char_name = dialogue_match.group('speaker')
                             translated_text = self._unescape_string(dialogue_match.group('text'))
+                            if _corrupt_tail(dialogue_match.group('tail')):
+                                # Damaged line: its "translation" was made from a
+                                # truncated source. Translate it again.
+                                translated_text = ""
+                                self._needs_rewrite = True
+                            elif not translated_text.strip() and original_text.strip():
+                                self._needs_rewrite = True
                             
                             if not self.should_skip_text(original_text):
                                 entry = TranslationEntry(
@@ -436,6 +462,11 @@ class TLParser:
                         
                         if narrator_line_match:
                             translated_text = self._unescape_string(narrator_line_match.group('text'))
+                            if _corrupt_tail(narrator_line_match.group('tail')):
+                                translated_text = ""
+                                self._needs_rewrite = True
+                            elif not translated_text.strip() and original_text.strip():
+                                self._needs_rewrite = True
                             
                             if not self.should_skip_text(original_text):
                                 entry = TranslationEntry(
@@ -565,6 +596,23 @@ class TLParser:
         return files
     
     @staticmethod
+    def _final_text(translated: Optional[str], original: str) -> str:
+        """Text written into a translation slot.
+
+        Ren'Py shows a translation slot literally: an empty ``e ""`` or
+        ``new ""`` displays an EMPTY line/button instead of the original
+        (renpy/translation StringTranslator.translate returns "" because it is
+        not None). An untranslated slot therefore keeps the source text, as
+        Ren'Py's own "Generate Translations" template does; the line stays in
+        the original language and is counted as not translated.
+        """
+        if translated and translated.strip():
+            return translated
+        if original and original.strip():
+            return original
+        return translated or ""
+
+    @staticmethod
     def _pick_translation(translations: Dict[str, str], translation_id: str,
                           original: str, existing: str) -> Optional[str]:
         """New text for one slot, or None to keep what is there.
@@ -632,7 +680,7 @@ class TLParser:
                         translated = self._pick_translation(translations, translation_id, old_text, existing_translated)
                         if translated is None:
                             translated = existing_translated
-                        escaped = self._escape_string(translated or "")
+                        escaped = self._escape_string(self._final_text(translated, old_text))
                         indent = len(next_line) - len(next_line.lstrip())
                         new_lines.append(' ' * indent + f'new "{escaped}"')
                         
@@ -657,12 +705,20 @@ class TLParser:
                     if dialogue_match:
                         char_name = dialogue_match.group('speaker')
                         existing_translated = self._unescape_string(dialogue_match.group('text'))
+                        tail = dialogue_match.group('tail') or ''
+                        if _corrupt_tail(tail):
+                            # Damaged by the old escaped-quote bug: the comment
+                            # line holds the real clauses and text.
+                            tail = comment_match.group('tail') or ''
+                            existing_translated = ""
                         translated = self._pick_translation(translations, translation_id, original_text, existing_translated)
                         if translated is None:
                             translated = existing_translated
-                        escaped = self._escape_string(translated or "")
+                        escaped = self._escape_string(self._final_text(translated, original_text))
                         indent = len(next_line) - len(next_line.lstrip())
-                        new_lines.append(' ' * indent + f'{char_name} "{escaped}"' + (dialogue_match.group('tail') or ''))
+                        new_lines.append(' ' * indent + f'{char_name} "{escaped}"' + tail)
+                    else:
+                        new_lines.append(next_line)
                     
                     i += 2
                     continue
@@ -680,12 +736,18 @@ class TLParser:
                     
                     if narrator_line_match:
                         existing_translated = self._unescape_string(narrator_line_match.group('text'))
+                        tail = narrator_line_match.group('tail') or ''
+                        if _corrupt_tail(tail):
+                            tail = narrator_match.group('tail') or ''
+                            existing_translated = ""
                         translated = self._pick_translation(translations, translation_id, original_text, existing_translated)
                         if translated is None:
                             translated = existing_translated
-                        escaped = self._escape_string(translated or "")
+                        escaped = self._escape_string(self._final_text(translated, original_text))
                         indent = len(next_line) - len(next_line.lstrip())
-                        new_lines.append(' ' * indent + f'"{escaped}"' + (narrator_line_match.group('tail') or ''))
+                        new_lines.append(' ' * indent + f'"{escaped}"' + tail)
+                    else:
+                        new_lines.append(next_line)
                     
                     i += 2
                     continue
@@ -741,9 +803,15 @@ class TLParser:
             if kind == 'string':
                 new_body = f'new "{escaped}"'
             elif kind == 'dialogue':
-                new_body = f'{dst_match.group("speaker")} "{escaped}"{dst_match.group("tail") or ""}'
+                tail = dst_match.group("tail") or ""
+                if _corrupt_tail(tail):
+                    tail = src_match.group("tail") or ""
+                new_body = f'{dst_match.group("speaker")} "{escaped}"{tail}'
             else:
-                new_body = f'"{escaped}"{dst_match.group("tail") or ""}'
+                tail = dst_match.group("tail") or ""
+                if _corrupt_tail(tail):
+                    tail = src_match.group("tail") or ""
+                new_body = f'"{escaped}"{tail}'
             lines[dst_idx] = indent + new_body + eol
         return '\n'.join(lines), failed
 
@@ -776,22 +844,43 @@ class TLParser:
 
 
 def get_translation_stats(tl_files: List[TranslationFile]) -> Dict:
-    """Çeviri istatistikleri"""
+    """Statistics of what the tl files really contain.
+
+    A slot only counts as translated when it holds text that differs from the
+    source. Ren'Py's template (and RenLocalizer's fallback for failed lines)
+    copies the source into the slot; such a line is still shown in the
+    original language, so it is reported as ``same_as_source`` instead of
+    "translated". Before 2026-10-18 every non-empty slot counted as
+    translated, which made a fresh SDK template look 100 % translated.
+
+    Keys:
+      total            every slot found in the files
+      translated       slot text differs from the source
+      same_as_source   slot repeats the source (names, "...", untranslated)
+      empty            slot is empty (Ren'Py would show an empty line)
+      untranslated     total - translated (kept for older callers)
+      progress         translated / total * 100
+    """
     total_entries = 0
     translated_entries = 0
-    untranslated_entries = 0
-    
+    same_entries = 0
+    empty_entries = 0
+
     for tl_file in tl_files:
         for entry in tl_file.entries:
             total_entries += 1
             if entry.needs_translation():
-                untranslated_entries += 1
+                empty_entries += 1
+            elif entry.is_source_copy():
+                same_entries += 1
             else:
                 translated_entries += 1
-    
+
     return {
         'total': total_entries,
         'translated': translated_entries,
-        'untranslated': untranslated_entries,
+        'same_as_source': same_entries,
+        'empty': empty_entries,
+        'untranslated': total_entries - translated_entries,
         'progress': (translated_entries / total_entries * 100) if total_entries > 0 else 0
     }

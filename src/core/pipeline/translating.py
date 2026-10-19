@@ -88,7 +88,156 @@ def validate_placeholders(original: str, translated: str) -> bool:
     return True
 
 
+# ── Text tag order ─────────────────────────────────────────────────────
+# '{{' is an escaped brace, not a tag (Ren'Py textsupport.tokenize).
+_TAG_TOKEN_RE = re.compile(r"\{\{|\{([^{}]*)\}")
+
+
+def _tag_events(text: str) -> List[Tuple[int, int, str, bool]]:
+    """(start, end, name, is_close) for every Ren'Py text tag in *text*."""
+    events = []
+    for match in _TAG_TOKEN_RE.finditer(text or ''):
+        body = match.group(1)
+        if body is None:
+            continue
+        body = body.strip()
+        if not body or body.startswith('#'):
+            continue
+        is_close = body.startswith('/')
+        name = (body[1:] if is_close else body).partition('=')[0].partition(':')[0].strip()
+        if name:
+            events.append((match.start(), match.end(), name, is_close))
+    return events
+
+
+def _paired_tag_names(original: str) -> set:
+    """Tags that the source closes, i.e. the ones Ren'Py keeps on its style stack."""
+    return {name for _, _, name, is_close in _tag_events(original) if is_close}
+
+
+def renpy_tag_order_problem(text: str, paired: Optional[set] = None) -> Optional[str]:
+    """Ren'Py's own rule (renpy.text.extras.check_text_tags) for *text*.
+
+    Returns 'unopened' for a close tag with nothing open, which Ren'Py
+    raises on when it shows the line ("closes a text tag that isn't
+    open"), 'misnested' for a close tag that does not close the most
+    recently opened one, or None.
+    """
+    if paired is None:
+        paired = _paired_tag_names(text)
+    stack: List[str] = []
+    for _, _, name, is_close in _tag_events(text):
+        if name not in paired:
+            continue
+        if not is_close:
+            stack.append(name)
+        elif not stack:
+            return 'unopened'
+        elif stack[-1] != name:
+            return 'misnested'
+        else:
+            stack.pop()
+    return None
+
+
+def _tag_order_breaks(original: str, translated: str) -> bool:
+    """True when *translated* has a tag-order error that *original* does not."""
+    paired = _paired_tag_names(original)
+    if not paired:
+        return False
+    source_problem = renpy_tag_order_problem(original, paired)
+    problem = renpy_tag_order_problem(translated, paired)
+    if problem is None:
+        return False
+    # A sloppy source may be misnested on its own; never accept a line
+    # that makes Ren'Py raise when the source does not.
+    return source_problem is None or (problem == 'unopened' and source_problem != 'unopened')
+
+
+def repair_renpy_tag_order(original: str, translated: str) -> str:
+    """Put text tags an engine swapped back into an order Ren'Py accepts.
+
+    When word order changes, engines can move a tag pair around the words:
+    "what we're {i}supposed{/i} to be doing" came back as
+    "... gereken {/i} şeyi{i}yapıyoruz". A close tag that comes before
+    its opener is swapped with that opener, so the pair wraps the words
+    the engine put between them, and spacing around the moved tags follows
+    the source. Anything else, or a result that is still wrong, returns
+    *translated* unchanged for the output guard to reject.
+    """
+    if not translated or '{' not in translated or '⟦' in original or '⟦' in translated:
+        return translated
+    if sorted(RENPY_TAG_RE.findall(original)) != sorted(RENPY_TAG_RE.findall(translated)):
+        return translated
+    if not _tag_order_breaks(original, translated):
+        return translated
+    paired = _paired_tag_names(original)
+
+    parts: List[List[Any]] = []   # [text, tag name or None, is_close]
+    pos = 0
+    for start, end, name, is_close in _tag_events(translated):
+        if start > pos:
+            parts.append([translated[pos:start], None, False])
+        parts.append([translated[start:end], name, is_close])
+        pos = end
+    if pos < len(translated):
+        parts.append([translated[pos:], None, False])
+    tags = [i for i, part in enumerate(parts) if part[1] in paired]
+
+    moved = set()
+    for _ in range(len(tags)):
+        stack: List[int] = []
+        bad = None
+        for i in tags:
+            if not parts[i][2]:
+                stack.append(i)
+            elif stack and parts[stack[-1]][1] == parts[i][1]:
+                stack.pop()
+            else:
+                bad = i
+                break
+        if bad is None:
+            break
+        if stack:
+            return translated  # misnested, not a swapped pair
+        opener = next((j for j in tags if j > bad and not parts[j][2] and parts[j][1] == parts[bad][1]), None)
+        if opener is None:
+            return translated
+        parts[bad][0], parts[opener][0] = parts[opener][0], parts[bad][0]
+        parts[bad][2], parts[opener][2] = False, True
+        moved.update((bad, opener))
+
+    def text_at(i):
+        return parts[i] if 0 <= i < len(parts) and parts[i][1] is None else None
+
+    for i in sorted(moved):
+        tag = parts[i][0]
+        before, after = text_at(i - 1), text_at(i + 1)
+        if not parts[i][2]:
+            # "{i} word" -> " {i}word"; keep a space before the tag if the source has one
+            if after is not None and after[0][:1].isspace():
+                after[0] = after[0].lstrip()
+                if before is not None and not before[0][-1:].isspace():
+                    before[0] += ' '
+            elif before is not None and before[0][-1:].isalnum() and (' ' + tag) in original:
+                before[0] += ' '
+        else:
+            # "word {/i}" -> "word{/i} "; keep a space after the tag if the source has one
+            if before is not None and before[0][-1:].isspace():
+                before[0] = before[0].rstrip()
+                if after is not None and not after[0][:1].isspace():
+                    after[0] = ' ' + after[0]
+            elif after is not None and after[0][:1].isalnum() and (tag + ' ') in original:
+                after[0] = ' ' + after[0]
+
+    repaired = ''.join(part[0] for part in parts)
+    if _tag_order_breaks(original, repaired):
+        return translated
+    return repaired
+
+
 def classify_translation_corruption(original: str, translated: str) -> Optional[str]:
+    from src.core.tag_structure import introduces_replacement_char
     orig = (original or '').strip()
     trans = (translated or '').strip()
     if not orig or not trans:
@@ -99,6 +248,8 @@ def classify_translation_corruption(original: str, translated: str) -> Optional[
         return 'placeholder_remnant'
     if HTML_LEAK_RE.search(trans):
         return 'html_leakage'
+    if introduces_replacement_char(orig, trans):
+        return 'replacement_char'
     if len(trans) > max(len(orig) * 4, len(orig) + 80):
         return 'length_inflation'
     if not validate_placeholders(original=orig, translated=trans):
@@ -108,6 +259,10 @@ def classify_translation_corruption(original: str, translated: str) -> Optional[
     if '\u27e6' not in orig and '\u27e7' not in orig:
         if sorted(RENPY_TAG_RE.findall(orig)) != sorted(RENPY_TAG_RE.findall(trans)):
             return 'renpy_tag_set_mismatch'
+        # Same tags in an order Ren'Py rejects: "{/i} word{i}" makes the game
+        # raise "closes a text tag that isn't open" when the line is shown.
+        if _tag_order_breaks(orig, trans):
+            return 'renpy_tag_order_mismatch'
         # v2.8.13: printf-style format specifiers must survive translation
         # intact — a dropped or mutated %-specifier breaks the game's
         # string formatting at runtime ("%d items" → TypeError). The same
@@ -166,6 +321,9 @@ def get_guard_reason_text(reason: str, config) -> str:
         'length_inflation': ('guard_reason_length_inflation', 'translated text expanded far beyond the source'),
         'placeholder_set_mismatch': ('guard_reason_placeholder_set_mismatch', 'placeholder structure changed'),
         'renpy_tag_set_mismatch': ('guard_reason_renpy_tag_set_mismatch', "Ren'Py text tags changed"),
+        'renpy_tag_order_mismatch': ('guard_reason_renpy_tag_order_mismatch', "Ren'Py text tags out of order"),
+        'renpy_tag_order_invalid': ('guard_reason_renpy_tag_order_invalid', "Ren'Py text tags were reordered or left unbalanced"),
+        'replacement_char': ('guard_reason_replacement_char', 'the output contains unreadable characters (U+FFFD)'),
         'printf_set_mismatch': ('guard_reason_printf_set_mismatch', 'printf-style format specifiers changed'),
     }
     key, default = reason_key_map.get(reason, ('guard_reason_unknown', (reason or 'suspicious translator output').replace('_', ' ')))
@@ -184,6 +342,7 @@ def sanitize_translation_for_output(
     record_guard_event_fn,
     line_number: int = 0,
 ) -> Tuple[str, Optional[str]]:
+    translated = repair_renpy_tag_order(original, translated)
     reason = classify_translation_corruption(original, translated)
     if reason is None:
         return translated, None
@@ -309,7 +468,12 @@ def get_effective_translation_batch_size(engine, config) -> int:
     from src.utils.config import get_effective_batch_size as _get_eff
     requested = get_requested_translation_batch_size(engine, config)
     if engine in (TranslationEngine.OPENAI, TranslationEngine.GEMINI, TranslationEngine.LOCAL_LLM):
-        return requested
+        # translate_batch() runs its chunks in parallel, up to ai_concurrency.
+        # A step of one chunk (ai_batch_size) left a single request in flight
+        # in scene/JSON/XML mode whatever the setting said (GitHub #21).
+        from src.core.ai_translator import ai_lines_per_request
+        concurrency = max(1, int(getattr(config.translation_settings, 'ai_concurrency', 1) or 1))
+        return max(requested, ai_lines_per_request(config, engine) * concurrency)
     return _get_eff(requested, engine)
 
 

@@ -59,10 +59,42 @@ except ImportError:
         return json.dumps(obj, ensure_ascii=False, indent=indent).encode("utf-8")
 
 
+def _decode_mostly_utf8(raw: bytes) -> Optional[str]:
+    """Decode a file that is UTF-8 except for a few lines (e.g. one line pasted
+    from a cp1252 editor) WITHOUT inventing U+FFFD.
+
+    Whole-file detection reported such files as UTF-8 and decoded them with
+    errors="replace": the bad bytes became "\ufffd" and the rewrite stored them
+    for good (e.g. "Actualmente \ufffd\ufffd[em_love] de 17.").
+    Here only the lines that are not valid UTF-8 are read as cp1252 (or
+    latin-1, which never fails). Returns None when most lines are not UTF-8
+    (then the file is in another encoding and detection decides).
+    """
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    lines = raw.split(b"\n")
+    bad = 0
+    out = []
+    for line in lines:
+        try:
+            out.append(line.decode("utf-8"))
+        except UnicodeDecodeError:
+            bad += 1
+            try:
+                out.append(line.decode("cp1252"))
+            except UnicodeDecodeError:
+                out.append(line.decode("latin-1"))
+    non_empty = sum(1 for line in lines if line.strip()) or 1
+    if bad == 0 or bad > max(1, non_empty // 5):
+        return None
+    return "\n".join(out)
+
+
 def read_text_safely(path: Path, preferred: Tuple[str, ...] = ("utf-8-sig", "utf-8")) -> Optional[str]:
     """
     Read file as text with tolerant fallbacks:
     - try preferred encodings first
+    - then line-by-line UTF-8 with cp1252 fallback for mostly-UTF-8 files
     - then chardet detection with errors='replace'
     Returns None on I/O failure.
     """
@@ -76,6 +108,10 @@ def read_text_safely(path: Path, preferred: Tuple[str, ...] = ("utf-8-sig", "utf
             return raw.decode(enc)
         except UnicodeDecodeError:
             continue
+
+    mixed = _decode_mostly_utf8(raw)
+    if mixed is not None:
+        return mixed
 
     detected = _detect_encoding(raw)
     enc = detected.get("encoding") or "utf-8"
@@ -134,8 +170,20 @@ def save_text_safely(path: Path, content: str, encoding: str = "utf-8-sig", newl
 def normalize_to_utf8_sig(path: Path) -> bool:
     """
     Rewrite file to UTF-8-SIG with LF newlines safely.
-    Returns True if rewrite succeeded.
+    Returns True only if the file was actually rewritten: files that are
+    already UTF-8-SIG with LF are left untouched (every tl file used to be
+    rewritten and counted as "normalized" on every run).
     """
+    try:
+        raw = Path(path).read_bytes()
+    except Exception:
+        return False
+    if raw.startswith(b"\xef\xbb\xbf") and b"\r" not in raw:
+        try:
+            raw[3:].decode("utf-8")
+            return False
+        except UnicodeDecodeError:
+            pass
     text = read_text_safely(path)
     if text is None:
         return False

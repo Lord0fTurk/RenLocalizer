@@ -1516,6 +1516,9 @@ def protect_renpy_syntax_xml(text: str) -> Tuple[str, Dict[str, str]]:
     return ''.join(out_parts), placeholders
 
 
+_ASCII_PH_RE = re.compile(r'__PH_([A-Za-z0-9]+)__')
+
+
 def restore_renpy_syntax_xml(text: str, placeholders: Dict[str, str]) -> str:
     """
     XML taglerini temizler ve orijinalleri geri yükler.
@@ -1554,5 +1557,8 @@ def restore_renpy_syntax_xml(text: str, placeholders: Dict[str, str]) -> str:
         if next_cur == cur:
             break
         cur = next_cur
-    
+
+    # The AI prompts show __PH_0__-style examples. A model that answers
+    # <ph id="0">...</ph> in that style must not cost the line its translation.
+    cur = _ASCII_PH_RE.sub(lambda m: placeholders.get(m.group(1), m.group(0)), cur)
     return cur

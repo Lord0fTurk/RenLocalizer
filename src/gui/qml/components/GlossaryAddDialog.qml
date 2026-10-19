@@ -14,14 +14,6 @@ Dialog {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     standardButtons: Dialog.NoButton
 
-    property color clrCard: "#151A29"
-    property color clrAccent: "#00F2FE"
-    property color clrAccent2: "#4FACFE"
-    property color clrTxt: "#F3F4F6"
-    property color clrTxt2: "#9CA3AF"
-    property color clrTxtDim: "#6B7280"
-    property color clrInput: "#0E121D"
-    property color clrCardBorder: "#242C44"
 
     function cleanTitle(str) {
         if (typeof root !== "undefined" && root.cleanModalTitle) {
@@ -40,13 +32,13 @@ Dialog {
     }
 
     Overlay.modal: Rectangle {
-        color: Qt.rgba(0, 0, 0, 0.65)
+        color: Theme.alpha(Theme.black, 0.65)
     }
 
     background: Rectangle {
-        color: addGlossaryDialog.clrCard
+        color: Theme.card
         radius: 18
-        border.color: Qt.rgba(0, 242, 254, 0.45)
+        border.color: Theme.alpha(Theme.accent, 0.45)
         border.width: 1.5
         clip: true
 
@@ -57,8 +49,8 @@ Dialog {
             height: 3
             gradient: Gradient {
                 orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: addGlossaryDialog.clrAccent }
-                GradientStop { position: 1.0; color: addGlossaryDialog.clrAccent2 }
+                GradientStop { position: 0.0; color: Theme.accent }
+                GradientStop { position: 1.0; color: Theme.accent2 }
             }
         }
     }
@@ -75,13 +67,14 @@ Dialog {
 
             Rectangle {
                 width: 40; height: 40; radius: 20
-                color: Qt.rgba(0, 242, 254, 0.15)
-                border.color: addGlossaryDialog.clrAccent; border.width: 1.5
+                color: Theme.alpha(Theme.accent, 0.15)
+                border.color: Theme.accent; border.width: 1.5
 
-                Label {
+                Icon {
                     anchors.centerIn: parent
-                    text: "📖"
-                    font.pixelSize: 20
+                    glyph: Icons.bookPlus
+                    size: 20
+                    color: Theme.accent
                 }
             }
 
@@ -91,17 +84,18 @@ Dialog {
 
                 Label {
                     text: appBackend.uiTrigger, addGlossaryDialog.cleanTitle(appBackend.getTextWithDefault("glossary_dlg_add_title", "Sözlüğe Terim Ekle"))
-                    font.pixelSize: 17; font.bold: true; color: addGlossaryDialog.clrTxt
+                    font.pixelSize: 18; font.bold: true; color: Theme.txt
                 }
                 Label {
                     text: appBackend.uiTrigger, appBackend.getTextWithDefault("glossary_dlg_add_sub", "Çevrilmeyecek veya özel çevrilecek terim tanımlayın")
-                    font.pixelSize: 12; color: addGlossaryDialog.clrTxt2
+                    font.pixelSize: 12; color: Theme.txt2
                 }
             }
 
+            Item { Layout.fillWidth: true }
             Rectangle {
                 width: 30; height: 30; radius: 15
-                color: closeGlossaryMa.containsMouse ? Qt.rgba(255, 255, 255, 0.12) : "transparent"
+                color: closeGlossaryMa.containsMouse ? Theme.alpha(Theme.white, 0.12) : "transparent"
                 scale: closeGlossaryMa.pressed ? 0.92 : (closeGlossaryMa.containsMouse ? 1.08 : 1.0)
                 Behavior on scale { NumberAnimation { duration: 120 } }
                 Behavior on color { ColorAnimation { duration: 120 } }
@@ -109,7 +103,7 @@ Dialog {
                 Label {
                     anchors.centerIn: parent
                     text: "✕"
-                    color: closeGlossaryMa.containsMouse ? "#FFFFFF" : addGlossaryDialog.clrTxtDim
+                    color: closeGlossaryMa.containsMouse ? Theme.white : Theme.txtDim
                     font.pixelSize: 13; font.bold: true
                 }
                 MouseArea {
@@ -128,8 +122,8 @@ Dialog {
             Layout.rightMargin: 20
             Layout.preferredHeight: glossaryFormCol.implicitHeight + 24
             radius: 12
-            color: addGlossaryDialog.clrInput
-            border.color: Qt.rgba(255, 255, 255, 0.08)
+            color: Theme.input
+            border.color: Theme.alpha(Theme.white, 0.08)
             border.width: 1
 
             ColumnLayout {
@@ -140,7 +134,7 @@ Dialog {
 
                 Label {
                     text: appBackend.uiTrigger, appBackend.getTextWithDefault("glossary_dlg_source", "Kaynak (Orijinal Metin):")
-                    color: addGlossaryDialog.clrTxt
+                    color: Theme.txt
                     font.pixelSize: 12
                     font.bold: true
                 }
@@ -148,14 +142,14 @@ Dialog {
                     id: addGlossarySource
                     Layout.fillWidth: true
                     height: 38
-                    color: addGlossaryDialog.clrTxt
-                    placeholderText: appBackend.getTextWithDefault("glossary_dlg_source_placeholder", "e.g. Character Name")
-                    placeholderTextColor: addGlossaryDialog.clrTxtDim
+                    color: Theme.txt
+                    placeholderText: (text.length === 0 && !activeFocus) ? (appBackend.getTextWithDefault("glossary_dlg_source_placeholder", "e.g. Character Name")) : ""
+                    placeholderTextColor: Theme.txtDim
                     font.pixelSize: 13
                     background: Rectangle {
                         radius: 8
-                        color: "#080B12"
-                        border.color: addGlossarySource.activeFocus ? addGlossaryDialog.clrAccent : addGlossaryDialog.clrCardBorder
+                        color: Theme.inputDeep
+                        border.color: addGlossarySource.activeFocus ? Theme.accent : Theme.cardBorder
                         border.width: addGlossarySource.activeFocus ? 1.5 : 1
                         Behavior on border.color { ColorAnimation { duration: 150 } }
                     }
@@ -163,7 +157,7 @@ Dialog {
 
                 Label {
                     text: appBackend.uiTrigger, appBackend.getTextWithDefault("glossary_dlg_target", "Hedef (Çeviri):")
-                    color: addGlossaryDialog.clrTxt
+                    color: Theme.txt
                     font.pixelSize: 12
                     font.bold: true
                 }
@@ -171,14 +165,14 @@ Dialog {
                     id: addGlossaryTarget
                     Layout.fillWidth: true
                     height: 38
-                    color: addGlossaryDialog.clrTxt
-                    placeholderText: appBackend.getTextWithDefault("glossary_dlg_target_placeholder", "e.g. Karakter Adı")
-                    placeholderTextColor: addGlossaryDialog.clrTxtDim
+                    color: Theme.txt
+                    placeholderText: (text.length === 0 && !activeFocus) ? (appBackend.getTextWithDefault("glossary_dlg_target_placeholder", "e.g. Karakter Adı")) : ""
+                    placeholderTextColor: Theme.txtDim
                     font.pixelSize: 13
                     background: Rectangle {
                         radius: 8
-                        color: "#080B12"
-                        border.color: addGlossaryTarget.activeFocus ? addGlossaryDialog.clrAccent : addGlossaryDialog.clrCardBorder
+                        color: Theme.inputDeep
+                        border.color: addGlossaryTarget.activeFocus ? Theme.accent : Theme.cardBorder
                         border.width: addGlossaryTarget.activeFocus ? 1.5 : 1
                         Behavior on border.color { ColorAnimation { duration: 150 } }
                     }
@@ -202,14 +196,14 @@ Dialog {
 
                 background: Rectangle {
                     radius: 10
-                    color: parent.down ? Qt.rgba(255, 255, 255, 0.08) : (parent.hovered ? Qt.rgba(255, 255, 255, 0.05) : "transparent")
-                    border.color: parent.hovered ? addGlossaryDialog.clrTxt2 : addGlossaryDialog.clrCardBorder
+                    color: parent.down ? Theme.alpha(Theme.white, 0.08) : (parent.hovered ? Theme.alpha(Theme.white, 0.05) : "transparent")
+                    border.color: parent.hovered ? Theme.txt2 : Theme.cardBorder
                     border.width: 1
                     Behavior on border.color { ColorAnimation { duration: 140 } }
                 }
                 contentItem: Label {
                     text: appBackend.uiTrigger, appBackend.getTextWithDefault("dialog_cancel", "İptal")
-                    color: addGlossaryDialog.clrTxt2
+                    color: Theme.txt2
                     font.pixelSize: 13
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -233,21 +227,20 @@ Dialog {
 
                 background: Rectangle {
                     radius: 10
-                    color: addGlossarySubmitBtn.hovered ? "#38BDF8" : addGlossaryDialog.clrAccent
+                    color: addGlossarySubmitBtn.hovered ? Theme.accentHover : Theme.accent
                     gradient: Gradient {
                         orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0; color: addGlossarySubmitBtn.hovered ? "#38BDF8" : "#00F2FE" }
-                        GradientStop { position: 1.0; color: addGlossarySubmitBtn.hovered ? "#00F2FE" : "#4FACFE" }
+                        GradientStop { position: 0.0; color: addGlossarySubmitBtn.hovered ? Theme.accentHover : Theme.accent }
+                        GradientStop { position: 1.0; color: addGlossarySubmitBtn.hovered ? Theme.accent : Theme.accent2 }
                     }
                     Behavior on color { ColorAnimation { duration: 140 } }
                 }
-                contentItem: Label {
-                    text: appBackend.uiTrigger, "➕ " + appBackend.getTextWithDefault("glossary_add_btn", "Ekle")
-                    color: "#080C14"
+                contentItem: IconLabel {
+                    glyph: Icons.plus
+                    text: appBackend.uiTrigger, appBackend.getTextWithDefault("glossary_add_btn", "Ekle")
+                    color: Theme.textOnAccent
                     font.bold: true
                     font.pixelSize: 13
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
                 }
             }
         }

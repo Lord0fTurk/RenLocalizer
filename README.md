@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases"><img alt="Latest Release" src="https://img.shields.io/badge/Release-v2.8.19-blue?style=for-the-badge&logo=github"></a>
+  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases"><img alt="Latest Release" src="https://img.shields.io/badge/Release-v2.8.20-blue?style=for-the-badge&logo=github"></a>
   <a href="https://www.patreon.com/cw/LordOfTurk"><img alt="Support on Patreon" src="https://img.shields.io/badge/Support-Patreon-ff424d?style=for-the-badge&logo=patreon"></a>
 </p>
 
@@ -173,6 +173,7 @@ RenLocalizer builds on the work of these open-source projects:
 | :--- | :---: | :--- |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT | Built-in GGUF runner — the official `llama-server` build is downloaded on request (verified by SHA256) and managed by RenLocalizer; it is **not** bundled with the release. |
 | [PyQt6 / Qt](https://www.qt.io) | GPL-3.0 / LGPL-3.0 | Desktop interface (QML) |
+| [Lucide](https://lucide.dev) | ISC | Interface icons — a subset of the Lucide icon font ships in `src/gui/qml/fonts/` together with its license (`LUCIDE_LICENSE.txt`). |
 | [unrpa](https://github.com/Lattyware/unrpa) | GPL-3.0 | `.rpa` archive extraction |
 | [rpycdec](https://pypi.org/project/rpycdec/) | MIT | Complementary `.rpyc` decompilation |
 | [rich](https://github.com/Textualize/rich) | MIT | CLI interface |

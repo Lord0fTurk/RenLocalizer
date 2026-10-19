@@ -399,13 +399,14 @@ class TranslationPipeline(QObject):
         auto_unren: bool = True,
         use_proxy: bool = False,
         include_deep_scan: bool = False,
-        include_rpyc: bool = False,
+        include_rpyc: Optional[bool] = None,
         is_tl_mode: bool = False,
     ):
         """Pipeline ayarlarını yapılandır."""
         self.is_tl_mode = is_tl_mode
         self.include_deep_scan = include_deep_scan
-        self.include_rpyc = include_rpyc
+        self._rpyc_explicit = include_rpyc is not None
+        self.include_rpyc = bool(include_rpyc) if include_rpyc is not None else False
         from src.utils.path_manager import unwrap_mac_app
         game_exe_path = unwrap_mac_app(game_exe_path)  # Game.app → Contents/Resources/autorun
         self.game_exe_path = game_exe_path
@@ -453,6 +454,7 @@ class TranslationPipeline(QObject):
     def run(self):
         self.is_running = True
         self.should_stop = False
+        self._stop_reason = None
         try:
             if getattr(self, "is_tl_mode", False):
                 result = self.translate_existing_tl(
@@ -485,11 +487,148 @@ class TranslationPipeline(QObject):
             self.is_running = False
 
     def _stopped_result(self):
+        # A run halted by the engine's quota/rate limit used to be reported as
+        # "Stopped by the user" (same in RenLocalizer's "Detenido por el usuario").
+        if getattr(self, '_stop_reason', None) == 'quota':
+            engine_name = getattr(self.engine, 'value', str(self.engine))
+            return PipelineResult(
+                success=False,
+                message=self.config.get_log_text('error_api_quota', engine=engine_name),
+                stage=PipelineStage.ERROR,
+                error=self.config.get_log_text('error_api_quota', engine=engine_name),
+            )
         return PipelineResult(
             success=False,
             message=self.config.get_ui_text("pipeline_user_stopped"),
             stage=PipelineStage.IDLE
         )
+
+    # ---- shared helpers for both translation flows ----
+
+    def _collect_entries_to_translate(self, tl_files):
+        """Entries whose slot is empty or still a copy of the source.
+
+        Ren'Py's SDK template and RenLocalizer's fallback for failed lines keep
+        the source text in the slot, so those lines are retried on every run
+        (cache hits make repeats cheap). Only the TL-folder flow did this
+        before; the game flow counted them as already translated.
+        """
+        entries: List[TranslationEntry] = []
+        source_copies = 0
+        for tl_file in tl_files:
+            for e in tl_file.entries:
+                if e.needs_translation():
+                    entries.append(e)
+                elif e.is_source_copy():
+                    e.translated_text = ""
+                    entries.append(e)
+                    source_copies += 1
+        return entries, source_copies
+
+    def _save_tl_files(self, tl_files, translations):
+        """Write translations; also rewrite files that need repair.
+
+        Files with empty slots are rewritten even when no new translation
+        arrived, so no ``e ""`` / ``new ""`` (an empty line in game) is left.
+        Returns (saved_count, failed_paths).
+        """
+        saved_count = 0
+        failed_paths: List[str] = []
+        syntax_issues: List[str] = []
+        for tl_file in tl_files:
+            file_translations: Dict[str, str] = {}
+            for entry in tl_file.entries:
+                tid = getattr(entry, 'translation_id', '') or TLParser.make_translation_id(
+                    entry.file_path, entry.line_number, entry.original_text
+                )
+                if tid in translations:
+                    file_translations[tid] = translations[tid]
+                elif entry.original_text in translations:
+                    file_translations[entry.original_text] = translations[entry.original_text]
+
+            needs_rewrite = getattr(tl_file, 'needs_rewrite', False) or any(
+                e.needs_translation() for e in tl_file.entries
+            )
+            if not file_translations and not needs_rewrite:
+                continue
+            success = self.tl_parser.save_translations(tl_file, file_translations)
+            if success:
+                saved_count += 1
+                try:
+                    for tid in file_translations.keys():
+                        self.diagnostic_report.mark_written(tl_file.file_path, tid)
+                except Exception:
+                    self.logger.debug("diagnostic mark_written loop failed")
+                syntax_issues.extend(self._quote_balance_issues(tl_file.file_path))
+            else:
+                failed_paths.append(tl_file.file_path)
+        self._last_syntax_issues = syntax_issues
+        if syntax_issues:
+            # A file Ren'Py cannot parse stops the whole game at start-up
+            # ("is not terminated with a newline"); say so now, with the line.
+            sample = "; ".join(syntax_issues[:5])
+            self.log_message.emit("error", self.config.get_log_text(
+                'log_tl_syntax_check_failed',
+                "Syntax check: {count} written line(s) have unbalanced quotes and would stop Ren'Py: {sample}",
+                count=len(syntax_issues), sample=sample,
+            ))
+        if failed_paths:
+            self.log_message.emit("error", self.config.get_log_text(
+                'log_tl_save_failed',
+                "{count} translation file(s) could not be written; their lines keep the previous content: {sample}",
+                count=len(failed_paths), sample=", ".join(os.path.basename(p) for p in failed_paths[:5]),
+            ))
+        return saved_count, failed_paths
+
+    @staticmethod
+    def _quote_balance_issues(file_path):
+        """Lines of a written tl file whose quotes do not balance (E050 of the
+        bundled linter). Cheap line scan; returns "file:line" strings."""
+        try:
+            from src.tools.renpy_lint import RenpyTranslationLint
+            report = RenpyTranslationLint().lint_file(file_path)
+        except Exception:
+            return []
+        return [f"{os.path.basename(i.file)}:{i.line}" for i in report.issues if getattr(i, 'code', '') == 'E050']
+
+    def _completion_stats(self, tl_files_updated, failed_paths=None, stopped=False):
+        """File statistics + what happened in this run; sets ``partial``."""
+        stats = get_translation_stats(tl_files_updated)
+        counts = dict(getattr(self, '_run_counts', None) or {})
+        stats.update({k: v for k, v in counts.items() if k != 'stopped'})
+        failed_writes = len(failed_paths or [])
+        pending = int(counts.get('engine_failed', 0)) + int(counts.get('guard_blocked', 0))
+        syntax_issues = list(getattr(self, '_last_syntax_issues', None) or [])
+        stats['pending'] = pending
+        stats['write_failures'] = failed_writes
+        stats['syntax_issues'] = len(syntax_issues)
+        stats['stopped'] = bool(stopped or counts.get('stopped'))
+        stats['partial'] = bool(pending or failed_writes or stats.get('empty') or stats['stopped'] or syntax_issues)
+        return stats
+
+    def _completion_message(self, stats, saved_count):
+        total = stats.get('total', 0)
+        translated = stats.get('translated', 0)
+        pct = (translated / total * 100.0) if total else 0.0
+        message = self.config.get_log_text(
+            'pipeline_completed_detail',
+            "Translated lines: {translated}/{total} ({pct}%). Same as the original: {same} "
+            "(names, sounds, symbols or lines without a valid translation). "
+            "Failed in this run: {failed} (engine) + {blocked} (blocked by the syntax guard). "
+            "Files saved: {saved}.",
+            translated=translated, total=total, pct=f"{pct:.1f}",
+            same=stats.get('same_as_source', 0), failed=stats.get('engine_failed', 0),
+            blocked=stats.get('guard_blocked', 0), saved=saved_count,
+        )
+        if stats.get('partial'):
+            message = self.config.get_log_text(
+                'pipeline_completed_partial_prefix',
+                "Translation finished with pending lines.",
+            ) + " " + message
+        if getattr(self, '_stop_reason', None) == 'quota':
+            engine_name = getattr(getattr(self, 'engine', None), 'value', str(getattr(self, 'engine', '')))
+            message = self.config.get_log_text('error_api_quota', engine=engine_name) + " " + message
+        return message
 
     def _protect_glossary_terms(self, text, xml_mode=False):
         return protect_glossary_terms(text, self.config, xml_mode=xml_mode)
@@ -692,19 +831,10 @@ class TranslationPipeline(QObject):
                 f"Reopened stale TL entries for retranslation: {reopened_counts['reopened']} "
                 f"(corrupted={reopened_counts['corrupted']}, unchanged_core_ui={reopened_counts['unchanged_core_ui']})")
 
-        all_entries: List[TranslationEntry] = []
-        source_copies = 0
-        for tl_file in tl_files:
-            for e in tl_file.entries:
-                if e.needs_translation():
-                    all_entries.append(e)
-                elif e.is_source_copy():
-                    # Ren'Py SDK templates copy the source into the translation
-                    # slot; treating that as "done" meant TL mode translated
-                    # nothing on a freshly generated tl/<lang> folder.
-                    e.translated_text = ""
-                    all_entries.append(e)
-                    source_copies += 1
+        # Ren'Py SDK templates copy the source into the translation slot;
+        # treating that as "done" meant TL mode translated nothing on a
+        # freshly generated tl/<lang> folder.
+        all_entries, source_copies = self._collect_entries_to_translate(tl_files)
         if source_copies:
             self.log_message.emit("info", self.config.get_log_text(
                 'log_tl_source_copies',
@@ -727,7 +857,9 @@ class TranslationPipeline(QObject):
             self.logger.debug("Failed to extract error attributes from translation error")
 
         if not all_entries:
-            stats = get_translation_stats(tl_files)
+            self._run_counts = {}
+            saved_count, failed_paths = self._save_tl_files(tl_files, {})
+            stats = self._completion_stats(tl_files, failed_paths)
             if game_dir and game_dir.exists():
                 self._create_language_init_file(str(game_dir))
                 self._manage_runtime_hook()
@@ -744,6 +876,9 @@ class TranslationPipeline(QObject):
         self._set_stage(PipelineStage.TRANSLATING, self.config.get_ui_text("stage_translating"))
         translations = self._translate_entries(all_entries)
 
+        if self.should_stop and not translations:
+            return self._stopped_result()
+
         if not translations and getattr(self, '_sent_for_translation', 1):
             return PipelineResult(
                 success=False,
@@ -752,27 +887,7 @@ class TranslationPipeline(QObject):
             )
 
         self._set_stage(PipelineStage.SAVING, self.config.get_ui_text("stage_saving"))
-        saved_count = 0
-        for tl_file in tl_files:
-            file_translations: Dict[str, str] = {}
-            for entry in tl_file.entries:
-                tid = getattr(entry, 'translation_id', '') or TLParser.make_translation_id(
-                    entry.file_path, entry.line_number, entry.original_text
-                )
-                if tid in translations:
-                    file_translations[tid] = translations[tid]
-                elif entry.original_text in translations:
-                    file_translations[entry.original_text] = translations[entry.original_text]
-
-            if file_translations:
-                success = self.tl_parser.save_translations(tl_file, file_translations)
-                if success:
-                    saved_count += 1
-                    try:
-                        for tid in file_translations.keys():
-                            self.diagnostic_report.mark_written(tl_file.file_path, tid)
-                    except Exception:
-                        self.logger.debug("diagnostic mark_written loop failed")
+        saved_count, failed_paths = self._save_tl_files(tl_files, translations)
 
         _old_seg_path2 = os.path.join(str(lang_dir), '_rl_segments.rpy')
         if os.path.exists(_old_seg_path2):
@@ -789,7 +904,7 @@ class TranslationPipeline(QObject):
             tl_file for tl_file in self.tl_parser.parse_directory(str(tl_path), lang_dir.name)
             if not self._is_generated_export_file(tl_file.file_path)
         ]
-        stats = get_translation_stats(tl_files_updated)
+        stats = self._completion_stats(tl_files_updated, failed_paths)
 
         if game_dir and game_dir.exists():
             self._create_language_init_file(str(game_dir))
@@ -802,9 +917,11 @@ class TranslationPipeline(QObject):
             self.logger.debug(f"Failed to write translation reports: {exc}")
 
         self._set_stage(PipelineStage.COMPLETED, self.config.get_ui_text("stage_completed"))
-        summary = self.config.get_ui_text("pipeline_completed_summary").replace("{translated}", str(len(translations))).replace("{saved}", str(saved_count))
+        # Was: len(translations), which counts every dict key (id AND text) and
+        # a Turkish literal "Normalize edilen tl dosyasi".
+        summary = self._completion_message(stats, saved_count)
         if self.normalize_count:
-            summary += f" | Normalize edilen tl dosyasi: {self.normalize_count}"
+            summary += f" | {self.config.get_log_text('log_tl_normalized', count=self.normalize_count)}"
 
         return PipelineResult(
             success=True,
@@ -982,7 +1099,10 @@ class TranslationPipeline(QObject):
 
         rpyc_only_mode = False
         if not has_rpy and has_rpyc:
-            rpyc_enabled = getattr(self.config.translation_settings, 'enable_rpyc_reader', False) or getattr(self, 'include_rpyc', False)
+            if getattr(self, '_rpyc_explicit', False):
+                rpyc_enabled = bool(getattr(self, 'include_rpyc', False))
+            else:
+                rpyc_enabled = getattr(self.config.translation_settings, 'enable_rpyc_reader', False) or getattr(self, 'include_rpyc', False)
             if rpyc_enabled:
                 self.log_message.emit("info", self.config.get_ui_text("pipeline_rpyc_only_mode", "RPYC-only mode: No .rpy files found, reading .rpyc files directly."))
                 rpyc_only_mode = True
@@ -1048,6 +1168,8 @@ class TranslationPipeline(QObject):
             self._run_deep_scan(tl_files, game_dir, tl_path, renpy_lang)
 
         _unrpyc_enabled = getattr(self.config.translation_settings, 'enable_unrpyc_decompile', True)
+        if getattr(self, '_rpyc_explicit', False) and not getattr(self, 'include_rpyc', False):
+            _unrpyc_enabled = False
         if _unrpyc_enabled and has_rpyc:
             self._run_unrpyc_decompile_scan(has_rpyc, game_dir, tl_path, renpy_lang, tl_files)
 
@@ -1074,9 +1196,13 @@ class TranslationPipeline(QObject):
                 f"Reopened stale TL entries for retranslation: {reopened_counts['reopened']} "
                 f"(corrupted={reopened_counts['corrupted']}, unchanged_core_ui={reopened_counts['unchanged_core_ui']})")
 
-        all_entries = []
-        for tl_file in tl_files:
-            all_entries.extend(tl_file.get_untranslated())
+        all_entries, _source_copies = self._collect_entries_to_translate(tl_files)
+        if _source_copies:
+            self.log_message.emit("info", self.config.get_log_text(
+                'log_tl_source_copies',
+                "{count} lines still contain the original text (Ren'Py template) and will be translated.",
+                count=_source_copies,
+            ))
 
         use_native = getattr(self.config.translation_settings, 'output_mode', 'strings') == 'native'
         if use_native:
@@ -1130,7 +1256,9 @@ class TranslationPipeline(QObject):
             self.logger.debug(f"Coverage warning collection failed: {exc}")
 
         if not all_entries:
-            stats = get_translation_stats(tl_files)
+            self._run_counts = {}
+            _saved, _failed_paths = self._save_tl_files(tl_files, {})
+            stats = self._completion_stats(tl_files, _failed_paths)
             if game_dir and os.path.isdir(game_dir):
                 self._create_language_init_file(str(game_dir))
                 lang_dir = os.path.join(tl_path, renpy_lang)
@@ -1171,8 +1299,11 @@ class TranslationPipeline(QObject):
         self._set_stage(PipelineStage.TRANSLATING, self.config.get_ui_text("stage_translating"))
         translations = self._translate_entries(all_entries)
 
-        if self.should_stop:
+        if self.should_stop and not translations:
             return self._stopped_result()
+        # Stopped after some lines were translated: save them (and fill empty
+        # slots with the source) instead of discarding the work; the result is
+        # reported as partial through _completion_stats().
 
         if not translations and getattr(self, '_sent_for_translation', 1):
             return PipelineResult(
@@ -1183,27 +1314,7 @@ class TranslationPipeline(QObject):
 
         self._set_stage(PipelineStage.SAVING, self.config.get_ui_text("stage_saving"))
 
-        saved_count = 0
-        for tl_file in tl_files:
-            file_translations = {}
-            for entry in tl_file.entries:
-                tid = getattr(entry, 'translation_id', '') or TLParser.make_translation_id(
-                    entry.file_path, entry.line_number, entry.original_text
-                )
-                if tid in translations:
-                    file_translations[tid] = translations[tid]
-                elif entry.original_text in translations:
-                    file_translations[entry.original_text] = translations[entry.original_text]
-
-            if file_translations:
-                success = self.tl_parser.save_translations(tl_file, file_translations)
-                if success:
-                    saved_count += 1
-                    try:
-                        for tid in file_translations.keys():
-                            self.diagnostic_report.mark_written(tl_file.file_path, tid)
-                    except Exception:
-                        self.logger.debug("diagnostic mark_written loop failed (tl_parser path)")
+        saved_count, failed_paths = self._save_tl_files(tl_files, translations)
 
         try:
             rpyc_removed = 0
@@ -1236,7 +1347,7 @@ class TranslationPipeline(QObject):
             tl_file for tl_file in self.tl_parser.parse_directory(tl_path, self.target_language)
             if not self._is_generated_export_file(tl_file.file_path)
         ]
-        stats = get_translation_stats(tl_files_updated)
+        stats = self._completion_stats(tl_files_updated, failed_paths)
 
         report_dir = tl_dir
         if game_dir and os.path.isdir(game_dir):
@@ -1261,7 +1372,7 @@ class TranslationPipeline(QObject):
             self.logger.debug(f"Failed to write translation reports: {exc}")
 
         self._set_stage(PipelineStage.COMPLETED, self.config.get_ui_text("stage_completed"))
-        summary = self.config.get_ui_text("pipeline_completed_summary").replace("{translated}", str(len(translations))).replace("{saved}", str(saved_count))
+        summary = self._completion_message(stats, saved_count)
         if self.normalize_count:
             summary += f" | {self.config.get_log_text('log_tl_normalized', count=self.normalize_count)}"
 
@@ -1463,7 +1574,8 @@ class TranslationPipeline(QObject):
                 settings = self.config.translation_settings
                 if not use_deep:
                     use_deep = getattr(settings, 'enable_deep_scan', getattr(settings, 'use_deep_scan', True))
-                use_rpyc = True
+                if not getattr(self, '_rpyc_explicit', False):
+                    use_rpyc = getattr(settings, 'enable_rpyc_reader', True)
 
             self.log_message.emit("info", self.config.get_log_text('log_scanning_source_rpy'))
             parse_results = parser.extract_combined(
@@ -1564,44 +1676,45 @@ class TranslationPipeline(QObject):
                 self._deep_scan_completed_in_generating = True
             existing_texts = {e.get('text') for e in source_texts if e.get('text')}
 
-            try:
-                from src.utils.unrpyc_adapter import UnrpycAdapter
-                from pathlib import Path
-                adapter = UnrpycAdapter()
-                if adapter.available:
-                    _skip_dirs = {"tl", "renpy", "common", "cache", "__pycache__"}
-                    orphaned_rpyc = []
-                    for root, dirs, files in os.walk(game_dir):
-                        dirs[:] = [d for d in dirs if d not in _skip_dirs]
-                        for f in files:
-                            fl = f.lower()
-                            if fl.endswith(('.rpyc', '.rpymc')):
-                                base_stem = f[:-5]
-                                src_ext = '.rpym' if fl.endswith('.rpymc') else '.rpy'
-                                src_path = os.path.join(root, base_stem + src_ext)
-                                if not os.path.exists(src_path):
-                                    orphaned_rpyc.append(Path(root) / f)
+            if use_rpyc:
+                try:
+                    from src.utils.unrpyc_adapter import UnrpycAdapter
+                    from pathlib import Path
+                    adapter = UnrpycAdapter()
+                    if adapter.available:
+                        _skip_dirs = {"tl", "renpy", "common", "cache", "__pycache__"}
+                        orphaned_rpyc = []
+                        for root, dirs, files in os.walk(game_dir):
+                            dirs[:] = [d for d in dirs if d not in _skip_dirs]
+                            for f in files:
+                                fl = f.lower()
+                                if fl.endswith(('.rpyc', '.rpymc')):
+                                    base_stem = f[:-5]
+                                    src_ext = '.rpym' if fl.endswith('.rpymc') else '.rpy'
+                                    src_path = os.path.join(root, base_stem + src_ext)
+                                    if not os.path.exists(src_path):
+                                        orphaned_rpyc.append(Path(root) / f)
 
-                    if orphaned_rpyc:
-                        self.log_message.emit('info', self.config.get_log_text('log_orphaned_rpyc_found', count=len(orphaned_rpyc)))
-                        with adapter.decompile_to_temp(orphaned_rpyc, Path(game_dir)) as (tmpdir, decompiled):
-                            if decompiled:
-                                self.log_message.emit('info', self.config.get_log_text('log_decompiled_parsing_extra', count=len(decompiled)))
-                                decomp_results = parser.extract_combined(
-                                    tmpdir, include_rpy=True, include_rpyc=False,
-                                    include_deep_scan=use_deep, recursive=True,
-                                )
-                                for file_path, entries in decomp_results.items():
-                                    for entry in entries:
-                                        text = entry.get('text')
-                                        if text and text not in existing_texts:
-                                            entry['file_path'] = str(file_path)
-                                            source_texts.append(entry)
-                                            existing_texts.add(text)
-                    else:
-                        self.log_message.emit('debug', self.config.get_log_text('log_unrpyc_redundant_skipped'))
-            except Exception as exc:
-                self.log_message.emit('warning', self.config.get_log_text('log_decompile_merge_failed', error=str(exc)))
+                        if orphaned_rpyc:
+                            self.log_message.emit('info', self.config.get_log_text('log_orphaned_rpyc_found', count=len(orphaned_rpyc)))
+                            with adapter.decompile_to_temp(orphaned_rpyc, Path(game_dir)) as (tmpdir, decompiled):
+                                if decompiled:
+                                    self.log_message.emit('info', self.config.get_log_text('log_decompiled_parsing_extra', count=len(decompiled)))
+                                    decomp_results = parser.extract_combined(
+                                        tmpdir, include_rpy=True, include_rpyc=False,
+                                        include_deep_scan=use_deep, recursive=True,
+                                    )
+                                    for file_path, entries in decomp_results.items():
+                                        for entry in entries:
+                                            text = entry.get('text')
+                                            if text and text not in existing_texts:
+                                                entry['file_path'] = str(file_path)
+                                                source_texts.append(entry)
+                                                existing_texts.add(text)
+                        else:
+                            self.log_message.emit('debug', self.config.get_log_text('log_unrpyc_redundant_skipped'))
+                except Exception as exc:
+                    self.log_message.emit('warning', self.config.get_log_text('log_decompile_merge_failed', error=str(exc)))
 
             if not source_texts:
                 self.log_message.emit("warning", self.config.get_log_text('no_translatable_texts'))
@@ -1838,6 +1951,14 @@ class TranslationPipeline(QObject):
         skipped = len(entries) - len(filtered_entries)
         if skipped:
             self.log_message.emit("debug", self.config.get_log_text('placeholder_excluded', count=skipped))
+        # What really happened to every entry of this run:
+        # the completion report and the "partial" flag are built from these
+        # numbers instead of assuming that a finished run translated everything.
+        self._run_counts = {
+            'requested': len(entries), 'filtered_technical': skipped, 'sent': len(filtered_entries),
+            'cache_hits': 0, 'engine_failed': 0, 'guard_blocked': 0, 'unchanged_by_engine': 0,
+            'stopped': False,
+        }
 
         entries = filtered_entries
         total = len(entries)
@@ -1869,12 +1990,15 @@ class TranslationPipeline(QObject):
                     'Single-segment mode: each line is sent as its own request (no batching, no neighbouring-line context).',
                 ))
             else:
-                self.log_message.emit("debug", f"AI engine detected, using batch size: {batch_size}")
-            if not _single_mode and batch_size > 1000:
+                self.log_message.emit("debug", (
+                    f"AI engine detected, {batch_size} lines per step "
+                    f"(ai_concurrency={getattr(self.config.translation_settings, 'ai_concurrency', 1)})"
+                ))
+            if not _single_mode and requested_batch_size > 1000:
                 self.log_message.emit("info", self.config.get_log_text(
                     'log_ai_batch_large_notice',
                     'Large AI batch size in use ({batch}). This may increase token usage, latency, or API failure risk.',
-                    batch=batch_size,
+                    batch=requested_batch_size,
                 ))
         else:
             self._emit_batch_size_cap_notice_if_needed(requested_batch_size, batch_size)
@@ -2198,6 +2322,7 @@ class TranslationPipeline(QObject):
             # Unresolved -> needs actual translation engine call
             pending_entries.append(entry)
 
+        self._run_counts['cache_hits'] = cache_hit_count
         if cache_hit_count > 0:
             self.log_message.emit("info", self.config.get_log_text(
                 'log_cache_fast_path_hits',
@@ -2600,6 +2725,7 @@ class TranslationPipeline(QObject):
                                 # and retry didn't produce a new translation, keep exact original capitalization.
                                 restored = _orig_clean
 
+                        before_guard = restored
                         restored, blocked_reason = self._sanitize_translation_for_output(
                             original=entry.original_text, translated=restored,
                             file_path=entry.file_path, translation_id=tid, line_number=entry.line_number,
@@ -2610,6 +2736,7 @@ class TranslationPipeline(QObject):
                             else (getattr(self.engine, 'value', str(self.engine)), api_source_lang, api_target_lang, entry.original_text)
                         )
                         if blocked_reason is not None:
+                            self._run_counts['guard_blocked'] += 1
                             guard_reason_text = self._get_guard_reason_text(blocked_reason)
                             self.log_message.emit("guard", self.config.get_log_text(
                                 'log_guard_reverted_translation',
@@ -2621,8 +2748,8 @@ class TranslationPipeline(QObject):
                                 loop.run_until_complete(self.translation_manager.cache_remove(cache_key))
                             except Exception:
                                 pass
-                        elif was_normalized or retry_recovered:
-                            # Update cache entry with cleaned or normalized translation
+                        elif was_normalized or retry_recovered or restored != before_guard:
+                            # Update cache entry with cleaned, normalized or tag-order repaired translation
                             try:
                                 loop.run_until_complete(self.translation_manager.cache_update_text(cache_key, restored))
                             except Exception:
@@ -2710,10 +2837,14 @@ class TranslationPipeline(QObject):
                 if stop_quota:
                     engine_name = getattr(self.engine, 'value', str(self.engine))
                     self.log_message.emit("error", self.config.get_log_text('error_api_quota', engine=engine_name))
+                    self._stop_reason = 'quota'
                     self.should_stop = True
                     break
                 self.emit_log("info", self.config.get_log_text('translated_count', current=current, total=total))
 
+            self._run_counts['engine_failed'] = len(failed_entries)
+            self._run_counts['unchanged_by_engine'] = unchanged_count
+            self._run_counts['stopped'] = bool(self.should_stop)
             if unchanged_count:
                 self.log_message.emit("warning", self.config.get_log_text('unchanged_count_msg', unchanged=unchanged_count, total=len(translations)))
                 for s in sample_logs:

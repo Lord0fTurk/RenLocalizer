@@ -55,8 +55,10 @@ def test_gui_accepts_the_app(tmp_path):
 
     app, autorun = _mac_game(tmp_path)
     logs = []
+    refreshed = []
     stub = SimpleNamespace(
         _project_path="", _tl_mode=False, _tl_source_path="",
+        refreshProjectInfo=lambda: refreshed.append(True),
         config=SimpleNamespace(
             app_settings=SimpleNamespace(last_input_directory=""),
             save_config=lambda: None,
@@ -71,6 +73,7 @@ def test_gui_accepts_the_app(tmp_path):
     assert AppBackend._tool_game_dir(stub) == str(autorun / "game")
     assert any(str(autorun) in msg for _, msg in logs)
     assert not any(level == "warning" for level, _ in logs)
+    assert refreshed  # the dashboard project card reads the new game
 
 
 def test_pipeline_and_cli_accept_the_app(tmp_path):

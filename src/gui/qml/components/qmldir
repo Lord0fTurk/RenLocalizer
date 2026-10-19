@@ -2,3 +2,8 @@ ToastNotification 1.0 ToastNotification.qml
 GlossaryAddDialog 1.0 GlossaryAddDialog.qml
 WarningDialog 1.0 WarningDialog.qml
 EditorPage 1.0 EditorPage.qml
+singleton Theme 1.0 Theme.qml
+singleton Icons 1.0 Icons.qml
+Icon 1.0 Icon.qml
+IconLabel 1.0 IconLabel.qml
+PageHeader 1.0 PageHeader.qml

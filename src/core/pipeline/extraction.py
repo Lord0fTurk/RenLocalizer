@@ -913,7 +913,10 @@ def _extract_tl_string_entries(strings_text: str) -> List[Tuple[str, str]]:
     entries = []
     current_entry_lines: List[str] = []
     current_old: Optional[str] = None
-    old_re = re.compile(r'^\s*old\s+(?P<q>["\'])(?P<text>(?:(?!(?P=q)).|\\.)*)(?P=q)')
+    # Escape-aware body: the text ends only at an unescaped quote. The old
+    # "(?:(?!q).|\\.)*" stopped at the first escaped quote, so 'Say \"hi\" now'
+    # and 'Say \"bye\" later' looked identical and the second was dropped.
+    old_re = re.compile(r'^\s*old\s+(?P<q>["\'])(?P<text>(?:\\.|(?!(?P=q))[^\\])*)(?P=q)')
 
     for line in lines:
         stripped = line.strip()
@@ -991,7 +994,7 @@ def merge_tl_content(existing_content: str, new_content: str, renpy_lang: str) -
     else:
         existing_strings_part = existing_content
 
-    for m in re.finditer(r'^\s*old\s+(?P<q>["\'])(?P<text>(?:(?!(?P=q)).|\\.)*)(?P=q)', existing_strings_part, re.MULTILINE):
+    for m in re.finditer(r'^\s*old\s+(?P<q>["\'])(?P<text>(?:\\.|(?!(?P=q))[^\\])*)(?P=q)', existing_strings_part, re.MULTILINE):
         existing_olds.add(m.group('text'))
 
     # Deduplicate new string entries: omit entries whose old text is already in existing_content

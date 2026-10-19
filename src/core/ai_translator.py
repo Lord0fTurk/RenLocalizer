@@ -162,6 +162,27 @@ def profile_prefers_single_segment(config_manager) -> bool:
     return detect_model_profile(model_name) == "hy_mt2"
 
 
+GEMINI_MAX_BATCH_ITEMS = 50
+
+
+def ai_lines_per_request(config_manager, engine=None) -> int:
+    """How many lines one batched AI request carries.
+
+    translate_batch() cuts its chunks by this rule; the pipeline uses it to
+    hand the engine ai_concurrency chunks per step so they run in parallel.
+    Gemini always sends XML chunks of ai_batch_size (max 50); the OpenAI-
+    compatible engines use the scene block size in scene mode.
+    """
+    ts = getattr(config_manager, "translation_settings", None)
+    batch_size = max(1, int(getattr(ts, "ai_batch_size", 15) or 15))
+    if engine == TranslationEngine.GEMINI:
+        return min(batch_size, GEMINI_MAX_BATCH_ITEMS)
+    batch_format = str(getattr(ts, "ai_batch_format", "scene") or "scene").strip().lower()
+    if batch_format == "scene":
+        return max(1, int(getattr(ts, "ai_scene_batch_size", 15) or 15))
+    return batch_size
+
+
 def resolve_model_profile(config_manager, model_name: Optional[str]) -> Optional[str]:
     """Resolve the effective model profile from config + autodetection.
 
@@ -1134,10 +1155,7 @@ class AsyncBaseAITranslator(BaseTranslator):
         if self.config_manager and hasattr(self.config_manager, "translation_settings"):
             ts = self.config_manager.translation_settings
             batch_format = getattr(ts, "ai_batch_format", "scene") or "scene"
-            if batch_format == "scene":
-                effective_chunk_size = getattr(ts, "ai_scene_batch_size", 15) or 15
-            else:
-                effective_chunk_size = getattr(ts, "ai_batch_size", self._batch_size) or self._batch_size
+            effective_chunk_size = ai_lines_per_request(self.config_manager, self._engine)
 
         # Chunk into batches of effective_chunk_size
         chunks: List[List[Tuple[int, TranslationRequest]]] = []
@@ -1527,6 +1545,14 @@ class OpenAITranslator(AsyncBaseAITranslator):
         if config_manager:
             batch_size = getattr(config_manager.translation_settings, "ai_batch_size", 20)
 
+        semaphore_count = kwargs.get("semaphore_count")
+        if semaphore_count is None and config_manager and hasattr(config_manager, "translation_settings"):
+            semaphore_count = getattr(config_manager.translation_settings, "ai_concurrency", None)
+        try:
+            semaphore_count = max(1, int(semaphore_count)) if semaphore_count is not None else 5
+        except (TypeError, ValueError):
+            semaphore_count = 5
+
         super().__init__(
             api_key=api_key,
             proxy_manager=proxy_manager,
@@ -1535,7 +1561,7 @@ class OpenAITranslator(AsyncBaseAITranslator):
             base_url=resolved_base_url,
             timeout=timeout,
             batch_size=batch_size,
-            semaphore_count=5,
+            semaphore_count=semaphore_count,
         )
         self._engine = TranslationEngine.OPENAI
 
@@ -1787,7 +1813,7 @@ class GeminiTranslator(BaseTranslator):
             else getattr(ts_settings, 'ai_max_tokens', AI_DEFAULT_MAX_TOKENS)
         )
         self._batch_size: int = min(
-            batch_size or getattr(ts_settings, 'ai_batch_size', 15), 50
+            batch_size or getattr(ts_settings, 'ai_batch_size', 15), GEMINI_MAX_BATCH_ITEMS
         )
 
         super().__init__(
@@ -1797,7 +1823,13 @@ class GeminiTranslator(BaseTranslator):
         )
         self._model: str = model_name
         self._engine = TranslationEngine.GEMINI
-        self._semaphore_count: int = max(1, int(kwargs.get('semaphore_count', 3) or 3))
+        raw_sem = kwargs.get('semaphore_count')
+        if raw_sem is None and ts_settings is not None:
+            raw_sem = getattr(ts_settings, 'ai_concurrency', None)
+        try:
+            self._semaphore_count: int = max(1, int(raw_sem)) if raw_sem is not None else 3
+        except (TypeError, ValueError):
+            self._semaphore_count = 3
         self._semaphore: Optional[asyncio.Semaphore] = None
 
         if _GEMINI_MODE == "google_genai" and genai is not None:

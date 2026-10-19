@@ -8,7 +8,6 @@ Item {
     id: page
 
     // The main window; colors come from its palette.
-    property var ui
     property string pendingLanguage: ""
 
     function t(key, fallback) {
@@ -24,6 +23,31 @@ Item {
             editorBackend.applyEdit(transArea.text)
     }
 
+    // Warning for the text being typed; the row itself is updated when the
+    // edit is committed (moving to another line, saving, filtering...).
+    property string liveProblem: ""
+
+    // Ctrl+Enter: keep the edit and move to the next line (next page at the end).
+    function selectNext() {
+        commitPending()
+        var rows = editorBackend.rows
+        var id = editorBackend.selected.id
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].id !== id)
+                continue
+            if (i + 1 < rows.length) {
+                editorBackend.select(rows[i + 1].id)
+                rowList.positionViewAtIndex(i + 1, ListView.Contain)
+            } else if (editorBackend.page < editorBackend.pageCount) {
+                editorBackend.setPage(editorBackend.page + 1)
+                rowList.positionViewAtBeginning()
+            }
+            break
+        }
+        transArea.forceActiveFocus()
+        transArea.cursorPosition = transArea.length
+    }
+
     function openLanguage(name) {
         if (!name || name === editorBackend.language && editorBackend.loaded)
             return
@@ -37,10 +61,10 @@ Item {
     }
 
     function statusColor(row) {
-        if (row.problem) return ui.clrWarn
-        if (row.modified) return ui.clrAccent
-        if (row.status === "translated") return ui.clrSuccess
-        return ui.clrTxtDim
+        if (row.problem) return Theme.warn
+        if (row.modified) return Theme.accent
+        if (row.status === "translated") return Theme.success
+        return Theme.txtDim
     }
 
     function start() {
@@ -63,7 +87,14 @@ Item {
         target: editorBackend
         function onSelectedChanged() {
             transArea.text = editorBackend.selected.translated || ""
+            page.liveProblem = editorBackend.selected.problemText || ""
         }
+    }
+
+    Timer {
+        id: liveCheckTimer
+        interval: 300
+        onTriggered: page.liveProblem = editorBackend.selected.id === undefined ? "" : editorBackend.problemFor(transArea.text)
     }
 
     component Chip: Rectangle {
@@ -74,8 +105,8 @@ Item {
         implicitHeight: 28
         implicitWidth: chipText.implicitWidth + 22
         radius: 14
-        color: active ? Qt.rgba(tint.r, tint.g, tint.b, 0.22) : Qt.rgba(tint.r, tint.g, tint.b, 0.08)
-        border.color: Qt.rgba(tint.r, tint.g, tint.b, active ? 0.8 : 0.3)
+        color: active ? Theme.alpha(tint, 0.22) : Theme.alpha(tint, 0.08)
+        border.color: Theme.alpha(tint, active ? 0.8 : 0.3)
         Label {
             id: chipText
             anchors.centerIn: parent
@@ -91,8 +122,9 @@ Item {
     // emphasised buttons get a coloured border and label, the rest stay neutral.
     component ActionButton: Button {
         id: actionButton
-        property color tint: ui.clrAccent
+        property color tint: Theme.accent
         property bool emphasized: true
+        property string glyph: ""
         implicitHeight: 34
         // Material adds 6px insets above and below; the app's buttons use none.
         topInset: 0; bottomInset: 0
@@ -100,19 +132,18 @@ Item {
         opacity: enabled ? 1.0 : 0.5
         background: Rectangle {
             radius: 8
-            color: actionButton.down ? ui.clrCardHover : (actionButton.hovered && actionButton.enabled ? ui.clrCardHover : ui.clrInput)
+            color: actionButton.down ? Theme.cardHover : (actionButton.hovered && actionButton.enabled ? Theme.cardHover : Theme.input)
             border.color: actionButton.emphasized ? actionButton.tint
-                        : (actionButton.hovered && actionButton.enabled ? ui.clrAccent : ui.clrCardBorder)
+                        : (actionButton.hovered && actionButton.enabled ? Theme.accent : Theme.cardBorder)
             border.width: 1
             Behavior on border.color { ColorAnimation { duration: 150 } }
         }
-        contentItem: Label {
+        contentItem: IconLabel {
+            glyph: actionButton.glyph
             text: actionButton.text
-            color: actionButton.emphasized ? actionButton.tint : ui.clrTxt
+            color: actionButton.emphasized ? actionButton.tint : Theme.txt
             font.pixelSize: 11
             font.bold: actionButton.emphasized
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
         }
     }
 
@@ -124,15 +155,15 @@ Item {
         font.pixelSize: 12
         background: Rectangle {
             radius: 8
-            color: ui.clrInput
-            border.color: combo.hovered || combo.visualFocus ? ui.clrAccent : ui.clrCardBorder
+            color: Theme.input
+            border.color: combo.hovered || combo.visualFocus ? Theme.accent : Theme.cardBorder
             border.width: 1
             Behavior on border.color { ColorAnimation { duration: 150 } }
         }
         contentItem: Label {
             leftPadding: 12; rightPadding: 30
             text: combo.displayText
-            color: combo.enabled ? ui.clrTxt : ui.clrTxtDim
+            color: combo.enabled ? Theme.txt : Theme.txtDim
             font.pixelSize: 12
             elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter
@@ -141,10 +172,10 @@ Item {
             width: combo.width
             contentItem: Label {
                 text: modelData
-                color: combo.highlightedIndex === index ? ui.clrAccent : ui.clrTxt
+                color: combo.highlightedIndex === index ? Theme.accent : Theme.txt
                 font.pixelSize: 12; leftPadding: 12; elide: Text.ElideRight
             }
-            background: Rectangle { color: hovered ? Qt.rgba(0, 0.95, 1, 0.12) : "transparent" }
+            background: Rectangle { color: hovered ? Theme.alpha(Theme.accent, 0.12) : "transparent" }
         }
         popup: Popup {
             y: combo.height + 4
@@ -158,7 +189,7 @@ Item {
                 currentIndex: combo.highlightedIndex
                 ScrollBar.vertical: ScrollBar {}
             }
-            background: Rectangle { color: ui.clrCard; radius: 8; border.color: ui.clrCardBorder; border.width: 1 }
+            background: Rectangle { color: Theme.card; radius: 8; border.color: Theme.cardBorder; border.width: 1 }
         }
     }
 
@@ -170,21 +201,21 @@ Item {
         property string icon: ""
         implicitHeight: 34
         radius: 8
-        color: ui.clrInput
-        border.color: inputField.activeFocus ? ui.clrAccent : ui.clrCardBorder
+        color: Theme.input
+        border.color: inputField.activeFocus ? Theme.accent : Theme.cardBorder
         border.width: 1
         Behavior on border.color { ColorAnimation { duration: 150 } }
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 10; anchors.rightMargin: 10
             spacing: 8
-            Label { visible: inputBox.icon.length > 0; text: inputBox.icon; font.pixelSize: 12; color: ui.clrTxtDim }
+            Icon { visible: inputBox.icon.length > 0; glyph: inputBox.icon; size: 14; color: Theme.txtDim }
             TextInput {
                 id: inputField
                 Layout.fillWidth: true
                 font.pixelSize: 12
-                color: ui.clrTxt
-                selectionColor: Qt.rgba(0, 0.95, 1, 0.35)
+                color: Theme.txt
+                selectionColor: Theme.alpha(Theme.accent, 0.35)
                 selectByMouse: true
                 clip: true
                 verticalAlignment: TextInput.AlignVCenter
@@ -192,7 +223,7 @@ Item {
                     anchors.fill: parent
                     verticalAlignment: Text.AlignVCenter
                     text: inputBox.placeholder
-                    color: ui.clrTxtDim
+                    color: Theme.txtDim
                     font.pixelSize: 12
                     elide: Text.ElideRight
                     visible: !inputField.text && !inputField.activeFocus
@@ -200,30 +231,20 @@ Item {
             }
             Label {
                 visible: inputField.text.length > 0
-                text: "✕"; color: ui.clrTxtDim; font.pixelSize: 10
+                text: "✕"; color: Theme.txtDim; font.pixelSize: 10
                 MouseArea { anchors.fill: parent; anchors.margins: -4; cursorShape: Qt.PointingHandCursor; onClicked: inputField.text = "" }
             }
         }
     }
 
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 14
-        spacing: 10
-
-        // ── Header ───────────────────────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 10
-            ColumnLayout {
-                spacing: 0
-                Label { text: page.t("editor_title", "Translation Editor"); color: ui.clrTxt; font.pixelSize: 18; font.bold: true }
-                Label {
-                    text: editorBackend.gameName ? editorBackend.gameName : page.t("editor_subtitle", "Edit the translations in the game's tl folder line by line")
-                    color: ui.clrTxt2; font.pixelSize: 12
-                }
-            }
-            Item { Layout.fillWidth: true }
+    PageHeader {
+        id: editorHeader
+        anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+        maxContentWidth: 100000 // çalışma sayfası: tam genişlik
+        glyph: Icons.squarePen
+        title: page.t("editor_title", "Translation Editor")
+        subtitle: editorBackend.gameName ? editorBackend.gameName : page.t("editor_subtitle", "Edit the translations in the game's tl folder line by line")
+        actions: [
             ThemedCombo {
                 id: langCombo
                 objectName: "editorLanguageCombo"
@@ -232,43 +253,74 @@ Item {
                 enabled: !editorBackend.busy && count > 0
                 currentIndex: Math.max(0, editorBackend.languages.indexOf(editorBackend.language))
                 onActivated: page.openLanguage(currentText)
-            }
+            },
             ActionButton {
                 emphasized: false
-                text: "⟳ " + page.t("editor_reload", "Reload")
+                glyph: Icons.refreshCw
+                text: page.t("editor_reload", "Reload")
                 enabled: !editorBackend.busy
                 onClicked: { page.commitPending(); page.start(); if (editorBackend.loaded) editorBackend.reload() }
-            }
+            },
             ActionButton {
-                tint: ui.clrSuccess
-                text: "💾 " + page.t("editor_save", "Save") + (editorBackend.stats.modified ? " (" + editorBackend.stats.modified + ")" : "")
+                tint: Theme.success
+                glyph: Icons.save
+                text: page.t("editor_save", "Save") + (editorBackend.stats.modified ? " (" + editorBackend.stats.modified + ")" : "")
                 enabled: editorBackend.loaded && !editorBackend.busy && !editorBackend.locked
                 onClicked: { page.commitPending(); editorBackend.save() }
             }
-        }
+        ]
+    }
+
+    ColumnLayout {
+        anchors.top: editorHeader.bottom; anchors.topMargin: 14
+        anchors.bottom: parent.bottom; anchors.bottomMargin: 14
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: editorHeader.contentWidth
+        spacing: 10
 
         // ── Notices ──────────────────────────────────────────────────
         Rectangle {
             Layout.fillWidth: true
             visible: editorBackend.locked
             implicitHeight: 34; radius: 8
-            color: ui.clrWarnDim; border.color: ui.clrWarn
-            Label {
+            color: Theme.warnDim; border.color: Theme.warn
+            IconLabel {
                 anchors.centerIn: parent
-                text: "🔒 " + page.t("editor_locked", "A translation is running; the editor is read-only until it finishes.")
-                color: ui.clrWarn; font.pixelSize: 12
+                glyph: Icons.lock
+                text: page.t("editor_locked", "A translation is running; the editor is read-only until it finishes.")
+                color: Theme.warn; font.pixelSize: 12
             }
         }
-        Label {
+        // Empty state, styled like the glossary's
+        Rectangle {
             Layout.fillWidth: true
+            Layout.topMargin: 6
+            Layout.preferredHeight: 180
             visible: !editorBackend.busy && editorBackend.languages.length === 0
-            text: page.t("editor_no_languages", "No tl folder found for the selected game. Select a game and run a translation first.")
-            color: ui.clrTxt2; font.pixelSize: 13; wrapMode: Text.WordWrap
+            radius: 14; color: Theme.card; border.color: Theme.cardBorder; border.width: 1
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: parent.width - 48
+                spacing: 10
+                Icon { glyph: Icons.squarePen; size: 36; color: Theme.txtDim; Layout.alignment: Qt.AlignHCenter }
+                Label {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    text: page.t("editor_no_languages", "No tl folder found for the selected game. Select a game and run a translation first.")
+                    color: Theme.txt2; font.pixelSize: 13; font.bold: true; wrapMode: Text.WordWrap
+                }
+            }
         }
         BusyIndicator {
             Layout.alignment: Qt.AlignHCenter
             visible: editorBackend.busy && !editorBackend.loaded
             running: visible
+        }
+        // The row list is the only item that takes the spare height; while it
+        // is hidden this keeps the header and the notices at the top.
+        Item {
+            Layout.fillHeight: true
+            visible: !editorBackend.loaded
         }
 
         // ── Stats and filters ────────────────────────────────────────
@@ -277,31 +329,31 @@ Item {
             visible: editorBackend.loaded
             spacing: 8
             Chip {
-                tint: ui.clrTxt2
+                tint: Theme.txt2
                 label: page.t("editor_status_all", "All") + "  " + (editorBackend.stats.total || 0)
                 active: editorBackend.statusFilter === "all"
                 onClicked: { page.commitPending(); editorBackend.setStatusFilter("all") }
             }
             Chip {
-                tint: ui.clrTxtDim
+                tint: Theme.txtDim
                 label: page.t("editor_status_untranslated", "Untranslated") + "  " + ((editorBackend.stats.empty || 0) + (editorBackend.stats.source_copy || 0))
                 active: editorBackend.statusFilter === "untranslated"
                 onClicked: { page.commitPending(); editorBackend.setStatusFilter("untranslated") }
             }
             Chip {
-                tint: ui.clrSuccess
+                tint: Theme.success
                 label: page.t("editor_status_translated", "Translated") + "  " + Math.max(0, (editorBackend.stats.total || 0) - (editorBackend.stats.empty || 0) - (editorBackend.stats.source_copy || 0))
                 active: editorBackend.statusFilter === "translated"
                 onClicked: { page.commitPending(); editorBackend.setStatusFilter("translated") }
             }
             Chip {
-                tint: ui.clrAccent
+                tint: Theme.accent
                 label: page.t("editor_status_modified", "Unsaved") + "  " + (editorBackend.stats.modified || 0)
                 active: editorBackend.statusFilter === "modified"
                 onClicked: { page.commitPending(); editorBackend.setStatusFilter("modified") }
             }
             Chip {
-                tint: ui.clrWarn
+                tint: Theme.warn
                 label: page.t("editor_status_warnings", "Warnings") + "  " + (editorBackend.stats.warnings || 0)
                 active: editorBackend.statusFilter === "warnings"
                 onClicked: { page.commitPending(); editorBackend.setStatusFilter("warnings") }
@@ -317,7 +369,7 @@ Item {
                 id: searchField
                 Layout.fillWidth: true
                 Layout.preferredHeight: 36
-                icon: "🔍"
+                icon: Icons.search
                 placeholder: page.t("editor_search_placeholder", "Search original, translation or speaker")
                 onTextChanged: searchTimer.restart()
                 Timer {
@@ -347,7 +399,8 @@ Item {
             ActionButton {
                 emphasized: false
                 Layout.preferredHeight: 36
-                text: "⇄ " + page.t("editor_replace", "Replace")
+                glyph: Icons.replace
+                text: page.t("editor_replace", "Replace")
                 enabled: !editorBackend.locked
                 onClicked: { page.commitPending(); replacePopup.open() }
             }
@@ -360,8 +413,8 @@ Item {
             Layout.minimumHeight: 160
             visible: editorBackend.loaded
             radius: 10
-            color: ui.clrCard
-            border.color: ui.clrCardBorder
+            color: Theme.card
+            border.color: Theme.cardBorder
 
             ListView {
                 id: rowList
@@ -375,7 +428,7 @@ Item {
                     height: 50
                     radius: 6
                     readonly property bool current: editorBackend.selected.id === modelData.id
-                    color: current ? Qt.rgba(0, 0.95, 1, 0.10) : (rowMouse.containsMouse ? ui.clrCardHover : "transparent")
+                    color: current ? Theme.alpha(Theme.accent, 0.10) : (rowMouse.containsMouse ? Theme.cardHover : "transparent")
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 10; anchors.rightMargin: 10
@@ -384,7 +437,7 @@ Item {
                         Label {
                             Layout.preferredWidth: 90
                             text: modelData.speaker || (modelData.kind === "string" ? "UI" : "—")
-                            color: ui.clrTxt2; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight
+                            color: Theme.txt2; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -392,32 +445,37 @@ Item {
                             Label {
                                 Layout.fillWidth: true
                                 text: modelData.original
-                                color: ui.clrTxt2; font.pixelSize: 12; elide: Text.ElideRight; textFormat: Text.PlainText
+                                color: Theme.txt2; font.pixelSize: 12; elide: Text.ElideRight; textFormat: Text.PlainText
                             }
                             Label {
                                 Layout.fillWidth: true
                                 text: modelData.translated || "—"
-                                color: modelData.status === "translated" ? ui.clrTxt : ui.clrTxtDim
+                                color: modelData.status === "translated" ? Theme.txt : Theme.txtDim
                                 font.pixelSize: 13; elide: Text.ElideRight; textFormat: Text.PlainText
                             }
                         }
                         Label {
                             text: modelData.file + ":" + modelData.line
-                            color: ui.clrTxtDim; font.pixelSize: 11
+                            color: Theme.txtDim; font.pixelSize: 11
                         }
                     }
                     MouseArea {
                         id: rowMouse
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: { page.commitPending(); editorBackend.select(modelData.id) }
+                        onClicked: {
+                            var target = index
+                            page.commitPending()
+                            editorBackend.select(modelData.id)
+                            rowList.positionViewAtIndex(target, ListView.Contain)
+                        }
                     }
                 }
                 Label {
                     anchors.centerIn: parent
                     visible: rowList.count === 0
                     text: page.t("editor_empty", "No lines match the filters.")
-                    color: ui.clrTxtDim
+                    color: Theme.txtDim
                 }
             }
         }
@@ -429,7 +487,7 @@ Item {
             spacing: 8
             Label {
                 text: editorBackend.totalCount + " " + page.t("editor_lines", "lines")
-                color: ui.clrTxtDim; font.pixelSize: 12
+                color: Theme.txtDim; font.pixelSize: 12
             }
             Item { Layout.fillWidth: true }
             ActionButton {
@@ -440,7 +498,7 @@ Item {
             }
             Label {
                 text: editorBackend.page + " / " + editorBackend.pageCount
-                color: ui.clrTxt2; font.pixelSize: 12
+                color: Theme.txt2; font.pixelSize: 12
             }
             ActionButton {
                 emphasized: false
@@ -453,11 +511,16 @@ Item {
         // ── Detail ───────────────────────────────────────────────────
         Rectangle {
             Layout.fillWidth: true
+            // 290 when there is room; on short windows it gives way down to 200
+            // instead of pushing its buttons out of the page.
+            Layout.fillHeight: true
             Layout.preferredHeight: 290
+            Layout.maximumHeight: 290
+            Layout.minimumHeight: 200
             visible: editorBackend.loaded && editorBackend.selected.id !== undefined
             radius: 10
-            color: ui.clrCard
-            border.color: editorBackend.selected.problem ? ui.clrWarn : ui.clrCardBorder
+            color: Theme.card
+            border.color: page.liveProblem ? Theme.warn : Theme.cardBorder
 
             ColumnLayout {
                 anchors.fill: parent
@@ -469,26 +532,26 @@ Item {
                     spacing: 10
                     Label {
                         text: editorBackend.selected.speaker || (editorBackend.selected.kind === "string" ? page.t("editor_kind_string", "Interface text") : page.t("editor_narrator", "Narrator"))
-                        color: ui.clrAccent; font.bold: true; font.pixelSize: 13
+                        color: Theme.accent; font.bold: true; font.pixelSize: 13
                     }
                     Label {
                         Layout.fillWidth: true
                         text: (editorBackend.selected.file || "") + ":" + (editorBackend.selected.line || "")
                               + (editorBackend.selected.sourceRef ? "   ←  " + editorBackend.selected.sourceRef : "")
-                        color: ui.clrTxtDim; font.pixelSize: 11; elide: Text.ElideRight
+                        color: Theme.txtDim; font.pixelSize: 11; elide: Text.ElideRight
                     }
                 }
                 Label {
                     Layout.fillWidth: true
-                    visible: !!editorBackend.selected.problemText
-                    text: "⚠ " + (editorBackend.selected.problemText || "") + " " + page.t("editor_problem_hint", "The next translation run would replace this line.")
-                    color: ui.clrWarn; font.pixelSize: 12; wrapMode: Text.WordWrap
+                    visible: !!page.liveProblem
+                    text: "⚠ " + page.liveProblem + " " + page.t("editor_problem_hint", "The next translation run would replace this line.")
+                    color: Theme.warn; font.pixelSize: 12; wrapMode: Text.WordWrap
                 }
                 Label {
                     Layout.fillWidth: true
                     visible: !!editorBackend.selected.prevText
                     text: "↑ " + (editorBackend.selected.prevSpeaker ? editorBackend.selected.prevSpeaker + ": " : "") + (editorBackend.selected.prevText || "")
-                    color: ui.clrTxtDim; font.pixelSize: 11; elide: Text.ElideRight; textFormat: Text.PlainText
+                    color: Theme.txtDim; font.pixelSize: 11; elide: Text.ElideRight; textFormat: Text.PlainText
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -504,8 +567,8 @@ Item {
                             textFormat: TextEdit.PlainText
                             topInset: 0; bottomInset: 0; padding: 10; topPadding: 10
                             text: editorBackend.selected.original || ""
-                            color: ui.clrTxt2
-                            background: Rectangle { radius: 8; color: ui.clrInput; border.color: ui.clrCardBorder }
+                            color: Theme.txt2
+                            background: Rectangle { radius: 8; color: Theme.input; border.color: Theme.cardBorder }
                     }
                     TextArea {
                             id: transArea
@@ -518,11 +581,12 @@ Item {
                             wrapMode: TextEdit.Wrap
                             textFormat: TextEdit.PlainText
                             topInset: 0; bottomInset: 0; padding: 10; topPadding: 10
-                            color: ui.clrTxt
-                            background: Rectangle { radius: 8; color: ui.clrInput; border.color: transArea.activeFocus ? ui.clrAccent : ui.clrCardBorder }
+                            color: Theme.txt
+                            background: Rectangle { radius: 8; color: Theme.input; border.color: transArea.activeFocus ? Theme.accent : Theme.cardBorder }
+                            onTextChanged: liveCheckTimer.restart()
                             Keys.onPressed: function(event) {
                                 if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & Qt.ControlModifier)) {
-                                    page.commitPending()
+                                    page.selectNext()
                                     event.accepted = true
                                 }
                             }
@@ -532,7 +596,7 @@ Item {
                     Layout.fillWidth: true
                     visible: !!editorBackend.selected.nextText
                     text: "↓ " + (editorBackend.selected.nextSpeaker ? editorBackend.selected.nextSpeaker + ": " : "") + (editorBackend.selected.nextText || "")
-                    color: ui.clrTxtDim; font.pixelSize: 11; elide: Text.ElideRight; textFormat: Text.PlainText
+                    color: Theme.txtDim; font.pixelSize: 11; elide: Text.ElideRight; textFormat: Text.PlainText
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -540,7 +604,7 @@ Item {
                     Repeater {
                         model: editorBackend.selected.tokens || []
                         delegate: Chip {
-                            tint: ui.clrPurple
+                            tint: Theme.purple
                             label: modelData
                             onClicked: if (!editorBackend.locked) { transArea.insert(transArea.cursorPosition, modelData); transArea.forceActiveFocus() }
                         }
@@ -548,20 +612,21 @@ Item {
                     Item { Layout.fillWidth: true }
                     ActionButton {
                         emphasized: false
-                        text: "↺ " + page.t("editor_revert", "Revert")
+                        glyph: Icons.undo2
+                        text: page.t("editor_revert", "Revert")
                         enabled: !editorBackend.locked && !!editorBackend.selected.modified
                         onClicked: editorBackend.revertSelected()
                     }
                     ActionButton {
-                        tint: ui.clrPurple
-                        text: "🤖 " + page.t("editor_suggest", "Suggest")
+                        tint: Theme.purple
+                        glyph: Icons.sparkles
+                        text: page.t("editor_suggest", "Suggest")
                         enabled: !editorBackend.locked && !editorBackend.busy
                         onClicked: { page.commitPending(); editorBackend.suggest() }
                     }
-                    ActionButton {
-                        text: "✓ " + page.t("editor_apply", "Apply") + "  (Ctrl+Enter)"
-                        enabled: !editorBackend.locked
-                        onClicked: page.commitPending()
+                    Label {
+                        text: page.t("editor_next_hint", "Ctrl+Enter: next line")
+                        color: Theme.txtDim; font.pixelSize: 11
                     }
                 }
             }
@@ -575,15 +640,15 @@ Item {
         width: 420
         modal: true
         padding: 16
-        background: Rectangle { radius: 12; color: ui.clrCard; border.color: ui.clrCardBorder }
+        background: Rectangle { radius: 12; color: Theme.card; border.color: Theme.cardBorder }
         ColumnLayout {
             anchors.fill: parent
             spacing: 10
-            Label { text: page.t("editor_replace", "Replace"); color: ui.clrTxt; font.bold: true; font.pixelSize: 15 }
+            Label { text: page.t("editor_replace", "Replace"); color: Theme.txt; font.bold: true; font.pixelSize: 16 }
             Label {
                 Layout.fillWidth: true
                 text: page.t("editor_replace_hint", "Only translations shown by the current filters change. Tags and [variables] are never touched.")
-                color: ui.clrTxt2; font.pixelSize: 12; wrapMode: Text.WordWrap
+                color: Theme.txt2; font.pixelSize: 12; wrapMode: Text.WordWrap
             }
             ThemedInput { id: findField; Layout.fillWidth: true; placeholder: page.t("editor_find", "Find") }
             ThemedInput { id: replaceField; Layout.fillWidth: true; placeholder: page.t("editor_replace_with", "Replace with") }
@@ -612,7 +677,7 @@ Item {
         title: page.t("editor_unsaved_title", "Unsaved changes")
         Label {
             text: page.t("editor_unsaved_switch", "Your unsaved edits will be lost if you open another language.")
-            color: ui.clrTxt; wrapMode: Text.WordWrap
+            color: Theme.txt; wrapMode: Text.WordWrap
         }
         footer: DialogButtonBox {
             Button {
