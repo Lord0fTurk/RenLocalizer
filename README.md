@@ -1,183 +1,290 @@
-# RenLocalizer 🎮✨
+<p align="center">
+  <img src="icon.png" width="112" alt="RenLocalizer logo">
+</p>
+
+<h1 align="center">RenLocalizer</h1>
 
 <p align="center">
-  <strong>Translate any Ren'Py Visual Novel in just a few clicks — without breaking code, formatting, or save files!</strong>
+  <b>Play any Ren'Py visual novel in your own language.</b><br>
+  Drop in the game, pick a language, press Start.<br>
+  Free, open source, 135 languages, and the game keeps working.
 </p>
 
 <p align="center">
-  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases"><img alt="Latest Release" src="https://img.shields.io/badge/Release-v2.8.20-blue?style=for-the-badge&logo=github"></a>
-  <a href="https://www.patreon.com/cw/LordOfTurk"><img alt="Support on Patreon" src="https://img.shields.io/badge/Support-Patreon-ff424d?style=for-the-badge&logo=patreon"></a>
+  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases/latest/download/RenLocalizer-Windows-x64.zip"><img alt="Download for Windows" src="https://img.shields.io/badge/Windows-Download-06B6D4?style=for-the-badge&logo=windows&logoColor=white"></a>
+  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases/latest/download/RenLocalizer-Linux-x64.AppImage"><img alt="Download for Linux" src="https://img.shields.io/badge/Linux-Download-06B6D4?style=for-the-badge&logo=linux&logoColor=white"></a>
+  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases/latest/download/RenLocalizer-macOS-arm64.dmg"><img alt="Download for macOS" src="https://img.shields.io/badge/macOS-Download-06B6D4?style=for-the-badge&logo=apple&logoColor=white"></a>
 </p>
 
 <p align="center">
-  <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-2d6cdf?style=flat-square&logo=windows">
-  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white">
-  <img alt="GUI" src="https://img.shields.io/badge/GUI-PyQt6%20%2B%20QML-41cd52?style=flat-square&logo=qt&logoColor=white">
-  <img alt="RenPy" src="https://img.shields.io/badge/Ren'Py-7%20%26%208%20Compatible-ff69b4?style=flat-square">
-  <img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-111827?style=flat-square">
+  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/Lord0fTurk/RenLocalizer?style=flat-square&label=latest&color=111827"></a>
+  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Lord0fTurk/RenLocalizer/total?style=flat-square&color=111827"></a>
+  <img alt="Ren'Py 7 and 8" src="https://img.shields.io/badge/Ren'Py-7%20%26%208-111827?style=flat-square">
 </p>
 
 <p align="center">
-  <a href="#-quick-start-3-simple-steps">Quick Start</a> •
-  <a href="#-supported-translation-engines">Engines</a> •
-  <a href="#-translation-modes">Translation Modes</a> •
-  <a href="#-why-renlocalizer">Why RenLocalizer?</a> •
-  <a href="CHANGELOG.md">Changelog</a> •
-  <a href="https://github.com/Lord0fTurk/RenLocalizer/wiki">Wiki Guide</a>
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#which-engine-should-i-use">Engines</a> ·
+  <a href="#why-your-game-keeps-working">Why it's safe</a> ·
+  <a href="#questions">Questions</a> ·
+  <a href="https://github.com/Lord0fTurk/RenLocalizer/wiki">Wiki</a> ·
+  <a href="CHANGELOG.md">What's new</a>
+</p>
+
+<p align="center">
+  <img src=".github/assets/demo.gif" width="860" alt="A game is loaded into RenLocalizer, translated into Turkish, and reviewed in the editor">
 </p>
 
 ---
 
-## ⚡ Quick Start (3 Simple Steps!)
+## How it works
 
-You don't need any programming skills or complex setup to translate your favorite visual novel.
+No setup and no programming. Download, unzip, run.
 
-```
-  1. Select Game ────────► 2. Pick Language & Engine ────────► 3. Click Translate & Play!
- (Drop folder / .exe)          (Google, DeepSeek, Local LLM...)          (Launch game & enjoy!)
-```
+<table>
+  <tr>
+    <td width="36%">
+      <h3>1. Drop in your game</h3>
+      Drag the game folder or its <code>.exe</code> onto the window, or use <b>Folder</b> / <b>EXE File</b>. RenLocalizer shows the game's name, version and Ren'Py version.
+    </td>
+    <td><img src=".github/assets/step-1-game.png" width="520" alt="The Project Setup card with a game loaded"></td>
+  </tr>
+  <tr>
+    <td>
+      <h3>2. Pick a language</h3>
+      Search 135 languages. Google Translate is selected by default and needs no account.
+    </td>
+    <td><img src=".github/assets/step-2-language.png" width="520" alt="The target language list, searchable, with Turkish selected"></td>
+  </tr>
+  <tr>
+    <td>
+      <h3>3. Translate and play</h3>
+      Press <b>Start Translation</b>. When it finishes, click <b>Launch Game</b>. It opens in your language.
+    </td>
+    <td><img src=".github/assets/step-3-play.png" width="520" alt="The summary after translating: 45 lines translated, with Launch Game and Review in Editor buttons"></td>
+  </tr>
+</table>
 
-1. **Download & Open:** Grab the latest portable version from [**GitHub Releases**](https://github.com/Lord0fTurk/RenLocalizer/releases) and extract it anywhere.
-2. **Select Game:** Click **"Browse"** (or **"EXE"**) and choose your game's executable or game folder.
-3. **Pick Language & Translate:** Choose your target language, pick an engine (e.g. **Google Translate** for free & instant, or **Local LLM** for offline AI), and hit **Translate (▶)**!
-
-> 💡 **macOS Users:** The app is portable. If macOS Gatekeeper says the app is damaged or cannot be opened, open Terminal and run once:
-> ```bash
-> xattr -cr /Applications/RenLocalizer.app
-> ```
-
----
-
-## 🤖 Supported Translation Engines
-
-Pick the engine that best fits your needs — from 100% free cloud translation to private, offline AI models:
-
-| Engine | Setup Required | Cost | Best For |
-| :--- | :---: | :---: | :--- |
-| 🌍 **Google Translate** | **Zero Setup** | **100% Free** | Instant translation, no API keys, built-in 13 mirror rotation. |
-| 🪟 **Bing / Microsoft Edge** | **Zero Setup** | **100% Free** | Keyless Microsoft Translator via the Edge web endpoint — independent from Google's rate limits, automatic Google fallback. |
-| 🧠 **OpenAI (GPT-4o / Mini)** | API Key | Paid API | High-accuracy literary translations and nuanced dialogue. |
-| ⚡ **DeepSeek (V3 / R1)** | API Key | Very Low Cost | Outstanding translation quality with OpenAI-compatible API. |
-| 💎 **Google Gemini** | API Key | Free Tier / Paid | High-speed, context-rich translations with large context windows. |
-| 🏠 **Local LLM (Ollama / LM Studio)** | Local App | **100% Free** | Fully offline, private, uncensored translation (e.g. Llama 3, Qwen 2.5). |
-| 📦 **Built-in GGUF Runner** | **Zero Setup** | **100% Free** | Point at a `.gguf` file and RenLocalizer runs llama.cpp for you — no Ollama or LM Studio install. |
-| 🎯 **Tencent Hy-MT2** | Ollama / LM Studio | **100% Free** | Specialized translation profile with official model-card sampling recipe. |
-| 🐳 **LibreTranslate** | Self-hosted | Free | Self-hosted local Docker translation service. |
+> [!TIP]
+> Game got an update? Run it again. Lines that were already translated are reused, and only the new ones are sent for translation.
 
 ---
 
-## 🎭 Translation Modes (Batch Architecture)
+## Which engine should I use?
 
-When using AI engines (Cloud API or Local LLM), RenLocalizer offers 3 distinct batching modes:
+| If you want… | Use | What you need |
+| :--- | :--- | :--- |
+| **Free and instant** | Google Translate or Bing | Nothing. Both work without an account or key. |
+| **The best quality** | DeepSeek, Gemini or OpenAI | An API key from that service. DeepSeek costs very little; Gemini has a free tier. |
+| **Offline and private** | Local LLM | A `.gguf` model file, or Ollama / LM Studio. Nothing leaves your computer. |
 
-- 🎭 **Scene / Screenplay Mode (Context-Aware — Recommended):**  
-  Presents dialogue lines in a natural theatre screenplay flow with speaker attribution (`Alice: "..."`). The AI grasps who is speaking to whom, maintaining consistent character tone, gender agreement, and relationship dynamics.
-- 📦 **Standard Structured Mode (JSON):**  
-  Packages lines into strict key-value pairs (`{"id": "text"}`). Guarantees zero line drift and high structural integrity. Ideal for menus, settings, and UI strings.
-- 📄 **Legacy Grouping Mode (XML):**  
-  Wraps texts in `<item id="N">...</item>` tags. Highly resilient for smaller or older local models (e.g. 3B/7B) that may struggle to format valid JSON.
-
----
-
-## 🛡️ Why RenLocalizer?
-
-Translating Ren'Py visual novels with standard translation tools usually crashes the game. Here is why RenLocalizer is different:
-
-* 🔒 **SyntaxGuard:** Ren'Py codes like `{b}`, `{color=...}`, and variables like `[player_name]` are strictly isolated before translation and safely restored afterwards.
-* 🚫 **No Duplicate Key Crashes:** Automatically tracks existing translations and native IDs, preventing Ren'Py 7.5+ / 8.x duplicate string fatal errors.
-* 📦 **Deep Binary Scan (.rpyc & .rpa):** Extracts hidden strings directly from compiled `.rpyc` files and unpacks `.rpa` archives automatically.
-* 🌐 **Full RTL & BiDi Support:** Automatic layout and reading direction (`wrtl`) handling for Arabic, Persian, Hebrew, and Urdu without altering LTR games.
-* ✏️ **Translation Editor:** Review and hand-fix every line of a game's `tl/` folder with search, filters, speaker and context, tag/variable checks and one-line machine suggestions; edits are written back in place and kept by later runs.
-* 🧰 **Integrated Toolbox:** Standalone Ren'Py syntax & indentation linter, automated OpenType font injection, font compatibility scanner, and glossary extractor.
-* 🚀 **Smart Runtime Hook:** Injects a lightweight `init -999 python:` hook for dynamic on-the-fly string translation and instant language switching in-game.
-
----
-
-## 💻 For Power Users & Developers
+AI engines read lines as a scene, with who is speaking to whom, so tone, gender and relationships stay consistent.
 
 <details>
-<summary><strong>⌨️ CLI (Command-Line Interface) Mode</strong></summary>
+<summary><b>All engines compared</b></summary>
+<br>
 
-RenLocalizer includes a full-featured headless CLI mode powered by `rich`:
+| Engine | Needs | Cost | Notes |
+| :--- | :--- | :--- | :--- |
+| Google Translate | Nothing | Free | The default. Rotates between several endpoints to avoid limits. |
+| Bing / Microsoft Edge | Nothing | Free | Separate from Google's limits; falls back to Google if it fails. |
+| DeepSeek | API key | Low | Strong quality for the price. |
+| Google Gemini | API key | Free tier / paid | Large context window. |
+| OpenAI | API key | Paid | Also works with any OpenAI-compatible service (OpenRouter and others) through a custom base URL. |
+| Local LLM, built-in runner | A `.gguf` file | Free | RenLocalizer downloads and runs llama.cpp for you. No other install. |
+| Local LLM, Ollama / LM Studio | The app running | Free | Uses the model you already have loaded. Includes a profile for translation models such as Hy-MT. |
+| LibreTranslate | Your own server | Free | Self-hosted. |
 
-```bash
-# Quick translation with Google (default)
-python run_cli.py "C:\Games\MyVisualNovel\game.exe"
+</details>
 
-# Translate with DeepSeek to Russian
-python run_cli.py "C:\Games\MyVisualNovel\game.exe" -e deepseek -t ru
+---
 
-# Translate with Local LLM (Ollama) with deep scan enabled
-python run_cli.py "C:\Games\MyVisualNovel\game.exe" -e local_llm -t de --deep-scan
+## Why your game keeps working
 
-# Interactive terminal menu mode
-python run_cli.py --interactive
-```
+Most translation tools treat a Ren'Py script like plain text, and the game crashes on the first broken tag. RenLocalizer is built around not breaking anything.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <b>Code stays code</b><br>
+      Text tags like <code>{b}</code> and <code>{color=…}</code> and variables like <code>[player_name]</code> are locked before translation and checked afterwards. A line that comes back broken is retried; if it still fails, the original is kept instead of crashing the game.
+    </td>
+    <td width="50%" valign="top">
+      <b>Real Ren'Py translation files</b><br>
+      Writes the standard <code>game/tl/</code> files, with the same line IDs Ren'Py's own translation generator produces. No duplicate-string errors.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <b>Packed and compiled games</b><br>
+      Reads compiled <code>.rpyc</code> scripts when there is no source, and unpacks <code>.rpa</code> archives, including some custom-protected ones.
+    </td>
+    <td valign="top">
+      <b>Every script, every direction</b><br>
+      Fonts that show empty boxes can be swapped for one that covers your language, and Arabic, Persian and Hebrew are shown right-to-left.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <b>Names stay names</b><br>
+      Character names are left alone by default, and a glossary keeps your own terms the same in every line.
+    </td>
+    <td valign="top">
+      <b>You have the last word</b><br>
+      The built-in editor lists every line with its original. Search, filter, fix, or ask for a fresh suggestion; your edits are kept by later runs.
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src=".github/assets/editor.png" width="860" alt="The translation editor showing original and translated lines side by side">
+</p>
+
+---
+
+## Questions
+
+<details>
+<summary><b>The game still starts in English.</b></summary>
+<br>
+
+**Settings › General & Output › Start the game in the translated language** is on by default and adds a small file that switches the game at launch. If you turned it off, or the game forces its own language, open **Toolbox › Language Activation** and pick your language. Games with their own language menu also list it under Preferences.
 </details>
 
 <details>
-<summary><strong>🛠️ Running from Source Code</strong></summary>
+<summary><b>Some lines are still in English.</b></summary>
+<br>
 
-Requires Python 3.10+:
+Character names, sound effects and short exclamations are often the same in every language, so they are kept as they are. The summary at the end shows how many lines were translated, kept, or held back to protect the game. Open the editor to translate any of them by hand. To translate speaker names too, turn on **Settings › General & Output › Translate Character & Speaker Names**.
+</details>
+
+<details>
+<summary><b>Does it change my game files or saves?</b></summary>
+<br>
+
+Your saves are not touched. RenLocalizer writes the translation to `game/tl/<language>/` and adds a few small files starting with `zzz_` in `game/`. If the game's scripts are packed in `.rpa` archives, they are unpacked and the archives are removed to save disk space.
+
+> [!IMPORTANT]
+> Keep a copy of the game folder before your first translation, especially for games that use `.rpa` archives.
+
+To remove a translation, delete `game/tl/<language>/` and the `zzz_` files RenLocalizer added.
+</details>
+
+<details>
+<summary><b>Windows warns me, or my antivirus flags the app.</b></summary>
+<br>
+
+The app is not code-signed, so Windows SmartScreen may show a warning: click **More info › Run anyway**. Some antivirus programs flag apps packaged with PyInstaller by mistake. The source code is open, and you can [run it from source](#for-power-users) instead.
+</details>
+
+<details>
+<summary><b>macOS says the app is damaged or can't be opened.</b></summary>
+<br>
+
+macOS blocks apps downloaded outside the App Store. Move RenLocalizer to Applications, then run this once in Terminal:
 
 ```bash
-# 1. Clone the repository
+xattr -cr /Applications/RenLocalizer.app
+```
+
+The macOS download is for Apple Silicon (M1 and later). On an Intel Mac, [run it from source](#for-power-users).
+</details>
+
+<details>
+<summary><b>Which games work?</b></summary>
+<br>
+
+Games made with Ren'Py 7 or 8 on Windows, Linux and macOS, including macOS `.app` games, games that ship only compiled `.rpyc` files, and games packed in `.rpa` archives.
+</details>
+
+More help is in the [Wiki](https://github.com/Lord0fTurk/RenLocalizer/wiki). Found a bug? [Open an issue](https://github.com/Lord0fTurk/RenLocalizer/issues).
+
+---
+
+## For power users
+
+<details>
+<summary><b>Command line</b></summary>
+<br>
+
+The release includes `RenLocalizerCLI` next to the app. From source, use `python run_cli.py`. It reads the same settings as the app; flags override them.
+
+```bash
+# Translate to Turkish with Google (the defaults)
+python run_cli.py translate "C:\Games\MyVisualNovel\game.exe"
+
+# Translate to Russian with DeepSeek
+python run_cli.py translate "C:\Games\MyVisualNovel\game.exe" -e deepseek -t ru --api-key YOUR_KEY
+
+# Translate to German with a local model, scanning deeper for hidden strings
+python run_cli.py translate "C:\Games\MyVisualNovel\game.exe" -e local_llm -t de --deep-scan
+
+# Make the game start in an already translated language
+python run_cli.py activate-language "C:\Games\MyVisualNovel" --lang turkish
+
+# Step-by-step menu
+python run_cli.py --interactive
+```
+
+Run `python run_cli.py translate --help` for every option.
+</details>
+
+<details>
+<summary><b>Run from source</b></summary>
+<br>
+
+Requires Python 3.10 or newer.
+
+```bash
 git clone https://github.com/Lord0fTurk/RenLocalizer.git
 cd RenLocalizer
-
-# 2. Create and activate a virtual environment
 python -m venv .venv
+```
 
-# Windows:
-.venv\Scripts\activate
-# Linux / macOS:
-source .venv/bin/activate
+Activate the environment: `.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on Linux and macOS. Then:
 
-# 3. Install dependencies
+```bash
 pip install -r requirements.txt
-
-# 4. Launch the application
 python run.py
 ```
 </details>
 
 <details>
-<summary><strong>🔬 Technical Specifications & Protection Pipeline</strong></summary>
+<summary><b>How the protection works</b></summary>
+<br>
 
-- **Placeholder Protection Modes:**
-  - *Google (Token Mode):* Unicode mathematical brackets `⟦RLPH{hex}_{N}⟧` (treated as invariant punctuation by Google Translate).
-  - *AI/LLM (XML & Token Modes):* `<ph id="N">...</ph>` and `__PH_N__` wrappers preventing subword tokenizer fragmentation.
-  - *6-Stage Restoration:* Unicode brackets ➔ bracket-stripped ➔ transliteration repair ➔ generic recovery ➔ wrapper pair ➔ tag repair.
-- **Integrity Validation:** If an AI model hallucinate or leaks tags, the string is flagged as corrupted and safely reverted to original text to prevent game crashes.
-- **Runtime Hook:** `zzz_renlocalizer_runtime.rpy` features an $O(1)$ dictionary lookup, MRU cache (500 entries), and screen harvesting.
+- **Placeholders:** before a line is sent, Ren'Py syntax is swapped for placeholders the engine leaves alone: Unicode bracket tokens for Google and Bing, `<ph id="N">` tags for AI engines.
+- **Restoration:** placeholders are put back in several passes, from exact matches to repairs of tokens an engine changed or moved. Text tags that come back in the wrong order are swapped back when that is safe.
+- **Integrity check:** a line with missing placeholders, leaked tokens, mismatched `%` specifiers or tags Ren'Py would refuse is retried, then kept in the original.
+- **Batch formats for AI:** scene (with speakers), JSON, XML, or one line per request for small and translation-only models.
+- **Output modes:** native Ren'Py `translate` blocks (default), or a `strings.json` file read by a small runtime hook.
 </details>
 
 ---
 
-## 🤝 Contributing & Community
+## Support the project
 
-Contributions, bug reports, and feature requests are very welcome!
+RenLocalizer is free and built in spare time. If it saved you an evening, you can help:
 
-- 🐛 **Report a Bug:** Open an issue on [GitHub Issues](https://github.com/Lord0fTurk/RenLocalizer/issues)
-- 📖 **Documentation:** Visit the [Wiki Guide](https://github.com/Lord0fTurk/RenLocalizer/wiki)
-- 💖 **Support Development:** Join us on [Patreon](https://www.patreon.com/cw/LordOfTurk)
-- 📜 **License:** Released under the [GNU General Public License v3.0](LICENSE)
+- Star the repository, so others can find it.
+- [Support the developer on Patreon](https://www.patreon.com/cw/LordOfTurk).
+- Report bugs and ideas in [Issues](https://github.com/Lord0fTurk/RenLocalizer/issues), or read [CONTRIBUTING.md](CONTRIBUTING.md) to send a change.
 
 ---
 
-## 📦 Third-Party Components
+## License and credits
 
-RenLocalizer builds on the work of these open-source projects:
+RenLocalizer is released under the [GNU General Public License v3.0](LICENSE).
+
+It builds on these open-source projects:
 
 | Project | License | Used for |
 | :--- | :---: | :--- |
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT | Built-in GGUF runner — the official `llama-server` build is downloaded on request (verified by SHA256) and managed by RenLocalizer; it is **not** bundled with the release. |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT | Built-in GGUF runner. The official `llama-server` build is downloaded on request (verified by SHA256) and managed by RenLocalizer; it is **not** bundled with the release. |
 | [PyQt6 / Qt](https://www.qt.io) | GPL-3.0 / LGPL-3.0 | Desktop interface (QML) |
-| [Lucide](https://lucide.dev) | ISC | Interface icons — a subset of the Lucide icon font ships in `src/gui/qml/fonts/` together with its license (`LUCIDE_LICENSE.txt`). |
+| [Lucide](https://lucide.dev) | ISC | Interface icons. A subset of the Lucide icon font ships in `src/gui/qml/fonts/` with its license (`LUCIDE_LICENSE.txt`). |
 | [unrpa](https://github.com/Lattyware/unrpa) | GPL-3.0 | `.rpa` archive extraction |
 | [rpycdec](https://pypi.org/project/rpycdec/) | MIT | Complementary `.rpyc` decompilation |
-| [rich](https://github.com/Textualize/rich) | MIT | CLI interface |
+| [rich](https://github.com/Textualize/rich) | MIT | Command-line interface |
 
-Translation engines are used through their public endpoints or official SDKs
-(Google Translate, Microsoft Translator via the Edge endpoint, DeepL,
-LibreTranslate, OpenAI, Google Gemini, DeepSeek).
+Translation engines are used through their public endpoints or official SDKs (Google Translate, Microsoft Translator via the Edge endpoint, LibreTranslate, OpenAI, Google Gemini, DeepSeek).
