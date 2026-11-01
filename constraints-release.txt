@@ -13,6 +13,8 @@ PyYAML==6.0.3
 fonttools==4.62.1
 orjson==3.11.9
 py3langid==0.4.0
+openpyxl==3.1.5
+et_xmlfile==2.0.0
 numpy==2.4.4
 # Build tool — pinned for reproducible CI bundles (macOS BUNDLE is sensitive
 # to bootloader changes; bump deliberately and re-test all 3 platforms)

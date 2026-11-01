@@ -33,3 +33,6 @@ PyYAML>=6.0.1
 
 # Font tools
 fonttools>=4.38.0
+
+# Glossary import/export (.xlsx); CSV and JSON need nothing extra
+openpyxl>=3.1.0

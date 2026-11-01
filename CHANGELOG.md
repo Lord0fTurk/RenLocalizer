@@ -4,6 +4,55 @@ render_with_liquid: false
 
 # RenLocalizer Changelog
 
+#### [2.8.21] - 2026-11-01
+
+> **Clear and transparent translation completion modal featuring Playable/Ready Rate (`% Playable`) and a 3-badge visual breakdown separating translated dialogue, intentionally preserved source strings (names, sound effects, punctuation) and safety-guarded lines; user-toggleable Character and Speaker name translation option in Settings -> General & Output with full 9-language localization; callback registry hardening in SettingsBackend; Universal Multi-Theme UI System featuring 3 reactive themes (Obsidian, Daylight, Cyber Neon) and 4 customizable accent color presets with zero-breakage backward compatibility; QML dialog stability fixes and Patreon support link update.**
+
+##### 🌐 Google 429 Handling
+
+> **(`core/translators/google.py`, `core/translators/services.py`, `core/translators/base.py`, `locales/`)**
+> - **Client-id rotation:** Google answers `client=gtx` with HTTP 429 in some regions while `client=at` and `client=dict-chrome-ex` still return the same reply. On a 429 the single, batch-separator and probe requests now try the other ids first, remember the one that worked and start with it. Only when every id was refused does the 429 count as an IP flag (circuit breaker, cooldown). Language detection starts with the remembered id.
+> - **Bing hand-off:** Lines that every Google path failed on are now translated by the keyless Bing engine (separate request family, independent limit) instead of failing the run. A Bing that fails too is skipped for 60 s. Bing's own fallback to Google never hands back to Bing (`IN_FALLBACK` context flag).
+
+##### 🎨 Universal Multi-Theme UI System
+
+> **(`gui/qml/components/Theme.qml`, `utils/config.py`, `backend/settings_backend.py`, `backend/app_backend.py`, `gui/qml/Main.qml`, `gui/qml/components/`, `locales/`)**
+> - **3 Reactive Theme Modes:** Added support for **Obsidian** (Default dark/slate, `#090D14`), **Daylight** (Clean soft white/ice grey, `#F1F5F9`), and **Cyber Neon** (High-contrast pitch black `#03060C` with vibrant neon glowing borders).
+> - **4 Dynamic Accent Presets:** Integrated **Cyan / Teal** (`#06B6D4`), **Emerald / Mint** (`#10B981`), **Indigo / Violet** (`#6366F1`), and **Amber / Orange** (`#F59E0B`) with reactive color propagation across the entire interface.
+> - **Settings Interface Controls:** Added intuitive mode and palette selectors in Settings -> General (`Arayüz & Sistem Ayarları`) with persistent configuration in `AppSettings`.
+> - **Zero-Breakage Compatibility Bridge:** Maintained 100% backward-compatibility for all existing 650+ `Theme.*` references via camelCase semantic tokens and legacy aliases.
+> - **Cyber Neon & Obsidian Identity Separation:** Distinctly separated Cyber Neon from Obsidian using pitch-black backgrounds, pure white primary text (`#FFFFFF`), boosted card border opacities (40%), and luminous neon accents.
+> - **Component Refinements:** Aligned NavItem sidebar indicators (3px accent bar, borderless in Obsidian/Daylight, full glowing border in Cyber Neon), PrimaryCTA hero button styles, and SectionCards with unified border geometry.
+> - **Dialog Stability & QML Warnings Cleanup:** Resolved Qt Quick Controls Material `implicitWidth` circular binding loops on dialogs by defining bounded responsive widths, and ensured proper Material style imports across all standalone dialog components.
+> - **Patreon Support Link:** Updated the sidebar support link to point directly to the active LordOfTurk creator profile (`https://www.patreon.com/cw/LordOfTurk`).
+> - **Warmer Support Button:** The sidebar "Patreon Support" button is now "Support the Developer" with a small "Patreon" sub-line, a warm pink (`Theme.support`, darker in Daylight) instead of the error red, and a slow heartbeat on the heart icon that quickens on hover. Icon and text are centred as one group (9 languages).
+> - **Support Row in the Completion Dialog:** From the 3rd finished run that translated something, the completion dialog shows a small support row with a "Don't show again" checkbox (`completed_runs`, `hide_support_prompt` in `AppSettings`); failed runs never ask.
+> - **Sidebar Fits Short Windows:** Below 800 px window height (the 980×650 minimum, a maximized window on a 768p laptop) the sidebar switches to a compact layout: tighter spacing and smaller invisible Material insets on the menu buttons. The Wiki and support buttons and the status line were previously pushed below the window edge; taller windows look exactly as before.
+
+##### 📊 Rich Completion Metrics & Playable Rate
+
+> **(`pipeline/orchestrator.py`, `backend/app_backend.py`, `gui/qml/Main.qml`, `locales/`, `tests/test_completion_dialog_stats.py`)**
+> - **Playable / Ready Rate Metric:** Ren'Py visual novels naturally include proper names, sound effects ("Ah!", "Haha!"), ellipsis, and character tags that stay identical to the source text. Previously, these `same_as_source` lines lowered the apparent completion ratio, leading users to believe the run was incomplete. The completion dialog now calculates and prominently highlights the true Playable Rate (`playable_count = translated + same_as_source`).
+> - **3-Badge Visual Breakdown:** A structured grid breaks down results into three clear categories: **Translated** (successfully translated lines), **Kept as Original** (proper names, character tags, and sound effects naturally identical in target language), and **Safety Guard** (lines preserved to protect Ren'Py syntax and format placeholders).
+> - **Saved Files Indicator:** The summary now reports the exact count of generated or updated translation files (e.g., "15 files updated").
+> - **Comprehensive Localization:** Tooltips and descriptions explaining each badge are fully translated across all 9 supported languages (`tr`, `en`, `de`, `es`, `fr`, `ru`, `fa`, `ja`, `zh-CN`).
+
+##### ⚙️ Character & Speaker Name Translation Setting
+
+> **(`backend/settings_backend.py`, `backend/app_backend.py`, `gui/qml/Main.qml`, `locales/`, `tests/test_character_name_protection.py`)**
+> - **User-Facing Toggle:** Added a dedicated toggle in **Settings -> General & Output** (`Ayarlar -> Genel & Çıktı`) to control `translate_character_names` (`Character('Name')`). Kept OFF by default to protect proper names (e.g. Rose, Mark) from literal translation, but easily enabled for projects where narrator tags (e.g. "Your thoughts", "Mysterious Figure") need translation.
+> - **Bidirectional UI Reactivity:** Bound through `AppBackend.translateCharacterNames` with reactive signals and persistent configuration updates.
+> - **SettingsBackend Callback Hardening:** Registered callback keys for `translate_character_names` and `activate_language_on_launch`, and updated event registration with `setdefault` safety to prevent silently dropped event listeners.
+
+##### 🧹 Glossary Import/Export Without pandas, Dead Settings & Stale Defaults
+
+> **(`utils/data_transfer.py`, `utils/config.py`, `backend/settings_backend.py`, `requirements.txt`, `constraints-release.txt`, `RenLocalizer.spec`, `locales/`, `tests/test_data_transfer.py`, `tests/test_factory_reset.py`)**
+> - **CSV and Excel Glossary Files Work in the Release Build:** glossary import/export of `.csv` and `.xlsx` went through `pandas`, which was neither in `requirements.txt` nor in the release bundle, so it only worked on machines that happened to have it installed. CSV now uses the standard library and Excel uses `openpyxl` (added to the requirements, the release constraints and the PyInstaller spec); JSON is unchanged. If `openpyxl` is ever missing only `.xlsx` is affected and the log says so.
+> - **Excel-Made CSV Files Import Correctly:** the delimiter is taken from the header line, so the semicolon-separated files Excel writes in Turkish, German and other decimal-comma locales are read as two columns instead of one. A UTF-8 BOM is handled and a header column that matches nothing no longer reuses the source column as the target.
+> - **Terms Like `=)` Survive an Excel Export:** a glossary term starting with `=` was written as a formula and came back empty; it is now stored as text. A glossary JSON that is not an object reports a clear error instead of failing later. `.xls` was never readable without an extra package and is no longer pretended to be supported.
+> - **Settings Nothing Read Were Removed:** `critical_terms_file` and the loaded `critical_terms` list were never used by the pipeline, and `yandex` and `opus_mt` were accepted as engine names although no such engine exists (a stored value falls back to Google as before). The unused `translation_engines.yandex` texts are gone from all nine languages and the batch-size note no longer mentions Yandex. A leftover `critical_terms.json` is still removed by Factory Reset; old `config.json` files load unchanged.
+> - **Current Model Example:** the OpenAI model default and its input hint were `gpt-3.5-turbo` while the engine and the settings page already fell back to `gpt-4o-mini`; all three now agree. A model name already saved in `config.json` is kept as it is.
+
 #### [2.8.20] - 2026-10-19
 
 > **Swapped text tags no longer break lines in the game, for every engine; escaped quotes before `with` in `tl/` files no longer corrupt Ren'Py syntax (#22); empty translation slots fall back to source text instead of blank dialogue (#22); mixed UTF-8/cp1252 files are decoded line-by-line without `U+FFFD` replacement characters (#22); the editor's Apply button is gone; interface colors, the smallest window size and dialog layouts fixed; the dashboard checks a game before you start and remembers your recent games; AI Concurrency now applies to the Scene, JSON and XML modes and to OpenAI/Gemini semaphores (#21); explicit `--no-rpyc` is respected across the pipeline (#20).**
