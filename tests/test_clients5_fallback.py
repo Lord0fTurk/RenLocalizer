@@ -4,6 +4,7 @@ import time
 from types import SimpleNamespace
 
 from src.core.constants import RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD
+from src.core.translators.google import PRIMARY_CLIENTS
 from src.core.translator import (
     GoogleTranslator,
     TranslationEngine,
@@ -199,7 +200,9 @@ def test_inflight_chain_bails_when_breaker_trips_midway(monkeypatch):
     result = asyncio.run(g.translate_single(request))
 
     dummy_calls = [c for c in calls if "dummy" in c]
-    assert len(dummy_calls) == 1
+    # Every primary client id is tried once before the 429 counts as an IP flag;
+    # after that the tripped breaker stops further retries.
+    assert len(dummy_calls) == len(PRIMARY_CLIENTS)
     assert any("clients5" in c for c in calls)
     assert result.success is True
 

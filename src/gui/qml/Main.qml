@@ -20,7 +20,7 @@ ApplicationWindow {
     minimumHeight: 650
     visible: false // show() Python tarafından çağrılır
 
-    Material.theme: Material.Dark
+    Material.theme: Theme.themeMode === "daylight" ? Material.Light : Material.Dark
     Material.accent: Theme.accent
     Material.primary: Theme.primary
 
@@ -67,12 +67,23 @@ ApplicationWindow {
         if (sourceLangCombo && sourceLangCombo.syncSourceLanguage) sourceLangCombo.syncSourceLanguage()
         if (uiLanguageCombo && uiLanguageCombo.syncUILanguage) uiLanguageCombo.syncUILanguage()
 
+        Theme.themeMode = appBackend.getCurrentThemeMode()
+        Theme.accentPreset = appBackend.getCurrentAccentPreset()
+
         appBackend.checkForUpdates(false)
     }
 
     // ── Backend Sinyalleri ────────────────────────────────────────────────
     Connections {
         target: appBackend
+
+        function onThemeModeChanged(mode) {
+            Theme.themeMode = mode
+        }
+
+        function onAccentPresetChanged(preset) {
+            Theme.accentPreset = preset
+        }
 
         function onLogMessage(level, message) {
             appendLog(level, message)
@@ -195,6 +206,7 @@ ApplicationWindow {
         id: editorCloseDialog
         parent: Overlay.overlay
         anchors.centerIn: parent
+        width: Math.min(420, root.width - 48)
         modal: true
         title: appBackend.uiTrigger, appBackend.getTextWithDefault("editor_unsaved_title", "Unsaved changes")
         Label {
@@ -347,9 +359,13 @@ ApplicationWindow {
 
         // ── 1. SOL KENAR ÇUBUĞU (SIDEBAR NAVIGATION - 230px) ──────────────
         Rectangle {
+            id: sidebarPane
             Layout.preferredWidth: 230
             Layout.fillHeight: true
             color: Theme.sidebar
+            // Tam düzen ~780 px ister. Daha kısa pencerede (980×650, 768p dizüstü) aralıklar ve
+            // butonların görünmeyen Material boşlukları daralır; Wiki, destek ve durum satırı ekranda kalır.
+            readonly property bool compact: height < 800
 
             // Sağ siber kenarlık
             Rectangle {
@@ -361,8 +377,8 @@ ApplicationWindow {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 20; anchors.rightMargin: 20
-                anchors.topMargin: 26; anchors.bottomMargin: 26
-                spacing: 20
+                anchors.topMargin: sidebarPane.compact ? 18 : 26; anchors.bottomMargin: sidebarPane.compact ? 18 : 26
+                spacing: sidebarPane.compact ? 12 : 20
 
                 // Üst Logo & Başlık
                 RowLayout {
@@ -406,7 +422,7 @@ ApplicationWindow {
                             implicitWidth: versionBadgeLayout.implicitWidth + 14
                             implicitHeight: 18
                             radius: 9
-                            color: Theme.alpha(Theme.accent, 0.08)
+                            color: Theme.accentSubtle
                             border.color: Theme.alpha(Theme.accent, 0.24)
                             border.width: 1
 
@@ -439,19 +455,22 @@ ApplicationWindow {
                 // Menü Butonları (Sekmeler)
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 10
+                    spacing: sidebarPane.compact ? 6 : 10
 
                     // Buton 1: Dashboard
                     Button {
                         id: btnNavDash
-                        Layout.fillWidth: true; height: 44
+                        Layout.fillWidth: true; Layout.preferredHeight: sidebarPane.compact ? 38 : -1
+                        topInset: sidebarPane.compact ? 2 : 6; bottomInset: sidebarPane.compact ? 2 : 6
+                        // Material'in dikey boşluğu kısa butona sığmaz, içerik aşağı kayar
+                        verticalPadding: sidebarPane.compact ? 0 : Material.buttonVerticalPadding
                         scale: down ? 0.97 : 1.0
                         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
                         onClicked: navIndex = 0
                         background: Rectangle {
                             radius: 10
-                            color: navIndex === 0 ? Theme.alpha(Theme.accent, 0.14) : (btnNavDash.hovered ? Theme.cardHover : "transparent")
-                            border.color: navIndex === 0 ? Theme.alpha(Theme.accent, 0.7) : "transparent"
+                            color: navIndex === 0 ? Theme.accentSubtle : (btnNavDash.hovered ? Theme.cardHover : "transparent")
+                            border.color: (navIndex === 0 && Theme.themeMode === "cyber_neon") ? Theme.alpha(Theme.accent, 0.7) : "transparent"
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 150 } }
                             Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -492,14 +511,16 @@ ApplicationWindow {
                     // Buton 2: Settings (Gelişmiş Ayarlar)
                     Button {
                         id: btnNavSettings
-                        Layout.fillWidth: true; height: 44
+                        Layout.fillWidth: true; Layout.preferredHeight: sidebarPane.compact ? 38 : -1
+                        topInset: sidebarPane.compact ? 2 : 6; bottomInset: sidebarPane.compact ? 2 : 6
+                        verticalPadding: sidebarPane.compact ? 0 : Material.buttonVerticalPadding
                         scale: down ? 0.97 : 1.0
                         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
                         onClicked: navIndex = 1
                         background: Rectangle {
                             radius: 10
-                            color: navIndex === 1 ? Theme.alpha(Theme.accent, 0.14) : (btnNavSettings.hovered ? Theme.cardHover : "transparent")
-                            border.color: navIndex === 1 ? Theme.alpha(Theme.accent, 0.7) : "transparent"
+                            color: navIndex === 1 ? Theme.accentSubtle : (btnNavSettings.hovered ? Theme.cardHover : "transparent")
+                            border.color: (navIndex === 1 && Theme.themeMode === "cyber_neon") ? Theme.alpha(Theme.accent, 0.7) : "transparent"
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 150 } }
                             Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -540,14 +561,16 @@ ApplicationWindow {
                     // Buton 3: Log Console (Detaylı Loglar)
                     Button {
                         id: btnNavLogs
-                        Layout.fillWidth: true; height: 44
+                        Layout.fillWidth: true; Layout.preferredHeight: sidebarPane.compact ? 38 : -1
+                        topInset: sidebarPane.compact ? 2 : 6; bottomInset: sidebarPane.compact ? 2 : 6
+                        verticalPadding: sidebarPane.compact ? 0 : Material.buttonVerticalPadding
                         scale: down ? 0.97 : 1.0
                         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
                         onClicked: navIndex = 2
                         background: Rectangle {
                             radius: 10
-                            color: navIndex === 2 ? Theme.alpha(Theme.accent, 0.14) : (btnNavLogs.hovered ? Theme.cardHover : "transparent")
-                            border.color: navIndex === 2 ? Theme.alpha(Theme.accent, 0.7) : "transparent"
+                            color: navIndex === 2 ? Theme.accentSubtle : (btnNavLogs.hovered ? Theme.cardHover : "transparent")
+                            border.color: (navIndex === 2 && Theme.themeMode === "cyber_neon") ? Theme.alpha(Theme.accent, 0.7) : "transparent"
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 150 } }
                             Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -588,14 +611,16 @@ ApplicationWindow {
                     // Glossary Button
                     Button {
                         id: btnNavGlossary
-                        Layout.fillWidth: true; height: 44
+                        Layout.fillWidth: true; Layout.preferredHeight: sidebarPane.compact ? 38 : -1
+                        topInset: sidebarPane.compact ? 2 : 6; bottomInset: sidebarPane.compact ? 2 : 6
+                        verticalPadding: sidebarPane.compact ? 0 : Material.buttonVerticalPadding
                         scale: down ? 0.97 : 1.0
                         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
                         onClicked: navIndex = 4
                         background: Rectangle {
                             radius: 10
-                            color: navIndex === 4 ? Theme.alpha(Theme.accent, 0.14) : (btnNavGlossary.hovered ? Theme.cardHover : "transparent")
-                            border.color: navIndex === 4 ? Theme.alpha(Theme.accent, 0.7) : "transparent"
+                            color: navIndex === 4 ? Theme.accentSubtle : (btnNavGlossary.hovered ? Theme.cardHover : "transparent")
+                            border.color: (navIndex === 4 && Theme.themeMode === "cyber_neon") ? Theme.alpha(Theme.accent, 0.7) : "transparent"
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 150 } }
                             Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -635,14 +660,16 @@ ApplicationWindow {
 
                     Button {
                         id: btnNavEditor
-                        Layout.fillWidth: true; height: 44
+                        Layout.fillWidth: true; Layout.preferredHeight: sidebarPane.compact ? 38 : -1
+                        topInset: sidebarPane.compact ? 2 : 6; bottomInset: sidebarPane.compact ? 2 : 6
+                        verticalPadding: sidebarPane.compact ? 0 : Material.buttonVerticalPadding
                         scale: down ? 0.97 : 1.0
                         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
                         onClicked: navIndex = 5
                         background: Rectangle {
                             radius: 10
-                            color: navIndex === 5 ? Theme.alpha(Theme.accent, 0.14) : (btnNavEditor.hovered ? Theme.cardHover : "transparent")
-                            border.color: navIndex === 5 ? Theme.alpha(Theme.accent, 0.7) : "transparent"
+                            color: navIndex === 5 ? Theme.accentSubtle : (btnNavEditor.hovered ? Theme.cardHover : "transparent")
+                            border.color: (navIndex === 5 && Theme.themeMode === "cyber_neon") ? Theme.alpha(Theme.accent, 0.7) : "transparent"
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 150 } }
                             Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -683,14 +710,16 @@ ApplicationWindow {
                     // Buton 5: Toolbox (Araç Kutusu)
                     Button {
                         id: btnNavToolbox
-                        Layout.fillWidth: true; height: 44
+                        Layout.fillWidth: true; Layout.preferredHeight: sidebarPane.compact ? 38 : -1
+                        topInset: sidebarPane.compact ? 2 : 6; bottomInset: sidebarPane.compact ? 2 : 6
+                        verticalPadding: sidebarPane.compact ? 0 : Material.buttonVerticalPadding
                         scale: down ? 0.97 : 1.0
                         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
                         onClicked: navIndex = 3
                         background: Rectangle {
                             radius: 10
-                            color: navIndex === 3 ? Theme.alpha(Theme.accent, 0.14) : (btnNavToolbox.hovered ? Theme.cardHover : "transparent")
-                            border.color: navIndex === 3 ? Theme.alpha(Theme.accent, 0.7) : "transparent"
+                            color: navIndex === 3 ? Theme.accentSubtle : (btnNavToolbox.hovered ? Theme.cardHover : "transparent")
+                            border.color: (navIndex === 3 && Theme.themeMode === "cyber_neon") ? Theme.alpha(Theme.accent, 0.7) : "transparent"
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 150 } }
                             Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -741,10 +770,12 @@ ApplicationWindow {
                 // Kılavuz ve Destek Butonları
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 10
+                    spacing: sidebarPane.compact ? 8 : 10
                     Button {
                         id: btnWikiGuide
-                        Layout.fillWidth: true; height: 38
+                        Layout.fillWidth: true; Layout.preferredHeight: sidebarPane.compact ? 34 : -1
+                        topInset: sidebarPane.compact ? 2 : 6; bottomInset: sidebarPane.compact ? 2 : 6
+                        verticalPadding: sidebarPane.compact ? 0 : Material.buttonVerticalPadding
                         scale: down ? 0.96 : (hovered ? 1.02 : 1.0)
                         transformOrigin: Item.Center
                         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
@@ -769,26 +800,55 @@ ApplicationWindow {
                     }
                     Button {
                         id: btnPatreonSupport
-                        Layout.fillWidth: true; height: 38
+                        Layout.fillWidth: true; Layout.preferredHeight: sidebarPane.compact ? 42 : 48
+                        topInset: 0; bottomInset: 0
                         scale: down ? 0.96 : (hovered ? 1.02 : 1.0)
                         transformOrigin: Item.Center
                         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-                        onClicked: Qt.openUrlExternally("https://www.patreon.com/RenLocalizer")
+                        onClicked: Qt.openUrlExternally("https://www.patreon.com/cw/LordOfTurk")
                         background: Rectangle {
                             radius: 8
-                            color: btnPatreonSupport.down ? Theme.alpha(Theme.error, 0.25) : (btnPatreonSupport.hovered ? Theme.alpha(Theme.error, 0.15) : "transparent")
-                            border.color: btnPatreonSupport.hovered ? Theme.error : Theme.dangerHover
+                            color: Theme.alpha(Theme.support, btnPatreonSupport.down ? 0.22 : (btnPatreonSupport.hovered ? 0.14 : 0.06))
+                            border.color: Theme.alpha(Theme.support, btnPatreonSupport.hovered ? 0.9 : 0.4)
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 150 } }
                             Behavior on border.color { ColorAnimation { duration: 150 } }
                         }
-                        contentItem: RowLayout {
-                            anchors.centerIn: parent; spacing: 8
-                            Icon { glyph: Icons.heart; size: 14; color: Theme.error }
-                            Label {
-                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("nav_patreon_support", "Patreon Support")
-                                color: btnPatreonSupport.hovered ? Theme.white : Theme.errorSoft; font.pixelSize: 12; elide: Text.ElideRight
-                                Behavior on color { ColorAnimation { duration: 150 } }
+                        // Tek grup olarak ortalanır: genişliği tam ikon + boşluk + metin,
+                        // böylece sütundaki boş genişlik grubu yana kaydırmaz.
+                        contentItem: Item {
+                            Row {
+                                anchors.centerIn: parent
+                                spacing: 10
+                                Icon {
+                                    glyph: Icons.heart; size: 18
+                                    color: Theme.support
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    // Yavaş bir kalp atışı; imleç butonun üstündeyken hızlanır.
+                                    SequentialAnimation on scale {
+                                        loops: Animation.Infinite
+                                        running: root.visible
+                                        NumberAnimation { to: 1.18; duration: btnPatreonSupport.hovered ? 280 : 620; easing.type: Easing.OutQuad }
+                                        NumberAnimation { to: 1.0; duration: btnPatreonSupport.hovered ? 280 : 620; easing.type: Easing.InQuad }
+                                        PauseAnimation { duration: btnPatreonSupport.hovered ? 0 : 900 }
+                                    }
+                                }
+                                Column {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    Label {
+                                        width: Math.min(implicitWidth, 150)
+                                        text: appBackend.uiTrigger, appBackend.getTextWithDefault("nav_patreon_support", "Support the developer")
+                                        color: btnPatreonSupport.hovered ? Theme.txt : Theme.support
+                                        font.pixelSize: 12; font.bold: true; elide: Text.ElideRight
+                                        Behavior on color { ColorAnimation { duration: 150 } }
+                                    }
+                                    Label {
+                                        width: Math.min(implicitWidth, 150)
+                                        text: appBackend.uiTrigger, appBackend.getTextWithDefault("nav_patreon_sub", "Patreon")
+                                        color: Theme.txtDim
+                                        font.pixelSize: 10; elide: Text.ElideRight
+                                    }
+                                }
                             }
                         }
                     }
@@ -883,7 +943,7 @@ ApplicationWindow {
                         Layout.preferredHeight: projectInnerRow.implicitHeight + 44
                         radius: 16; color: cardProject.hovered ? Theme.cardHover : Theme.card
                         border.color: cardProject.hovered ? Theme.alpha(Theme.accent, 0.4) : Theme.cardBorder
-                        border.width: 1
+                        border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
                         property bool hovered: false
                         scale: hovered ? 1.004 : 1.0
                         transformOrigin: Item.Center
@@ -1173,7 +1233,7 @@ ApplicationWindow {
                                             delegate: Rectangle {
                                                 height: 22; radius: 6
                                                 width: chipLabel.implicitWidth + 14
-                                                color: Theme.alpha(Theme.white, 0.04)
+                                                color: Theme.surfaceControl
                                                 border.color: Theme.cardBorder; border.width: 1
                                                 Label {
                                                     id: chipLabel
@@ -1221,7 +1281,7 @@ ApplicationWindow {
                         clip: true
                         radius: 16; color: cardEngine.hovered ? Theme.cardHover : Theme.card
                         border.color: cardEngine.hovered ? Theme.alpha(Theme.accent, 0.4) : Theme.cardBorder
-                        border.width: 1
+                        border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
                         property bool hovered: false
                         scale: hovered ? 1.004 : 1.0
                         transformOrigin: Item.Center
@@ -1366,8 +1426,8 @@ ApplicationWindow {
                                                 ]
                                                 delegate: Rectangle {
                                                     height: 19; width: qkSrcTxt.implicitWidth + 10; radius: 4
-                                                    color: sourceLangCombo.currentValue === modelData.code ? Theme.alpha(Theme.accent, 0.22) : Theme.alpha(Theme.white, 0.05)
-                                                    border.color: sourceLangCombo.currentValue === modelData.code ? Theme.accent : Theme.alpha(Theme.white, 0.1)
+                                                    color: sourceLangCombo.currentValue === modelData.code ? Theme.accentSubtle : Theme.surfaceControl
+                                                    border.color: sourceLangCombo.currentValue === modelData.code ? Theme.accentBorder : Theme.borderControl
                                                     border.width: 1
                                                     Label {
                                                         id: qkSrcTxt; anchors.centerIn: parent; text: modelData.name; font.pixelSize: 10; font.bold: true
@@ -1655,8 +1715,8 @@ ApplicationWindow {
                                                 ]
                                                 delegate: Rectangle {
                                                     height: 19; width: qkTgtTxt.implicitWidth + 10; radius: 4
-                                                    color: targetLangCombo.currentValue === modelData.code ? Theme.alpha(Theme.accent, 0.22) : Theme.alpha(Theme.white, 0.05)
-                                                    border.color: targetLangCombo.currentValue === modelData.code ? Theme.accent : Theme.alpha(Theme.white, 0.1)
+                                                    color: targetLangCombo.currentValue === modelData.code ? Theme.accentSubtle : Theme.surfaceControl
+                                                    border.color: targetLangCombo.currentValue === modelData.code ? Theme.accentBorder : Theme.borderControl
                                                     border.width: 1
                                                     Label {
                                                         id: qkTgtTxt; anchors.centerIn: parent; text: modelData.name; font.pixelSize: 10; font.bold: true
@@ -2213,7 +2273,7 @@ ApplicationWindow {
                         }
                         background: Rectangle {
                             id: startBtnBg
-                            radius: 14
+                            radius: 6
 
                             // Çeviri sırasında çalışan nefes alma (pulsating) animasyonu
                             SequentialAnimation on opacity {
@@ -2227,12 +2287,12 @@ ApplicationWindow {
                                 orientation: Gradient.Horizontal
                                 GradientStop {
                                     position: 0.0
-                                    color: isTranslating ? (startButton.hovered ? Theme.errorHover : Theme.error) : (startButton.hovered ? Theme.accent2 : Theme.accent)
+                                    color: isTranslating ? (startButton.hovered ? Theme.errorHover : Theme.error) : (Theme.themeMode === "cyber_neon" ? Theme.alpha(Theme.accent, 0.25) : (startButton.hovered ? Theme.accentHover : Theme.accent))
                                     Behavior on color { ColorAnimation { duration: 180; easing.type: Easing.OutQuad } }
                                 }
                                 GradientStop {
                                     position: 1.0
-                                    color: isTranslating ? (startButton.hovered ? Theme.error : Theme.errorStrong) : (startButton.hovered ? Theme.accent : Theme.accent2)
+                                    color: isTranslating ? (startButton.hovered ? Theme.error : Theme.errorStrong) : (Theme.themeMode === "cyber_neon" ? Theme.alpha(Theme.accent, 0.40) : (startButton.hovered ? Theme.accentHover : Theme.accent))
                                     Behavior on color { ColorAnimation { duration: 180; easing.type: Easing.OutQuad } }
                                 }
                             }
@@ -2242,9 +2302,9 @@ ApplicationWindow {
                                 anchors.fill: parent
                                 radius: parent.radius
                                 color: "transparent"
-                                border.color: isTranslating ? Theme.error : Theme.accent
-                                border.width: startButton.hovered || isTranslating ? 2 : 0
-                                opacity: startButton.hovered || isTranslating ? 0.6 : 0.0
+                                border.color: isTranslating ? Theme.error : (Theme.themeMode === "cyber_neon" ? Theme.accentHover : Theme.accent)
+                                border.width: Theme.themeMode === "cyber_neon" ? 2 : (startButton.hovered || isTranslating ? 1 : 0)
+                                opacity: Theme.themeMode === "cyber_neon" ? (startButton.hovered ? 0.9 : 0.6) : (startButton.hovered || isTranslating ? 0.5 : 0.0)
                                 Behavior on opacity { NumberAnimation { duration: 180 } }
                                 Behavior on border.width { NumberAnimation { duration: 150 } }
                             }
@@ -2281,7 +2341,7 @@ ApplicationWindow {
                                         anchors.centerIn: parent
                                         glyph: Icons.zap
                                         size: 18
-                                        color: Theme.textOnAccent
+                                        color: Theme.themeMode === "cyber_neon" ? Theme.accent : Theme.textOnAccent
                                         visible: !isTranslating
                                     }
                                 }
@@ -2290,7 +2350,7 @@ ApplicationWindow {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: appBackend.uiTrigger, isTranslating ? appBackend.getTextWithDefault("btn_stop_translation", "STOP TRANSLATION") : appBackend.getTextWithDefault("btn_start_translation", "START TRANSLATION →")
                                     font.pixelSize: 16; font.bold: true
-                                    color: isTranslating ? Theme.white : (startButton.hovered ? Theme.textOnAccent : Theme.textOnAccent)
+                                    color: isTranslating ? Theme.white : (Theme.themeMode === "cyber_neon" ? Theme.txt : Theme.textOnAccent)
                                     font.letterSpacing: 1.1
                                 }
                             }
@@ -2304,7 +2364,7 @@ ApplicationWindow {
                         Layout.preferredHeight: statusInnerCol.implicitHeight + 44
                         radius: 16; color: cardStatus.hovered ? Theme.cardHover : Theme.card
                         border.color: cardStatus.hovered ? Theme.alpha(Theme.accent, 0.4) : Theme.cardBorder
-                        border.width: 1
+                        border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
                         property bool hovered: false
                         scale: hovered ? 1.004 : 1.0
                         transformOrigin: Item.Center
@@ -2565,7 +2625,7 @@ ApplicationWindow {
                         Layout.preferredHeight: 185
                         radius: 16; color: cardLog.hovered ? Theme.cardHover : Theme.card
                         border.color: cardLog.hovered ? Theme.alpha(Theme.accent, 0.4) : Theme.cardBorder
-                        border.width: 1
+                        border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
                         property bool hovered: false
                         scale: hovered ? 1.004 : 1.0
                         transformOrigin: Item.Center
@@ -2759,10 +2819,11 @@ ApplicationWindow {
                         id: cardUiSettings
                         visible: pageSettings.settingsSubTab === 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 160
-                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: 1
+                        Layout.preferredHeight: colUiSettings.implicitHeight + 44
+                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
 
                         ColumnLayout {
+                            id: colUiSettings
                             anchors.fill: parent; anchors.margins: 22; spacing: 14
                             IconLabel { alignment: Qt.AlignLeft; glyph: Icons.monitor; text: appBackend.uiTrigger, appBackend.getTextWithDefault("settings_section_ui", "Arayüz & Sistem Ayarları"); font.pixelSize: 16; font.bold: true; color: Theme.txt; iconColor: Theme.accent }
 
@@ -2793,6 +2854,189 @@ ApplicationWindow {
                                 Item { Layout.fillWidth: true }
                             }
 
+                            // Tema Modu Seçimi (Obsidian / Daylight / Cyber Neon)
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 14
+                                Label {
+                                    text: appBackend.uiTrigger, appBackend.getTextWithDefault("theme_mode_label", "Arayüz Teması:")
+                                    color: Theme.txt; font.bold: true; font.pixelSize: 13
+                                    Layout.preferredWidth: 160
+                                }
+                                RowLayout {
+                                    spacing: 8
+                                    Button {
+                                        id: btnThemeObsidian
+                                        height: 36
+                                        checkable: true
+                                        checked: Theme.themeMode === "obsidian"
+                                        contentItem: Text {
+                                            text: appBackend.uiTrigger, appBackend.getTextWithDefault("theme_obsidian", "Obsidian")
+                                            color: btnThemeObsidian.checked ? (Theme.themeMode === "daylight" ? Theme.accent : Theme.accentHover) : Theme.txt2
+                                            font.pixelSize: 12
+                                            font.bold: btnThemeObsidian.checked
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        background: Rectangle {
+                                            implicitWidth: 110; implicitHeight: 36; radius: 6
+                                            color: btnThemeObsidian.checked ? Theme.accentSubtle : (btnThemeObsidian.hovered ? Theme.cardHover : Theme.input)
+                                            border.color: btnThemeObsidian.checked ? Theme.accentBorder : Theme.cardBorder
+                                            border.width: 1
+                                        }
+                                        onClicked: appBackend.setThemeMode("obsidian")
+                                    }
+                                    Button {
+                                        id: btnThemeDaylight
+                                        height: 36
+                                        checkable: true
+                                        checked: Theme.themeMode === "daylight"
+                                        contentItem: Text {
+                                            text: appBackend.uiTrigger, appBackend.getTextWithDefault("theme_daylight", "Daylight")
+                                            color: btnThemeDaylight.checked ? (Theme.themeMode === "daylight" ? Theme.accent : Theme.accentHover) : Theme.txt2
+                                            font.pixelSize: 12
+                                            font.bold: btnThemeDaylight.checked
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        background: Rectangle {
+                                            implicitWidth: 110; implicitHeight: 36; radius: 6
+                                            color: btnThemeDaylight.checked ? Theme.accentSubtle : (btnThemeDaylight.hovered ? Theme.cardHover : Theme.input)
+                                            border.color: btnThemeDaylight.checked ? Theme.accentBorder : Theme.cardBorder
+                                            border.width: 1
+                                        }
+                                        onClicked: appBackend.setThemeMode("daylight")
+                                    }
+                                    Button {
+                                        id: btnThemeCyberNeon
+                                        height: 36
+                                        checkable: true
+                                        checked: Theme.themeMode === "cyber_neon"
+                                        contentItem: Text {
+                                            text: appBackend.uiTrigger, appBackend.getTextWithDefault("theme_cyber_neon", "Cyber Neon")
+                                            color: btnThemeCyberNeon.checked ? (Theme.themeMode === "daylight" ? Theme.accent : Theme.accentHover) : Theme.txt2
+                                            font.pixelSize: 12
+                                            font.bold: btnThemeCyberNeon.checked
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        background: Rectangle {
+                                            implicitWidth: 110; implicitHeight: 36; radius: 6
+                                            color: btnThemeCyberNeon.checked ? Theme.accentSubtle : (btnThemeCyberNeon.hovered ? Theme.cardHover : Theme.input)
+                                            border.color: btnThemeCyberNeon.checked ? Theme.accentBorder : Theme.cardBorder
+                                            border.width: 1
+                                        }
+                                        onClicked: appBackend.setThemeMode("cyber_neon")
+                                    }
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+
+                            // Vurgu Paleti Seçimi (Cyan / Emerald / Indigo / Amber)
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 14
+                                Label {
+                                    text: appBackend.uiTrigger, appBackend.getTextWithDefault("accent_preset_label", "Vurgu Rengi:")
+                                    color: Theme.txt; font.bold: true; font.pixelSize: 13
+                                    Layout.preferredWidth: 160
+                                }
+                                RowLayout {
+                                    spacing: 8
+                                    Button {
+                                        id: btnAccentCyan
+                                        height: 36
+                                        checkable: true
+                                        checked: Theme.accentPreset === "cyan_teal"
+                                        contentItem: RowLayout {
+                                            anchors.centerIn: parent; spacing: 6
+                                            Rectangle { width: 10; height: 10; radius: 5; color: Theme.presetCyan }
+                                            Text {
+                                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("accent_cyan", "Cyan")
+                                                color: btnAccentCyan.checked ? (Theme.themeMode === "daylight" ? Theme.accent : Theme.accentHover) : Theme.txt2
+                                                font.pixelSize: 12
+                                                font.bold: btnAccentCyan.checked
+                                            }
+                                        }
+                                        background: Rectangle {
+                                            implicitWidth: 96; implicitHeight: 36; radius: 6
+                                            color: btnAccentCyan.checked ? Theme.accentSubtle : (btnAccentCyan.hovered ? Theme.cardHover : Theme.input)
+                                            border.color: btnAccentCyan.checked ? Theme.accentBorder : Theme.cardBorder
+                                            border.width: 1
+                                        }
+                                        onClicked: appBackend.setAccentPreset("cyan_teal")
+                                    }
+                                    Button {
+                                        id: btnAccentEmerald
+                                        height: 36
+                                        checkable: true
+                                        checked: Theme.accentPreset === "emerald"
+                                        contentItem: RowLayout {
+                                            anchors.centerIn: parent; spacing: 6
+                                            Rectangle { width: 10; height: 10; radius: 5; color: Theme.presetEmerald }
+                                            Text {
+                                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("accent_emerald", "Emerald")
+                                                color: btnAccentEmerald.checked ? (Theme.themeMode === "daylight" ? Theme.accent : Theme.accentHover) : Theme.txt2
+                                                font.pixelSize: 12
+                                                font.bold: btnAccentEmerald.checked
+                                            }
+                                        }
+                                        background: Rectangle {
+                                            implicitWidth: 96; implicitHeight: 36; radius: 6
+                                            color: btnAccentEmerald.checked ? Theme.accentSubtle : (btnAccentEmerald.hovered ? Theme.cardHover : Theme.input)
+                                            border.color: btnAccentEmerald.checked ? Theme.accentBorder : Theme.cardBorder
+                                            border.width: 1
+                                        }
+                                        onClicked: appBackend.setAccentPreset("emerald")
+                                    }
+                                    Button {
+                                        id: btnAccentIndigo
+                                        height: 36
+                                        checkable: true
+                                        checked: Theme.accentPreset === "indigo"
+                                        contentItem: RowLayout {
+                                            anchors.centerIn: parent; spacing: 6
+                                            Rectangle { width: 10; height: 10; radius: 5; color: Theme.presetIndigo }
+                                            Text {
+                                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("accent_indigo", "Indigo")
+                                                color: btnAccentIndigo.checked ? (Theme.themeMode === "daylight" ? Theme.accent : Theme.accentHover) : Theme.txt2
+                                                font.pixelSize: 12
+                                                font.bold: btnAccentIndigo.checked
+                                            }
+                                        }
+                                        background: Rectangle {
+                                            implicitWidth: 96; implicitHeight: 36; radius: 6
+                                            color: btnAccentIndigo.checked ? Theme.accentSubtle : (btnAccentIndigo.hovered ? Theme.cardHover : Theme.input)
+                                            border.color: btnAccentIndigo.checked ? Theme.accentBorder : Theme.cardBorder
+                                            border.width: 1
+                                        }
+                                        onClicked: appBackend.setAccentPreset("indigo")
+                                    }
+                                    Button {
+                                        id: btnAccentAmber
+                                        height: 36
+                                        checkable: true
+                                        checked: Theme.accentPreset === "amber"
+                                        contentItem: RowLayout {
+                                            anchors.centerIn: parent; spacing: 6
+                                            Rectangle { width: 10; height: 10; radius: 5; color: Theme.presetAmber }
+                                            Text {
+                                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("accent_amber", "Amber")
+                                                color: btnAccentAmber.checked ? (Theme.themeMode === "daylight" ? Theme.accent : Theme.accentHover) : Theme.txt2
+                                                font.pixelSize: 12
+                                                font.bold: btnAccentAmber.checked
+                                            }
+                                        }
+                                        background: Rectangle {
+                                            implicitWidth: 96; implicitHeight: 36; radius: 6
+                                            color: btnAccentAmber.checked ? Theme.accentSubtle : (btnAccentAmber.hovered ? Theme.cardHover : Theme.input)
+                                            border.color: btnAccentAmber.checked ? Theme.accentBorder : Theme.cardBorder
+                                            border.width: 1
+                                        }
+                                        onClicked: appBackend.setAccentPreset("amber")
+                                    }
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 16
                                 ColumnLayout {
@@ -2814,7 +3058,7 @@ ApplicationWindow {
                         visible: pageSettings.settingsSubTab === 0
                         Layout.fillWidth: true
                         Layout.preferredHeight: outCol.implicitHeight + 44
-                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: 1
+                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
                         Behavior on Layout.preferredHeight { NumberAnimation { duration: 200 } }
 
                         ColumnLayout {
@@ -2841,7 +3085,7 @@ ApplicationWindow {
 
                                         background: Rectangle {
                                             radius: 10
-                                            color: appBackend.outputMode === "strings" ? Theme.alpha(Theme.accent, 0.15) : (btnStringsMode.hovered ? Theme.alpha(Theme.white, 0.08) : Theme.input)
+                                            color: appBackend.outputMode === "strings" ? Theme.accentSubtle : (btnStringsMode.hovered ? Theme.surfaceHover : Theme.surfaceControl)
                                             border.color: appBackend.outputMode === "strings" ? Theme.accent : Theme.cardBorder
                                             border.width: appBackend.outputMode === "strings" ? 2 : 1
                                             Behavior on color { ColorAnimation { duration: 150 } }
@@ -2865,7 +3109,7 @@ ApplicationWindow {
 
                                         background: Rectangle {
                                             radius: 10
-                                            color: appBackend.outputMode === "native" ? Theme.alpha(Theme.accent, 0.15) : (btnNativeMode.hovered ? Theme.alpha(Theme.white, 0.08) : Theme.input)
+                                            color: appBackend.outputMode === "native" ? Theme.accentSubtle : (btnNativeMode.hovered ? Theme.surfaceHover : Theme.surfaceControl)
                                             border.color: appBackend.outputMode === "native" ? Theme.accent : Theme.cardBorder
                                             border.width: appBackend.outputMode === "native" ? 2 : 1
                                             Behavior on color { ColorAnimation { duration: 150 } }
@@ -2885,7 +3129,7 @@ ApplicationWindow {
 
                                 Rectangle {
                                     Layout.fillWidth: true; Layout.preferredHeight: descLayout.implicitHeight + 16
-                                    radius: 8; color: Theme.alpha(Theme.white, 0.03); border.color: Theme.cardBorder; border.width: 1
+                                    radius: 8; color: Theme.surfaceSubtle; border.color: Theme.cardBorder; border.width: 1
                                     RowLayout {
                                         id: descLayout; anchors.fill: parent; anchors.margins: 8; spacing: 8
                                         Icon { glyph: Icons.lightbulb; size: 14; color: Theme.txt2; Layout.alignment: Qt.AlignTop }
@@ -2903,7 +3147,7 @@ ApplicationWindow {
                                 Rectangle {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: tipLayout.implicitHeight + 16
-                                    radius: 8; color: Theme.alpha(Theme.warn, 0.08); border.color: Theme.alpha(Theme.warn, 0.25); border.width: 1
+                                    radius: 8; color: Theme.statusWarningSubtle; border.color: Theme.statusWarningBorder; border.width: 1
                                     visible: appBackend.outputMode === "native"
                                     RowLayout {
                                         id: tipLayout
@@ -2929,6 +3173,19 @@ ApplicationWindow {
                                     Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("activate_language_desc", "Adds a small file to game/ that switches the game to the target language at launch. Turn off if you only want the tl/ files (e.g. to ship the translation yourself and let players choose the language)."); color: Theme.txt2; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 }
                                 Switch { checked: appBackend.activateLanguageOnLaunch; onToggled: appBackend.activateLanguageOnLaunch = checked }
+                            }
+
+                            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.cardBorder }
+
+                            // Karakter ve Konuşmacı İsimlerini Çevir (Character("Name") toggle)
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 10
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("translate_character_names_title", "Translate Character & Speaker Names"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("translate_character_names_desc", "Extracts and translates Character('Name') definitions. Recommended to keep OFF to prevent translating proper names into literal words."); color: Theme.txt2; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                }
+                                Switch { checked: appBackend.translateCharacterNames; onToggled: appBackend.translateCharacterNames = checked }
                             }
 
                             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.cardBorder }
@@ -2960,7 +3217,7 @@ ApplicationWindow {
                         radius: 16
                         color: Theme.alpha(Theme.error, 0.04)
                         border.color: Theme.alpha(Theme.error, 0.3)
-                        border.width: 1
+                        border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
 
                         ColumnLayout {
                             id: dangerCol
@@ -3013,7 +3270,7 @@ ApplicationWindow {
                         visible: pageSettings.settingsSubTab === 2
                         Layout.fillWidth: true
                         Layout.preferredHeight: perfCol.implicitHeight + 44
-                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: 1
+                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
                         Behavior on Layout.preferredHeight { NumberAnimation { duration: 200 } }
 
                         ColumnLayout {
@@ -3107,7 +3364,7 @@ ApplicationWindow {
                         visible: pageSettings.settingsSubTab === 1
                         Layout.fillWidth: true
                         Layout.preferredHeight: aiCol.implicitHeight + 44
-                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: 1
+                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
                         Behavior on Layout.preferredHeight { NumberAnimation { duration: 200 } }
 
                         ColumnLayout {
@@ -3837,7 +4094,7 @@ ApplicationWindow {
                         visible: pageSettings.settingsSubTab === 1
                         Layout.fillWidth: true
                         Layout.preferredHeight: aiTuningCol.implicitHeight + 44
-                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: 1
+                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
                         Behavior on Layout.preferredHeight { NumberAnimation { duration: 200 } }
 
                         ColumnLayout {
@@ -4218,7 +4475,7 @@ ApplicationWindow {
                                     spacing: 12; Layout.fillWidth: true
                                     Rectangle {
                                         width: 38; height: 38; radius: 8; color: Theme.alpha(Theme.accent, 0.1)
-                                        border.color: Theme.alpha(Theme.accent, 0.3); border.width: 1
+                                        border.color: Theme.accentBorder; border.width: 1
                                         Icon { anchors.centerIn: parent; glyph: Icons.type; size: 18; color: Theme.accent }
                                     }
                                     ColumnLayout {
@@ -4325,7 +4582,7 @@ ApplicationWindow {
                                     spacing: 12; Layout.fillWidth: true
                                     Rectangle {
                                         width: 38; height: 38; radius: 8; color: Theme.alpha(Theme.success, 0.1)
-                                        border.color: Theme.alpha(Theme.success, 0.3); border.width: 1
+                                        border.color: Theme.statusSuccessBorder; border.width: 1
                                         Icon { anchors.centerIn: parent; glyph: Icons.bookA; size: 18; color: Theme.success }
                                     }
                                     ColumnLayout {
@@ -4388,7 +4645,7 @@ ApplicationWindow {
                                     spacing: 12; Layout.fillWidth: true
                                     Rectangle {
                                         width: 38; height: 38; radius: 8; color: Theme.alpha(Theme.accent, 0.1)
-                                        border.color: Theme.alpha(Theme.accent, 0.3); border.width: 1
+                                        border.color: Theme.accentBorder; border.width: 1
                                         Icon { anchors.centerIn: parent; glyph: Icons.flag; size: 18; color: Theme.accent }
                                     }
                                     ColumnLayout {
@@ -4767,7 +5024,7 @@ ApplicationWindow {
     Dialog {
         id: completionDialog
         anchors.centerIn: parent
-        width: Math.min(540, root.width * 0.88)
+        width: Math.min(600, root.width * 0.90)
         padding: 0
         header: null
         footer: null
@@ -4795,7 +5052,7 @@ ApplicationWindow {
         background: Rectangle {
             color: Theme.card
             radius: 18
-            border.color: Theme.alpha(Theme.accent, 0.45)
+            border.color: Theme.accentBorder
             border.width: 1.5
             clip: true
 
@@ -4885,7 +5142,7 @@ ApplicationWindow {
                 Layout.preferredHeight: summaryCol.implicitHeight + 24
                 radius: 12
                 color: Theme.input
-                border.color: Theme.alpha(Theme.white, 0.08)
+                border.color: Theme.borderControl
                 border.width: 1
 
                 ColumnLayout {
@@ -4894,9 +5151,211 @@ ApplicationWindow {
                     anchors.margins: 14
                     spacing: 10
 
+                    // Rich stats bindings (v2.8.21)
+                    readonly property var st: appBackend.completionStats
+                    readonly property bool hasStats: !!(st && st.total > 0)
+                    readonly property real playPct: hasStats ? (st.playable_pct !== undefined ? st.playable_pct : 100.0) : 100.0
+                    readonly property int totalCnt: hasStats ? (st.total || 0) : 0
+                    readonly property int transCnt: hasStats ? (st.translated || 0) : 0
+                    readonly property int sameCnt: hasStats ? (st.same_as_source || 0) : 0
+                    readonly property int pendCnt: hasStats ? (st.pending || 0) : 0
+
+                    // 2a. Oynanabilirlik Başlığı & Çubuğu
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        visible: summaryCol.hasStats
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Icon {
+                                glyph: Icons.gamepad2
+                                size: 16
+                                color: summaryCol.playPct >= 98.0 ? Theme.success : (summaryCol.playPct >= 90.0 ? Theme.accent : Theme.warn)
+                            }
+
+                            Label {
+                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("completion_playable_rate", "Playable: {pct}% Ready").replace("{pct}", summaryCol.playPct.toFixed(1))
+                                font.pixelSize: 13
+                                font.bold: true
+                                color: summaryCol.playPct >= 98.0 ? Theme.success : (summaryCol.playPct >= 90.0 ? Theme.accent : Theme.warn)
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Label {
+                                text: appBackend.uiTrigger, (summaryCol.st && summaryCol.st.saved_count ? appBackend.getTextWithDefault("completion_saved_files", "{count} files updated").replace("{count}", summaryCol.st.saved_count) : "")
+                                font.pixelSize: 11
+                                color: Theme.txtDim
+                                visible: !!(summaryCol.st && summaryCol.st.saved_count)
+                            }
+                        }
+
+                        // Mini dolum çizgisi
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 5
+                            radius: 2.5
+                            color: Theme.inputDeep
+
+                            Rectangle {
+                                width: Math.max(6, Math.min(parent.width, parent.width * (summaryCol.playPct / 100.0)))
+                                height: parent.height
+                                radius: 2.5
+                                gradient: Gradient {
+                                    orientation: Gradient.Horizontal
+                                    GradientStop { position: 0.0; color: Theme.accent }
+                                    GradientStop { position: 1.0; color: summaryCol.playPct >= 98.0 ? Theme.success : Theme.accent2 }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2b. 3'lü İstatistik Rozetleri (Badge Grid)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        visible: summaryCol.hasStats
+
+                        // Kart 1: Çevrilen
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 64
+                            radius: 8
+                            color: Theme.statusSuccessSubtle
+                            border.color: Theme.statusSuccessBorder
+                            border.width: 1
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                spacing: 2
+
+                                RowLayout {
+                                    spacing: 4
+                                    Icon { glyph: Icons.circleCheck; size: 12; color: Theme.success }
+                                    Label {
+                                        text: summaryCol.transCnt.toLocaleString()
+                                        font.bold: true; font.pixelSize: 16; color: Theme.txt
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Label {
+                                        text: summaryCol.totalCnt > 0 ? ((summaryCol.transCnt / summaryCol.totalCnt) * 100).toFixed(1) + "%" : ""
+                                        font.pixelSize: 11; font.bold: true; color: Theme.success
+                                    }
+                                }
+                                Label {
+                                    text: appBackend.uiTrigger, appBackend.getTextWithDefault("completion_badge_translated", "Translated Texts")
+                                    font.pixelSize: 11; color: Theme.txt2; elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+                        }
+
+                        // Kart 2: Orijinal Korunan (İsimler, Sesler)
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 64
+                            radius: 8
+                            color: Theme.accentSubtle
+                            border.color: Theme.accentBorder
+                            border.width: 1
+
+                            ToolTip.visible: sameCardMa.containsMouse
+                            ToolTip.text: appBackend.uiTrigger, appBackend.getTextWithDefault("completion_tooltip_identical", "Character names, sound effects, and symbols that naturally stay identical.")
+                            ToolTip.delay: 300
+
+                            MouseArea {
+                                id: sameCardMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                            }
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                spacing: 2
+
+                                RowLayout {
+                                    spacing: 4
+                                    Icon { glyph: Icons.languages; size: 12; color: Theme.accent }
+                                    Label {
+                                        text: summaryCol.sameCnt.toLocaleString()
+                                        font.bold: true; font.pixelSize: 16; color: Theme.txt
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Label {
+                                        text: summaryCol.totalCnt > 0 ? ((summaryCol.sameCnt / summaryCol.totalCnt) * 100).toFixed(1) + "%" : ""
+                                        font.pixelSize: 11; font.bold: true; color: Theme.accent
+                                    }
+                                }
+                                Label {
+                                    text: appBackend.uiTrigger, appBackend.getTextWithDefault("completion_badge_identical", "Kept as Original")
+                                    font.pixelSize: 11; color: Theme.txt2; elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+                        }
+
+                        // Kart 3: Güvenlik Koruması / Bekleyen
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 64
+                            radius: 8
+                            color: summaryCol.pendCnt > 0 ? Theme.statusWarningSubtle : Theme.surfaceControl
+                            border.color: summaryCol.pendCnt > 0 ? Theme.statusWarningBorder : Theme.borderControl
+                            border.width: 1
+
+                            ToolTip.visible: pendCardMa.containsMouse
+                            ToolTip.text: appBackend.uiTrigger, appBackend.getTextWithDefault("completion_tooltip_protected", "Lines preserved to avoid syntax errors.")
+                            ToolTip.delay: 300
+
+                            MouseArea {
+                                id: pendCardMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                            }
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                spacing: 2
+
+                                RowLayout {
+                                    spacing: 4
+                                    Icon {
+                                        glyph: summaryCol.pendCnt > 0 ? Icons.shieldAlert : Icons.circleCheck
+                                        size: 12
+                                        color: summaryCol.pendCnt > 0 ? Theme.warn : Theme.txtDim
+                                    }
+                                    Label {
+                                        text: summaryCol.pendCnt.toLocaleString()
+                                        font.bold: true; font.pixelSize: 16
+                                        color: summaryCol.pendCnt > 0 ? Theme.warn : Theme.txtDim
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Label {
+                                        text: summaryCol.pendCnt === 0 ? "✓" : ""
+                                        font.pixelSize: 11; font.bold: true
+                                        color: Theme.success
+                                    }
+                                }
+                                Label {
+                                    text: appBackend.uiTrigger, appBackend.getTextWithDefault("completion_badge_protected", "Safety Guard")
+                                    font.pixelSize: 11; color: Theme.txt2; elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+                        }
+                    }
+
+                    // 2c. Geriye Uyumluluk Fallback (Eğer stats yoksa)
                     RowLayout {
                         spacing: 10
                         Layout.fillWidth: true
+                        visible: !summaryCol.hasStats
 
                         Rectangle {
                             width: 26; height: 26; radius: 6
@@ -5005,6 +5464,70 @@ ApplicationWindow {
                 }
             }
 
+            // 3b. Destek satırı: yalnızca 3. tamamlanan çeviriden itibaren, kapatılınca bir daha gösterilmez
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                visible: !!appBackend.completionStats.show_support
+                implicitHeight: supportCol.implicitHeight + 20
+                radius: 10
+                color: Theme.alpha(Theme.support, 0.07)
+                border.color: Theme.alpha(Theme.support, 0.35)
+                border.width: 1
+
+                ColumnLayout {
+                    id: supportCol
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 6
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Icon { glyph: Icons.heart; size: 16; color: Theme.support }
+                        Label {
+                            Layout.fillWidth: true
+                            text: appBackend.uiTrigger, appBackend.getTextWithDefault("completion_support_text", "If this tool saved you time, you can support its developer.")
+                            font.pixelSize: 12
+                            color: Theme.txt2
+                            wrapMode: Text.WordWrap
+                        }
+                        Button {
+                            id: supportBtn
+                            implicitHeight: 28
+                            implicitWidth: supportLabel.implicitWidth + 24
+                            topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0; padding: 0
+                            onClicked: Qt.openUrlExternally("https://www.patreon.com/cw/LordOfTurk")
+                            background: Rectangle {
+                                radius: 8
+                                color: Theme.alpha(Theme.support, supportBtn.hovered ? 0.28 : 0.16)
+                                border.color: Theme.alpha(Theme.support, 0.6)
+                                border.width: 1
+                                Behavior on color { ColorAnimation { duration: 140 } }
+                            }
+                            contentItem: Label {
+                                id: supportLabel
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("completion_support_btn", "Support")
+                                font.pixelSize: 11
+                                font.bold: true
+                                color: Theme.support
+                            }
+                        }
+                    }
+
+                    CheckBox {
+                        text: appBackend.uiTrigger, appBackend.getTextWithDefault("completion_support_hide", "Don't show again")
+                        font.pixelSize: 11
+                        padding: 0
+                        onToggled: appBackend.setHideSupportPrompt(checked)
+                    }
+                }
+            }
+
             // 3. Alt Butonlar Grubu
             RowLayout {
                 Layout.fillWidth: true
@@ -5107,7 +5630,7 @@ ApplicationWindow {
         background: Rectangle {
             color: Theme.card
             radius: 18
-            border.color: Theme.alpha(Theme.accent, 0.45)
+            border.color: Theme.accentBorder
             border.width: 1.5
             clip: true
 
@@ -5193,7 +5716,7 @@ ApplicationWindow {
                 Layout.preferredHeight: updateBodyCol.implicitHeight + 24
                 radius: 12
                 color: Theme.input
-                border.color: Theme.alpha(Theme.white, 0.08)
+                border.color: Theme.borderControl
                 border.width: 1
 
                 ColumnLayout {
@@ -5390,7 +5913,7 @@ ApplicationWindow {
                 Layout.preferredHeight: resetBodyLbl.implicitHeight + 24
                 radius: 12
                 color: Theme.input
-                border.color: Theme.alpha(Theme.white, 0.08)
+                border.color: Theme.borderControl
                 border.width: 1
 
                 Label {
@@ -5571,7 +6094,7 @@ ApplicationWindow {
                 Layout.preferredHeight: resetDoneBodyLbl.implicitHeight + 24
                 radius: 12
                 color: Theme.input
-                border.color: Theme.alpha(Theme.white, 0.08)
+                border.color: Theme.borderControl
                 border.width: 1
 
                 Label {

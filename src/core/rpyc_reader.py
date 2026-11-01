@@ -1968,6 +1968,39 @@ class ASTTextExtractor:
         # Otherwise treat as a literal label.
         self._add_text(text, line_number, 'ui', context=context, node_type=node_type)
     
+    _USE_TEXT_KEYWORDS = frozenset({
+        'text', 'label', 'title', 'caption', 'tooltip', 'alt', 'message', 'description', 'prompt',
+    })
+
+    def _extract_use_arguments(self, args: Any, line_number: int, context: str) -> None:
+        """Pull button/label text out of ``use widget("New Game", Start())``.
+
+        Games wrap their buttons in their own screens, so the text reaches the
+        game as a plain string literal argument. Ren'Py translates it when the
+        widget renders it, but only if we emit an entry for it. Bare positional
+        literals are accepted when they start with a capital letter, so ids and
+        style names such as ``"inventory"`` stay out.
+        """
+        pairs = getattr(args, 'arguments', None)
+        if not isinstance(pairs, (list, tuple)):
+            return
+        for pair in pairs:
+            if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+                continue
+            name, expr = pair[0], pair[1]
+            source = getattr(expr, 'source', expr)
+            if not isinstance(source, str):
+                continue
+            source = source.strip()
+            if len(source) >= 2 and source[0] in "\"'" and source[-1] == source[0]:
+                text = self._extract_string_content(source)
+                if not text:
+                    continue
+                if name in self._USE_TEXT_KEYWORDS or (name is None and text[:1].isupper()):
+                    self._add_text(text, line_number, 'ui', context=context, node_type='SLUse')
+            elif "_(" in source:
+                self._extract_strings_from_code(source, line_number)
+
     def _process_node(self, node: Any, context: str = "", identifier: str = "") -> None:
         """Process a single AST node."""
         if node is None:
@@ -2314,6 +2347,9 @@ class ASTTextExtractor:
 
         # SL2 Use
         elif isinstance(node, FakeSLUse):
+            loc = getattr(node, 'location', None)
+            line_number = loc[1] if isinstance(loc, (list, tuple)) and len(loc) > 1 and isinstance(loc[1], int) else 0
+            self._extract_use_arguments(getattr(node, 'args', None), line_number, context)
             block = getattr(node, 'block', None)
             if block:
                 self._process_screen_node(block, context)

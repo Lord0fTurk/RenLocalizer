@@ -1,6 +1,7 @@
 // GlossaryAddDialog.qml — Reusable Glossary Addition Dialog
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 
 Dialog {
@@ -123,7 +124,7 @@ Dialog {
             Layout.preferredHeight: glossaryFormCol.implicitHeight + 24
             radius: 12
             color: Theme.input
-            border.color: Theme.alpha(Theme.white, 0.08)
+            border.color: Theme.borderControl
             border.width: 1
 
             ColumnLayout {

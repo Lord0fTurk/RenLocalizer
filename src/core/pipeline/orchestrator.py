@@ -604,9 +604,16 @@ class TranslationPipeline(QObject):
         stats['syntax_issues'] = len(syntax_issues)
         stats['stopped'] = bool(stopped or counts.get('stopped'))
         stats['partial'] = bool(pending or failed_writes or stats.get('empty') or stats['stopped'] or syntax_issues)
+        total = stats.get('total', 0)
+        translated = stats.get('translated', 0)
+        same = stats.get('same_as_source', 0)
+        playable_count = translated + same
+        stats['playable_count'] = playable_count
+        stats['playable_pct'] = round((playable_count / total * 100.0) if total else 100.0, 1)
         return stats
 
     def _completion_message(self, stats, saved_count):
+        stats['saved_count'] = saved_count
         total = stats.get('total', 0)
         translated = stats.get('translated', 0)
         pct = (translated / total * 100.0) if total else 0.0

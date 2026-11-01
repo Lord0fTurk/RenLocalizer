@@ -29,6 +29,7 @@ from src.core.syntax_guard import (
 )
 from src.version import VERSION as _APP_VERSION
 from .base import (
+    IN_FALLBACK,
     BaseTranslator,
     TranslationEngine,
     TranslationRequest,
@@ -1133,12 +1134,15 @@ class BingTranslator(BaseTranslator):
                     "[Bing] {count} item(s) failed ({reason}); delegating to fallback engine.",
                     count=len(failed_indices), reason=first_err,
                 ))
+                token = IN_FALLBACK.set(True)
                 try:
                     fb_out = await fallback.translate_batch([requests[i] for i in failed_indices])
                     if fb_out and len(fb_out) == len(failed_indices):
                         fb_results = list(fb_out)
                 except Exception as exc:
                     self.logger.warning("Bing fallback translator failed: %s", exc)
+                finally:
+                    IN_FALLBACK.reset(token)
             fb_engine = getattr(getattr(fallback, "_engine", None), "value", "fallback")
             for pos, i in enumerate(failed_indices):
                 fb = fb_results[pos]

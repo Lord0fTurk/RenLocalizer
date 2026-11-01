@@ -72,6 +72,8 @@ class SettingsBackend:
             "enable_desktop_notifications": [],
             "rpyc_reader": [],
             "deep_scan": [],
+            "activate_language_on_launch": [],
+            "translate_character_names": [],
             "stateful_lexer": [],
             "selected_engine": [],
             # OpenAI
@@ -113,6 +115,9 @@ class SettingsBackend:
             "output_mode": [],
             # UI language
             "language": [],
+            # UI Theme & Accent
+            "theme_mode": [],
+            "accent_preset": [],
             # Glossary
             "glossary": [],
         }
@@ -121,8 +126,7 @@ class SettingsBackend:
 
     def on(self, event: str, cb: Callable) -> None:
         """Register a callback for the given event name."""
-        if event in self._callbacks:
-            self._callbacks[event].append(cb)
+        self._callbacks.setdefault(event, []).append(cb)
 
     def _emit(self, event: str, *args: Any) -> None:
         """Fire all registered callbacks for *event*."""
@@ -237,6 +241,13 @@ class SettingsBackend:
     def set_activate_language_on_launch(self, val: bool) -> None:
         self.config.translation_settings.activate_language_on_launch = bool(val)
         self._emit("activate_language_on_launch")
+
+    def get_translate_character_names(self) -> bool:
+        return bool(getattr(self.config.translation_settings, "translate_character_names", False))
+
+    def set_translate_character_names(self, val: bool) -> None:
+        self.config.translation_settings.translate_character_names = bool(val)
+        self._emit("translate_character_names")
 
     def get_enable_stateful_lexer(self) -> bool:
         return getattr(self.config.translation_settings, "enable_stateful_lexer", False)
@@ -442,9 +453,9 @@ class SettingsBackend:
         """Restore the first-launch state.
 
         Resets every setting to its default and removes all persisted user
-        data inside the data directory: glossary / critical-terms /
-        never-translate files, per-project translation caches, external TM
-        files, logs and migration markers. The default config is then saved
+        data inside the data directory: glossary / never-translate files,
+        per-project translation caches, external TM files, logs and migration
+        markers. The default config is then saved
         so the next launch starts clean.
         """
         import shutil
@@ -456,7 +467,7 @@ class SettingsBackend:
         # 1) Standalone user-data files
         for filename in (
             "glossary.json",
-            "critical_terms.json",
+            "critical_terms.json",  # legacy: no longer read, still cleaned up
             "never_translate.json",
             ".migrated_286",
         ):
@@ -481,7 +492,6 @@ class SettingsBackend:
         # 3) Reset in-memory settings and persist the defaults
         self.config.reset_to_defaults()
         self.config.glossary = {}
-        self.config.critical_terms = []
         self.config.never_translate_rules = {}
         self.config.save_config()
 
@@ -673,6 +683,30 @@ class SettingsBackend:
             self._emit("language", lang_code)
         except Exception as e:
             self.logger.warning("Error setting UI language: %s", e)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  UI Theme & Accent
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def get_theme_mode(self) -> str:
+        return self.config.app_settings.theme_mode or "obsidian"
+
+    def set_theme_mode(self, mode: str) -> None:
+        if mode not in ("obsidian", "daylight", "cyber_neon"):
+            mode = "obsidian"
+        self.config.app_settings.theme_mode = mode
+        self.config.save_config()
+        self._emit("theme_mode", mode)
+
+    def get_accent_preset(self) -> str:
+        return self.config.app_settings.accent_preset or "cyan_teal"
+
+    def set_accent_preset(self, preset: str) -> None:
+        if preset not in ("cyan", "cyan_teal", "emerald", "indigo", "amber"):
+            preset = "cyan_teal"
+        self.config.app_settings.accent_preset = preset
+        self.config.save_config()
+        self._emit("accent_preset", preset)
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  Target Language

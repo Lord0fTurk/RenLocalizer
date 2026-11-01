@@ -14,7 +14,6 @@ class MockConfig:
         self.api_keys = MagicMock()
         self.proxy_settings = MagicMock()
         self.glossary = {"hero": "Kahraman"}
-        self.critical_terms = ["mana"]
         self.never_translate_rules = {"Excalibur": True}
         self.reset_to_defaults = MagicMock()
         self.save_config = MagicMock()
@@ -62,7 +61,6 @@ def test_factory_reset_wipes_user_data(tmp_path: Path) -> None:
     config.reset_to_defaults.assert_called_once()
     config.save_config.assert_called_once()
     assert config.glossary == {}
-    assert config.critical_terms == []
     assert config.never_translate_rules == {}
 
 

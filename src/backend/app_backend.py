@@ -45,6 +45,9 @@ from src.core.translation_pipeline import TranslationPipeline, PipelineWorker
 from src.core.tl_parser import TLParser, get_translation_stats
 from src.backend.settings_backend import SettingsBackend
 
+# The completion dialog asks for support only after this many finished runs (never on the first ones).
+SUPPORT_PROMPT_MIN_RUNS = 3
+
 
 def _normalize_path(raw: str) -> str:
     """QML file:// URI'sini veya ham yolu OS path'e dönüştür."""
@@ -99,6 +102,7 @@ class AppBackend(QObject):
             "reviewNoteCount",
         ],
     )
+    completionStatsChanged = pyqtSignal()
     warningMessage = pyqtSignal(str, str, arguments=["title", "message"])
     updateAvailable = pyqtSignal(
         str, str, str, arguments=["currentVersion", "latestVersion", "releaseUrl"]
@@ -122,6 +126,7 @@ class AppBackend(QObject):
     enableRpycReaderChanged = pyqtSignal()
     enableDeepScanChanged = pyqtSignal()
     activateLanguageOnLaunchChanged = pyqtSignal()
+    translateCharacterNamesChanged = pyqtSignal()
     enableStatefulLexerChanged = pyqtSignal()
     enableDesktopNotificationsChanged = pyqtSignal()
     checkForUpdatesOnStartupChanged = pyqtSignal()
@@ -159,6 +164,8 @@ class AppBackend(QObject):
     aiBatchFormatChanged = pyqtSignal()
     aiSceneBatchSizeChanged = pyqtSignal()
     outputModeChanged = pyqtSignal()
+    themeModeChanged = pyqtSignal(str)
+    accentPresetChanged = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -210,6 +217,7 @@ class AppBackend(QObject):
         # Owns the optional built-in llama-server child process (GGUF runner).
         self.llama_server = LlamaServerManager(log_callback=self.logMessage.emit)
         self._runtime_progress_pct: int = -1
+        self._completion_stats_data: dict = {}
         # A hard kill of a previous run never reached shutdown(); reclaim the
         # VRAM and port a surviving llama-server would still be holding.
         try:
@@ -239,6 +247,7 @@ class AppBackend(QObject):
         self.settings.on("rpyc_reader", lambda: self.enableRpycReaderChanged.emit())
         self.settings.on("deep_scan", lambda: self.enableDeepScanChanged.emit())
         self.settings.on("activate_language_on_launch", lambda: self.activateLanguageOnLaunchChanged.emit())
+        self.settings.on("translate_character_names", lambda: self.translateCharacterNamesChanged.emit())
         self.settings.on("stateful_lexer", lambda: self.enableStatefulLexerChanged.emit())
         self.settings.on("selected_engine", lambda engine_str: self.selectedEngineChanged.emit(engine_str))
         self.settings.on("openai_api_key", lambda: self.openaiApiKeyChanged.emit())
@@ -275,6 +284,8 @@ class AppBackend(QObject):
         self.settings.on("ai_scene_batch_size", lambda: self.aiSceneBatchSizeChanged.emit())
         self.settings.on("output_mode", lambda: self.outputModeChanged.emit())
         self.settings.on("language", lambda lang_code: self.languageChanged.emit(lang_code))
+        self.settings.on("theme_mode", lambda mode: self.themeModeChanged.emit(mode))
+        self.settings.on("accent_preset", lambda preset: self.accentPresetChanged.emit(preset))
         self.settings.on("glossary", lambda: self.glossaryChanged.emit())
         self._builtinServerPrepared.connect(self._on_builtin_server_prepared)
         self._projectInfoReady.connect(self._on_project_info_ready)
@@ -554,6 +565,10 @@ class AppBackend(QObject):
     def isTranslating(self) -> bool:
         return self._is_translating
 
+    @pyqtProperty("QVariantMap", notify=completionStatsChanged)
+    def completionStats(self) -> dict:
+        return getattr(self, "_completion_stats_data", {})
+
     @pyqtProperty(bool, notify=uiTriggerChanged)
     def uiTrigger(self) -> bool:
         return self._ui_trigger
@@ -698,6 +713,14 @@ class AppBackend(QObject):
     @activateLanguageOnLaunch.setter
     def activateLanguageOnLaunch(self, val: bool) -> None:
         self.settings.set_activate_language_on_launch(val)
+
+    @pyqtProperty(bool, notify=translateCharacterNamesChanged)
+    def translateCharacterNames(self) -> bool:
+        return self.settings.get_translate_character_names()
+
+    @translateCharacterNames.setter
+    def translateCharacterNames(self, val: bool) -> None:
+        self.settings.set_translate_character_names(val)
 
     @pyqtProperty(bool, notify=enableStatefulLexerChanged)
     def enableStatefulLexer(self) -> bool:
@@ -1267,6 +1290,24 @@ class AppBackend(QObject):
         self.settings.set_ui_language(lang_code)
         self.refreshUI()
 
+    # ── UI Theme & Accent Slots ──────────────────────────────────────────
+
+    @pyqtSlot(result=str)
+    def getCurrentThemeMode(self) -> str:
+        return self.settings.get_theme_mode()
+
+    @pyqtSlot(str)
+    def setThemeMode(self, mode: str) -> None:
+        self.settings.set_theme_mode(mode)
+
+    @pyqtSlot(result=str)
+    def getCurrentAccentPreset(self) -> str:
+        return self.settings.get_accent_preset()
+
+    @pyqtSlot(str)
+    def setAccentPreset(self, preset: str) -> None:
+        self.settings.set_accent_preset(preset)
+
     # ── Language Slots ───────────────────────────────────────────────────
 
     @pyqtSlot(result=list)
@@ -1438,6 +1479,12 @@ class AppBackend(QObject):
         self.config.app_settings.recent_projects = []
         self.config.save_config()
         self.recentProjectsChanged.emit()
+
+    @pyqtSlot(bool)
+    def setHideSupportPrompt(self, hide: bool) -> None:
+        """'Don't show again' in the completion dialog's support row."""
+        self.config.app_settings.hide_support_prompt = bool(hide)
+        self.config.save_config()
 
     @pyqtSlot(result=bool)
     def launchGame(self) -> bool:
@@ -1650,6 +1697,30 @@ class AppBackend(QObject):
         translated = stats.get("translated", 0)
         untranslated = stats.get("untranslated", total - translated)
         self.statsReady.emit(total, translated, untranslated)
+
+        # Rich completion stats for v2.8.21 dialog
+        same = stats.get("same_as_source", 0)
+        playable_count = stats.get("playable_count", translated + same)
+        playable_pct = stats.get("playable_pct", round((playable_count / total * 100.0) if total else 100.0, 1))
+        app = self.config.app_settings
+        if success and translated:
+            app.completed_runs += 1
+            self.config.save_config()
+        self._completion_stats_data = {
+            "show_support": bool(success and app.completed_runs >= SUPPORT_PROMPT_MIN_RUNS and not app.hide_support_prompt),
+            "total": total,
+            "translated": translated,
+            "same_as_source": same,
+            "empty": stats.get("empty", 0),
+            "pending": stats.get("pending", 0),
+            "guard_blocked": stats.get("guard_blocked", 0),
+            "engine_failed": stats.get("engine_failed", 0),
+            "playable_count": playable_count,
+            "playable_pct": playable_pct,
+            "saved_count": stats.get("saved_count", 0),
+            "partial": bool(stats.get("partial", False)),
+        }
+        self.completionStatsChanged.emit()
 
         # Tamamlanma özeti
         if success:

@@ -492,8 +492,27 @@ def manage_runtime_hook(project_path: str, target_language: str, config, log_emi
                     logger.debug("Failed to remove .rpyc hook file (duplicate rm)")
             log_emit('info', config.get_ui_text("log_hook_removed").replace("{filename}", hook_filename))
 
+        manage_numbered_choice_hook(game_dir, use_native, log_emit)
+
     except Exception as e:
         logger.warning(f"Failed to manage runtime hook: {e}")
+
+
+def manage_numbered_choice_hook(game_dir: Path, enabled: bool, log_emit) -> None:
+    """Write the numbered-choice fix only for native output of a game that needs it."""
+    from src.core.numbered_choices import HOOK_FILENAME, game_builds_numbered_choices, render_hook
+    from src.utils.encoding import save_text_safely
+
+    hook_path = Path(game_dir) / HOOK_FILENAME
+    compiled = Path(game_dir) / (HOOK_FILENAME + "c")
+    needed = enabled and game_builds_numbered_choices(game_dir)
+    if needed:
+        save_text_safely(hook_path, render_hook(), encoding="utf-8")
+        compiled.unlink(missing_ok=True)
+        log_emit('info', f"Numbered menu choices detected: wrote {HOOK_FILENAME} so their captions get translated.")
+        return
+    for stale in (hook_path, compiled):
+        stale.unlink(missing_ok=True)
 
 
 def remove_language_init_files(game_dir: str) -> int:

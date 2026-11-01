@@ -46,12 +46,18 @@ from src.utils.config import get_effective_batch_size
 from src.version import VERSION as _APP_VERSION
 
 from .base import (
+    IN_FALLBACK,
     BaseTranslator,
     TranslationEngine,
     TranslationRequest,
     TranslationResult,
 )
 from .router import EndpointRouter, _FamilyHealth
+
+# client= ids /translate_a/single answers with the same reply. Since 2026-09 Google
+# answers client=gtx with 429 in some regions while "at" and "dict-chrome-ex" still work.
+PRIMARY_CLIENTS: Tuple[str, ...] = ("gtx", "at", "dict-chrome-ex")
+
 
 class GoogleTranslator(BaseTranslator):
     """Multi-endpoint Google Translator with Lingva fallback.
@@ -156,6 +162,13 @@ class GoogleTranslator(BaseTranslator):
         super().__init__(*args, config_manager=config_manager, **kwargs)
         self.config_manager = config_manager
         self._endpoint_index = 0
+        # Client id that last got a 200 from /translate_a/single (tried first).
+        self._primary_client: str = PRIMARY_CLIENTS[0]
+        # Bing (separate request family, independent IP limit) takes over lines every
+        # Google family failed on. Built lazily; has no fallback of its own.
+        self.bing_fallback_enabled: bool = True
+        self._bing_fallback = None
+        self._bing_down_until: float = 0.0
 
         # Start from a random Lingva instance to distribute load / avoid dead first server
         self._lingva_index = 0
@@ -236,36 +249,57 @@ class GoogleTranslator(BaseTranslator):
         blocks the in-flight translation pipeline.
         Returns True if the primary endpoint is responding normally."""
         endpoint = random.choice(self.google_endpoints)
-        params = {
-            "client": "gtx",
-            "sl": "en",
-            "tl": "tr",
-            "dt": "t",
-            "q": "test",
-        }
-        try:
-            query = urllib.parse.urlencode(params)
-            url = f"{endpoint}?{query}"
-            session = await self._get_session()
-            async with session.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=6),
-                headers=GOOGLE_BROWSER_HEADERS,
-            ) as resp:
-                if resp.status == 200:
-                    self.logger.info(
-                        "Primary probe succeeded on %s — primary endpoints restored.", endpoint
-                    )
-                    # Sync legacy counter so _try_batch_separator guard works too
-                    self._consecutive_429_count = 0
-                    self._primary_probe_at = 0.0
-                    return True
-                if resp.status == 429:
-                    self.logger.debug("Primary probe got 429 on %s — still blocked.", endpoint)
-                    return False
-        except Exception as exc:
-            self.logger.debug("Primary probe exception on %s: %s", endpoint, exc)
+        for client in self._client_order():
+            params = {
+                "client": client,
+                "sl": "en",
+                "tl": "tr",
+                "dt": "t",
+                "q": "test",
+            }
+            try:
+                query = urllib.parse.urlencode(params)
+                url = f"{endpoint}?{query}"
+                session = await self._get_session()
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=6),
+                    headers=GOOGLE_BROWSER_HEADERS,
+                ) as resp:
+                    if resp.status == 200:
+                        self.logger.info(
+                            "Primary probe succeeded on %s — primary endpoints restored.", endpoint
+                        )
+                        # Sync legacy counter so _try_batch_separator guard works too
+                        self._consecutive_429_count = 0
+                        self._primary_probe_at = 0.0
+                        self._set_primary_client(client)
+                        return True
+                    if resp.status == 429:
+                        self.logger.debug("Primary probe got 429 on %s (client=%s).", endpoint, client)
+                        continue
+            except Exception as exc:
+                self.logger.debug("Primary probe exception on %s: %s", endpoint, exc)
+                return False
         return False
+
+    def _client_order(self) -> List[str]:
+        """Primary client ids, the one that worked last first."""
+        return [self._primary_client] + [c for c in PRIMARY_CLIENTS if c != self._primary_client]
+
+    def _alternate_client(self, tried: set) -> Optional[str]:
+        """A client id not yet refused by this request, or None when all were."""
+        for client in self._client_order():
+            if client not in tried:
+                return client
+        return None
+
+    def _set_primary_client(self, client: str) -> None:
+        if client != self._primary_client:
+            self.logger.warning(
+                "Google refused client=%s; using client=%s from now on", self._primary_client, client
+            )
+            self._primary_client = client
 
     async def _get_next_endpoint(self) -> str:
         """Random endpoint selection with health checks and ban cooldown."""
@@ -674,7 +708,95 @@ class GoogleTranslator(BaseTranslator):
                 results.append(item)
         return results
 
+    # ------------------------------------------------------------------
+    # Bing hand-off: Google throttles per IP, so a flagged IP loses every Google
+    # family at once. Bing's endpoint is limited independently and keeps the run alive.
+    # ------------------------------------------------------------------
+
+    def _bing_fallback_available(self) -> bool:
+        if not self.bing_fallback_enabled or IN_FALLBACK.get():
+            return False
+        if time.time() < self._bing_down_until:
+            return False
+        stop = self.should_stop_callback
+        return not (stop and stop())
+
+    async def _delegate_to_bing(
+        self, requests: List[TranslationRequest]
+    ) -> List[Optional[TranslationResult]]:
+        """Translate ``requests`` with Bing; None for every line Bing could not do either."""
+        from .services import BingTranslator
+
+        if self._bing_fallback is None:
+            self._bing_fallback = BingTranslator(
+                proxy_manager=self.proxy_manager, config_manager=self.config_manager
+            )
+        bing = self._bing_fallback
+        bing.status_callback = self.status_callback
+        token = IN_FALLBACK.set(True)
+        try:
+            answers = await bing.translate_batch(requests)
+        except Exception as exc:  # best effort: the Google failure is already recorded
+            self.logger.warning("Bing fallback failed: %s", exc)
+            answers = []
+        finally:
+            IN_FALLBACK.reset(token)
+        if len(answers) != len(requests):
+            answers = [None] * len(requests)
+        out: List[Optional[TranslationResult]] = []
+        for req, ans in zip(requests, answers):
+            if ans is not None and ans.success and (ans.translated_text or "").strip():
+                meta = dict(req.metadata) if isinstance(req.metadata, dict) else {}
+                meta["fallback_engine"] = "bing"
+                out.append(
+                    TranslationResult(
+                        original_text=ans.original_text,
+                        translated_text=ans.translated_text,
+                        source_lang=req.source_lang,
+                        target_lang=req.target_lang,
+                        engine=TranslationEngine.GOOGLE,
+                        success=True,
+                        confidence=getattr(ans, "confidence", 0.0),
+                        metadata=meta,
+                    )
+                )
+            else:
+                out.append(None)
+        if not any(out):
+            # Bing is blocked too; do not queue every following line behind its retries.
+            self._bing_down_until = time.time() + 60.0
+        return out
+
     async def translate_single(self, request: TranslationRequest) -> TranslationResult:
+        """Google first; when every Google path failed, Bing gets one try."""
+        result = await self._translate_single_google(request)
+        if result.success or not self._bing_fallback_available():
+            return result
+        answer = (await self._delegate_to_bing([request]))[0]
+        return answer if answer is not None else result
+
+    async def translate_batch(
+        self, requests: List[TranslationRequest]
+    ) -> List[TranslationResult]:
+        """Google first; lines every Google path failed on go to Bing in one call."""
+        results = await self._translate_batch_google(requests)
+        if not self._bing_fallback_available():
+            return results
+        failed = [i for i, r in enumerate(results) if r is None or not r.success]
+        if not failed:
+            return results
+        self.emit_log("warning", self._get_text(
+            "log_google_bing_fallback",
+            "[Google] {count} item(s) failed; delegating to Bing.",
+            count=len(failed),
+        ))
+        answers = await self._delegate_to_bing([requests[i] for i in failed])
+        for index, answer in zip(failed, answers):
+            if answer is not None:
+                results[index] = answer
+        return results
+
+    async def _translate_single_google(self, request: TranslationRequest) -> TranslationResult:
         """Translate single text with multi-endpoint + Lingva fallback."""
         metadata = request.metadata if isinstance(request.metadata, dict) else {}
         source_text = metadata.get("original_text") or getattr(
@@ -726,7 +848,11 @@ class GoogleTranslator(BaseTranslator):
                     self._primary_probe_at = now + RATE_LIMIT_PRIMARY_PROBE_INTERVAL
                 entered_as_probe = True
             max_attempts = 3
-            for attempt in range(1, max_attempts + 1):
+            tried_clients: set = set()
+            client = self._primary_client
+            attempt = 0
+            while attempt < max_attempts:
+                attempt += 1
                 # Another worker's 429 tripped the breaker mid-flight — stop
                 # burning attempts against a range-blocked host.
                 if (
@@ -740,7 +866,7 @@ class GoogleTranslator(BaseTranslator):
                 if not entered_as_probe:
                     await self._wait_out_global_cooldown()
                 try:
-                    query = urllib.parse.urlencode(params, doseq=True, safe="")
+                    query = urllib.parse.urlencode({**params, "client": client}, doseq=True, safe="")
                     url = f"{endpoint}?{query}"
                     session = await self._get_session()
 
@@ -773,6 +899,7 @@ class GoogleTranslator(BaseTranslator):
                                         0, self._consecutive_429_count - 1
                                     )
                                     self._router.record_primary_success()
+                                    self._set_primary_client(client)
                                     # Report proxy success
                                     if proxy_url_used and self.proxy_manager:
                                         self.proxy_manager.mark_proxy_success(
@@ -787,6 +914,13 @@ class GoogleTranslator(BaseTranslator):
                             continue
 
                         elif resp.status == 429:  # Too Many Requests
+                            # Another client id may still be served: not an IP flag yet.
+                            tried_clients.add(client)
+                            alternate = self._alternate_client(tried_clients)
+                            if alternate is not None:
+                                client = alternate
+                                attempt -= 1
+                                continue
                             # Google rate-limits by IP — a 429 on one mirror means ALL mirrors
                             # are likely throttled. Apply global cooldown to prevent cascade bans.
                             global_wait = self._apply_global_cooldown()
@@ -1563,7 +1697,7 @@ class GoogleTranslator(BaseTranslator):
         """
         # Use Google's language detection endpoint
         params = {
-            "client": "gtx",
+            "client": self._primary_client,
             "sl": "auto",
             "tl": "en",  # Target doesn't matter for detection
             "dt": "t",
@@ -1643,7 +1777,7 @@ class GoogleTranslator(BaseTranslator):
 
         return None
 
-    async def translate_batch(
+    async def _translate_batch_google(
         self, requests: List[TranslationRequest]
     ) -> List[TranslationResult]:
         """Optimize edilmiş toplu çeviri:
@@ -1825,7 +1959,7 @@ class GoogleTranslator(BaseTranslator):
                 async def retry_one(idx: int) -> Tuple[int, TranslationResult]:
                     async with sem:
                         req = requests[idx]
-                        result = await self.translate_single(req)
+                        result = await self._translate_single_google(req)
                         return (idx, result)
 
                 retry_tasks = [
@@ -1880,7 +2014,7 @@ class GoogleTranslator(BaseTranslator):
         if not batch:
             return []
         if len(batch) == 1:
-            return [await self.translate_single(batch[0])]
+            return [await self._translate_single_google(batch[0])]
 
         router = self._router
         total_chars = sum(len(r.text) for r in batch)
@@ -1904,7 +2038,7 @@ class GoogleTranslator(BaseTranslator):
                     )
                     for idx in failed_indices:
                         try:
-                            retry = await self.translate_single(batch[idx])
+                            retry = await self._translate_single_google(batch[idx])
                             if retry.success and retry.confidence > 0.0:
                                 result[idx] = retry
                         except Exception:
@@ -2025,7 +2159,11 @@ class GoogleTranslator(BaseTranslator):
                     self._primary_probe_at = now + RATE_LIMIT_PRIMARY_PROBE_INTERVAL
                 entered_as_probe = True
             max_attempts = 2  # Fewer retries than translate_single (batch is heavier)
-            for attempt in range(1, max_attempts + 1):
+            tried_clients: set = set()
+            client = self._primary_client
+            attempt = 0
+            while attempt < max_attempts:
+                attempt += 1
                 # Breaker tripped mid-flight by another worker — bail early.
                 if (
                     self._consecutive_429_count
@@ -2053,12 +2191,19 @@ class GoogleTranslator(BaseTranslator):
 
                     async with session.post(
                         endpoint,
-                        data=query,
+                        data=urllib.parse.urlencode({**params, "client": client}),
                         proxy=proxy,
                         timeout=aiohttp.ClientTimeout(total=15),
                         headers=post_headers,
                     ) as resp:
                         if resp.status == 429:
+                            # Another client id may still be served: not an IP flag yet.
+                            tried_clients.add(client)
+                            alternate = self._alternate_client(tried_clients)
+                            if alternate is not None:
+                                client = alternate
+                                attempt -= 1
+                                continue
                             # 429 = IP-level rate limit — apply global cooldown
                             global_wait = self._apply_global_cooldown()
                             if endpoint in self._endpoint_health:
@@ -2105,6 +2250,8 @@ class GoogleTranslator(BaseTranslator):
 
                         data = await resp.json(content_type=None)
                         segs = data[0] if isinstance(data, list) and data else None
+                        if segs:
+                            self._set_primary_client(client)
                         if not segs:
                             self.logger.debug(
                                 f"Batch-sep {endpoint}: No segments in response"
@@ -2441,7 +2588,7 @@ class GoogleTranslator(BaseTranslator):
                 # Rate limiting between parallel requests to avoid Google bans
                 if delay > 0:
                     await asyncio.sleep(delay * random.uniform(0.5, 1.5))
-                return await self.translate_single(req)
+                return await self._translate_single_google(req)
 
         # Tüm çevirileri paralel başlat
         tasks = [asyncio.create_task(translate_one(req)) for req in batch]
@@ -2482,7 +2629,7 @@ class GoogleTranslator(BaseTranslator):
         results = []
         for i, req in enumerate(batch):
             try:
-                result = await self.translate_single(req)
+                result = await self._translate_single_google(req)
                 results.append(result)
                 # Rate limiting - respect configured delay with jitter
                 if i < len(batch) - 1:

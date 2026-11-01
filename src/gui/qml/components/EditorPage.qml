@@ -557,10 +557,14 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     spacing: 10
-                    TextArea {
-                            Layout.fillWidth: true; Layout.fillHeight: true
-                            Layout.preferredWidth: 1
-                            clip: true
+                    // A TextArea only scrolls inside a ScrollView/Flickable; without
+                    // one the lines below the box are unreachable.
+                    ScrollView {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        Layout.preferredWidth: 1
+                        clip: true
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        TextArea {
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.Wrap
@@ -569,12 +573,15 @@ Item {
                             text: editorBackend.selected.original || ""
                             color: Theme.txt2
                             background: Rectangle { radius: 8; color: Theme.input; border.color: Theme.cardBorder }
+                        }
                     }
-                    TextArea {
+                    ScrollView {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        Layout.preferredWidth: 1
+                        clip: true
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        TextArea {
                             id: transArea
-                            Layout.fillWidth: true; Layout.fillHeight: true
-                            Layout.preferredWidth: 1
-                            clip: true
                             objectName: "editorTranslationArea"
                             readOnly: editorBackend.locked
                             selectByMouse: true
@@ -590,6 +597,7 @@ Item {
                                     event.accepted = true
                                 }
                             }
+                        }
                     }
                 }
                 Label {
@@ -673,6 +681,7 @@ Item {
     Dialog {
         id: unsavedDialog
         anchors.centerIn: parent
+        width: Math.min(420, page.width - 48)
         modal: true
         title: page.t("editor_unsaved_title", "Unsaved changes")
         Label {

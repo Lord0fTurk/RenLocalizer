@@ -5,6 +5,7 @@ Base translation types and abstract translator class.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import aiohttp
 import logging
 import random
@@ -14,6 +15,11 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple, Callable
 
 from src.core.constants import USER_AGENTS
+
+# True while an engine hands work to its fallback engine. A fallback never hands the
+# same work on again (Bing -> Google -> Bing would otherwise loop).
+IN_FALLBACK: contextvars.ContextVar[bool] = contextvars.ContextVar("rl_in_fallback", default=False)
+
 
 class TranslationEngine(Enum):
     GOOGLE = "google"

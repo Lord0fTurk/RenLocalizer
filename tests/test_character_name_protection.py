@@ -68,3 +68,43 @@ def test_rpyc_reader_respects_setting():
         extractor._extract_strings_from_code('r = Character("Rose")', 1)
         found = {t.text for t in extractor.extracted}
         assert ({"Rose"} & found) == expected
+
+
+def test_character_names_locales_parity():
+    import json
+    from pathlib import Path
+
+    locales_dir = Path("locales")
+    required_keys = {
+        "translate_character_names_title",
+        "translate_character_names_desc",
+    }
+    for locale_path in locales_dir.glob("*.json"):
+        data = json.loads(locale_path.read_text(encoding="utf-8"))
+        missing = required_keys - set(data.keys())
+        assert not missing, f"{locale_path.name} is missing keys: {missing}"
+
+
+def test_settings_and_app_backend_character_names_toggle():
+    import sys
+    from PyQt6.QtWidgets import QApplication
+    from src.backend.app_backend import AppBackend
+
+    app = QApplication.instance() or QApplication(sys.argv[:1])
+    backend = AppBackend(parent=app)
+    backend.config.save_config = lambda *a, **k: True
+
+    signals = []
+    backend.translateCharacterNamesChanged.connect(lambda: signals.append(True))
+
+    backend.translateCharacterNames = False
+    assert backend.translateCharacterNames is False
+    assert backend.settings.get_translate_character_names() is False
+    assert backend.config.translation_settings.translate_character_names is False
+
+    backend.translateCharacterNames = True
+    assert backend.translateCharacterNames is True
+    assert backend.settings.get_translate_character_names() is True
+    assert backend.config.translation_settings.translate_character_names is True
+    assert len(signals) >= 1
+

@@ -163,7 +163,7 @@ RATE_LIMIT_PRIMARY_PROBE_INTERVAL = 300
 import re as _re
 
 _GENERATED_SCRIPT_RE = _re.compile(
-    r"^(?:zzz_renlocalizer_runtime|zzz_renlocalizer_font|zzz_[a-z0-9_\-]+_language|zz_rl_exported_.+)\.rpym?c?$",
+    r"^(?:zzz_renlocalizer_runtime|zzz_renlocalizer_font|zzz_rl_numbered_choices|zzz_[a-z0-9_\-]+_language|zz_rl_exported_.+)\.rpym?c?$",
     _re.IGNORECASE,
 )
 

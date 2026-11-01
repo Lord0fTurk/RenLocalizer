@@ -70,7 +70,6 @@ MAX_RECENT_PROJECTS = 8
 MAX_AI_BATCH_SIZE = 10000
 ENGINE_BATCH_SIZE_CAPS: dict[str, int] = {
     "google": 1000,
-    "yandex": 1000,
     "bing": 100,  # edge.microsoft.com: ≤100 items / ~50k chars per request
 }
 
@@ -190,7 +189,7 @@ def detect_system_language() -> str:
 class TranslationSettings:
     """Translation-related settings."""
 
-    selected_engine: str = "google"  # Persisted engine selection (google, deepl, openai, gemini, local_llm, libretranslate, yandex)
+    selected_engine: str = "google"  # Persisted engine selection (see _valid_engines in __post_init__)
     source_language: str = "auto"
     target_language: str = "tr"
     max_concurrent_threads: int = 8  # Lowered from 32 to prevent instant Google bans
@@ -213,10 +212,8 @@ class TranslationSettings:
     max_chars_per_request: int = (
         MAX_CHARS_PER_REQUEST  # Bir istekteki maksimum karakter
     )
-    # Glossary & critical terms
-    # Glossary & critical terms
+    # Glossary
     glossary_file: str = "glossary.json"  # Terim sözlüğü yolu (proje köküne göre)
-    critical_terms_file: str = "critical_terms.json"  # Kritik kelimeler listesi
     # Type-based translation filters
     translate_dialogue: bool = True
     translate_menu: bool = True
@@ -285,7 +282,7 @@ class TranslationSettings:
     include_engine_common: bool = True
     context_limit: int = 10  # Number of surrounding lines for context
     # AI Settings (v2.5.0)
-    openai_model: str = "gpt-3.5-turbo"
+    openai_model: str = "gpt-4o-mini"  # Same fallback the engine and settings backend use
     openai_base_url: str = ""  # For OpenRouter or Local
     gemini_model: str = "gemini-2.5-flash"
     gemini_safety_settings: str = "BLOCK_NONE"  # BLOCK_NONE, BLOCK_ONLY_HIGH, STANDARD
@@ -435,9 +432,7 @@ class TranslationSettings:
             "bing",
             "deepseek",
             "custom",
-            "yandex",
             "pseudo",
-            "opus_mt",
         )
         if self.selected_engine not in _valid_engines:
             self.selected_engine = "google"
@@ -538,17 +533,32 @@ class AppSettings:
     renpy_sdk_path: str = ""
     # Desktop notifications for translation completion and error events
     enable_desktop_notifications: bool = True
+    # UI Theme mode ('obsidian', 'daylight', 'cyber_neon') and accent preset ('cyan', 'emerald', 'indigo', 'amber')
+    theme_mode: str = "obsidian"
+    accent_preset: str = "cyan_teal"
     # Games picked before, newest first (dashboard's recent list)
     recent_projects: list = field(default_factory=list)
+    # Support row in the completion dialog: shown from the 3rd finished run unless dismissed
+    completed_runs: int = 0
+    hide_support_prompt: bool = False
 
     def __post_init__(self):
         """Validate enum/allowlist fields."""
         if self.output_format not in ("old_new", "simple"):
             self.output_format = "old_new"
+        if self.theme_mode not in ("obsidian", "daylight", "cyber_neon"):
+            self.theme_mode = "obsidian"
+        if self.accent_preset not in ("cyan", "cyan_teal", "emerald", "indigo", "amber"):
+            self.accent_preset = "cyan_teal"
         self.ui_language = str(self.ui_language).strip()
         if not isinstance(self.recent_projects, list):
             self.recent_projects = []
         self.recent_projects = [str(p) for p in self.recent_projects if isinstance(p, str) and p.strip()][:MAX_RECENT_PROJECTS]
+        try:
+            self.completed_runs = max(0, int(self.completed_runs))
+        except (TypeError, ValueError):
+            self.completed_runs = 0
+        self.hide_support_prompt = bool(self.hide_support_prompt)
 
 
 @dataclass
@@ -623,12 +633,9 @@ class ConfigManager:
         self._language_data = {}
         self._load_language_files()
 
-        # Load glossary and critical terms
+        # Load glossary
         self.glossary = self._load_json_file(
             self.translation_settings.glossary_file, default={}
-        )
-        self.critical_terms = self._load_json_file(
-            self.translation_settings.critical_terms_file, default=[]
         )
 
         # Load never-translate rules (optional)
