@@ -96,7 +96,10 @@ jobs:
 
       - name: Install system deps
         run: |
-          pacman -Sy --noconfirm --needed \
+          # -Syu, not -Sy: Arch does not support partial upgrades. With -Sy the
+          # image's older `openssl` stays installed while new packages pull in
+          # `openssl-3`, and both own libssl.so.3 (file conflict, job fails).
+          pacman -Syu --noconfirm --needed \
             python python-pip git qt6-base xorg-server-xvfb \
             libxcb libxkbcommon noto-fonts-emoji
           pacman -Scc --noconfirm
