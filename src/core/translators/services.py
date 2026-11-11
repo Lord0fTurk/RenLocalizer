@@ -570,7 +570,7 @@ class LibreTranslateTranslator(BaseTranslator):
         proxy_manager=None,
         config_manager=None,
     ):
-        super().__init__(proxy_manager, config_manager)
+        super().__init__(proxy_manager=proxy_manager, config_manager=config_manager)
         # Protocol Hardening: Ensure URL starts with http:// or https://
         clean_url = base_url.strip().rstrip("/")
         if clean_url and not (
@@ -1000,7 +1000,7 @@ class BingTranslator(BaseTranslator):
     }
 
     def __init__(self, proxy_manager=None, config_manager=None, **kwargs):
-        super().__init__(proxy_manager, config_manager)
+        super().__init__(proxy_manager=proxy_manager, config_manager=config_manager)
         self.logger = logging.getLogger(__name__)
         self._engine = TranslationEngine.BING
         self.endpoint = kwargs.get("endpoint") or BING_EDGE_TRANSLATE_ENDPOINT
@@ -1248,6 +1248,8 @@ class BingTranslator(BaseTranslator):
                 raise
             except Exception as exc:
                 last_error = f"Connection/Request Error: {exc}"
+                if self.note_tls_error(exc):
+                    break  # retrying cannot fix a missing CA store
                 if attempt < self.MAX_RETRIES - 1:
                     await asyncio.sleep(self.RETRY_DELAYS[attempt])
                     continue

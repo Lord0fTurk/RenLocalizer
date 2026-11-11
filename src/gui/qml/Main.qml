@@ -1363,6 +1363,7 @@ ApplicationWindow {
                                             return [
                                                 {"id": "google", "icon": Icons.globe, "name": "Google Translate (" + appBackend.getTextWithDefault("engine_desc_google", "Primary / Free") + ")"},
                                                 {"id": "bing", "icon": Icons.appWindow, "name": "Bing / Microsoft Edge (" + appBackend.getTextWithDefault("engine_desc_bing", "Free / No key") + ")"},
+                                                {"id": "nvidia", "icon": Icons.zap, "name": "NVIDIA Riva (" + appBackend.getTextWithDefault("engine_desc_nvidia", "Free key / Translation model") + ")"},
                                                 {"id": "openai", "icon": Icons.bot, "name": "OpenAI / GPT-4o (" + appBackend.getTextWithDefault("engine_desc_ai", "AI Engine") + ")"},
                                                 {"id": "gemini", "icon": Icons.sparkles, "name": "Gemini (" + appBackend.getTextWithDefault("engine_desc_gemini", "Google AI") + ")"},
                                                 {"id": "deepseek", "icon": Icons.brain, "name": "DeepSeek AI (" + appBackend.getTextWithDefault("engine_desc_deepseek", "Fast / Economic") + ")"},
@@ -2001,7 +2002,70 @@ ApplicationWindow {
                                 height: 1
                                 color: Theme.cardBorder
                                 opacity: 0.6
-                                visible: cardEngine.isAiEngine
+                                visible: cardEngine.isAiEngine || appBackend.selectedEngine === "nvidia"
+                            }
+
+                            // 0) NVIDIA (Riva-Translate) Hızlı Yapılandırma
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 14
+                                visible: appBackend.selectedEngine === "nvidia"
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true; Layout.preferredWidth: 4; spacing: 4
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_nvidia_key", "NVIDIA API Key:"); color: Theme.txt2; font.pixelSize: 11; font.bold: true }
+                                        Item { Layout.fillWidth: true }
+                                        Label {
+                                            text: appBackend.uiTrigger, appBackend.getTextWithDefault("link_nvidia_get_key", "Get a free key →")
+                                            color: nvidiaKeyLinkMa.containsMouse ? Theme.white : Theme.accent
+                                            font.pixelSize: 11; font.underline: true
+                                            MouseArea {
+                                                id: nvidiaKeyLinkMa
+                                                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                                onClicked: Qt.openUrlExternally("https://build.nvidia.com/nvidia/riva-translate-4b-instruct-v2")
+                                            }
+                                        }
+                                    }
+                                    TextField {
+                                        id: quickNvidiaKeyField
+                                        Layout.fillWidth: true; height: 38
+                                        text: appBackend.nvidiaApiKey; echoMode: TextInput.Password; placeholderText: (text.length === 0 && !activeFocus) ? ("nvapi-...") : ""
+                                        onEditingFinished: appBackend.nvidiaApiKey = text
+                                        background: Rectangle {
+                                            radius: 8; color: Theme.input; border.color: parent.activeFocus ? Theme.accent : Theme.cardBorder; border.width: 1
+                                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true; Layout.preferredWidth: 3; spacing: 4
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_gemini_model", "Model:"); color: Theme.txt2; font.pixelSize: 11; font.bold: true }
+                                    TextField {
+                                        id: quickNvidiaModelField
+                                        Layout.fillWidth: true; height: 38
+                                        text: appBackend.nvidiaModel; placeholderText: (text.length === 0 && !activeFocus) ? ("nvidia/riva-translate-4b-instruct-v2") : ""
+                                        onEditingFinished: appBackend.nvidiaModel = text
+                                        background: Rectangle {
+                                            radius: 8; color: Theme.input; border.color: parent.activeFocus ? Theme.accent : Theme.cardBorder; border.width: 1
+                                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                                        }
+                                    }
+                                }
+
+                                Connections {
+                                    target: appBackend
+                                    function onNvidiaApiKeyChanged() { quickNvidiaKeyField.text = appBackend.nvidiaApiKey }
+                                    function onNvidiaModelChanged() { quickNvidiaModelField.text = appBackend.nvidiaModel }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true; visible: ["nvidia","openai","gemini","deepseek"].indexOf(appBackend.selectedEngine) >= 0
+                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("api_quality_note", "Tip: short one-word lines, names and texts with many placeholders are sometimes kept as-is. You can adjust any of them in the Editor after the run.")
+                                color: Theme.txt2; font.pixelSize: 11; wrapMode: Text.WordWrap
                             }
 
                             // 1) Gemini Hızlı Yapılandırma
@@ -3358,6 +3422,123 @@ ApplicationWindow {
                         }
                     }
 
+                    // PROXY KARTI
+                    Rectangle {
+                        id: cardProxySettings
+                        objectName: "cardProxySettings"
+                        visible: pageSettings.settingsSubTab === 2
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: proxyCol.implicitHeight + 44
+                        radius: 16; color: Theme.card; border.color: Theme.cardBorder; border.width: Theme.themeMode === "cyber_neon" ? 1.5 : 1
+                        Behavior on Layout.preferredHeight { NumberAnimation { duration: 200 } }
+
+                        ColumnLayout {
+                            id: proxyCol
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                            anchors.margins: 22; spacing: 14
+
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 16
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 4
+                                    IconLabel { alignment: Qt.AlignLeft; glyph: Icons.globe; text: appBackend.uiTrigger, appBackend.getTextWithDefault("group_proxy", "Proxy Settings"); font.pixelSize: 16; font.bold: true; color: Theme.txt; iconColor: Theme.accent }
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("proxy_card_desc", "Send translation requests through your own HTTP proxy, for example when a service is blocked or rate-limited on your connection."); color: Theme.txt2; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                }
+                                Switch { objectName: "proxyEnabledSwitch"; checked: appBackend.proxyEnabled; onToggled: appBackend.proxyEnabled = checked }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 12
+                                visible: appBackend.proxyEnabled
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 5
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("proxy_url_label", "Proxy address"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
+                                    TextField {
+                                        id: proxyUrlField
+                                        Layout.fillWidth: true; height: 40; text: appBackend.proxyUrl
+                                        placeholderText: (text.length === 0 && !activeFocus) ? (appBackend.uiTrigger, appBackend.getTextWithDefault("proxy_url_placeholder", "E.g.: http://user:pass@host:port")) : ""
+                                        onEditingFinished: appBackend.proxyUrl = text
+                                        background: Rectangle {
+                                            radius: 8; color: Theme.input
+                                            border.color: parent.activeFocus ? Theme.accent : Theme.cardBorder; border.width: 1
+                                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 5
+                                    Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("manual_proxies_note", "Enter one proxy address per line (host:port format):"); color: Theme.txt; font.bold: true; font.pixelSize: 13; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    ScrollView {
+                                        Layout.fillWidth: true; Layout.preferredHeight: 76
+                                        TextArea {
+                                            id: proxyListArea
+                                            text: appBackend.proxyList
+                                            color: Theme.txt; font.pixelSize: 12; wrapMode: TextEdit.NoWrap; selectByMouse: true
+                                            topPadding: 10; bottomPadding: 10; leftPadding: 14; rightPadding: 14
+                                            onEditingFinished: appBackend.proxyList = text
+                                            background: Rectangle {
+                                                radius: 8; color: Theme.input
+                                                border.color: proxyListArea.activeFocus ? Theme.accent : Theme.cardBorder; border.width: 1
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Connections {
+                                    target: appBackend
+                                    function onProxySettingsChanged() {
+                                        if (!proxyUrlField.activeFocus) proxyUrlField.text = appBackend.proxyUrl
+                                        if (!proxyListArea.activeFocus) proxyListArea.text = appBackend.proxyList
+                                    }
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 10
+                                    visible: proxyListArea.text.trim().length > 0
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("auto_rotate_label", "Auto Rotation"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
+                                        Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("auto_rotate_tooltip", "Use different proxy for each request - better distribution"); color: Theme.txt2; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    }
+                                    Switch { checked: appBackend.proxyAutoRotate; onToggled: appBackend.proxyAutoRotate = checked }
+                                }
+
+                                Label {
+                                    visible: appBackend.proxyIgnoredCount > 0
+                                    text: appBackend.uiTrigger, appBackend.getTextWithDefault("proxy_ignored_entries", "{count} address(es) cannot be used (SOCKS or wrong format) and are skipped.").replace("{count}", appBackend.proxyIgnoredCount)
+                                    color: Theme.warn; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 12
+                                    Label {
+                                        objectName: "proxyTestResultLabel"
+                                        Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12
+                                        text: appBackend.proxyTesting ? (appBackend.uiTrigger, appBackend.getTextWithDefault("proxy_refreshing", "Testing Connections...")) : appBackend.proxyTestResult
+                                        color: appBackend.proxyTesting ? Theme.txt2 : (appBackend.proxyTestOk ? Theme.success : Theme.error)
+                                    }
+                                    Button {
+                                        objectName: "proxyTestButton"
+                                        Layout.preferredWidth: 190; height: 38
+                                        enabled: !appBackend.proxyTesting
+                                        text: appBackend.uiTrigger, appBackend.getTextWithDefault("refresh_proxies_btn", "Test Connections")
+                                        onClicked: {
+                                            appBackend.proxyUrl = proxyUrlField.text
+                                            appBackend.proxyList = proxyListArea.text
+                                            appBackend.testProxies()
+                                        }
+                                        background: Rectangle { radius: 8; color: parent.hovered ? Theme.cardHover : "transparent"; border.color: Theme.accent; border.width: 1; opacity: parent.enabled ? 1.0 : 0.5 }
+                                        contentItem: IconLabel { glyph: Icons.refreshCw; text: parent.text; color: Theme.accent; font.bold: true; font.pixelSize: 11; elide: Text.ElideRight }
+                                    }
+                                }
+
+                                Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("proxy_scope_note", "Used by Google, Bing, NVIDIA, DeepL, OpenAI, DeepSeek and Gemini. Local models never go through the proxy. SOCKS proxies are not supported."); color: Theme.txt2; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            }
+                        }
+                    }
+
                     // AI MOTOR KARTI (SEÇİLİ MOTORA DUYARLI TAM KAPSAMLI YAPILANDIRMA)
                     Rectangle {
                         id: cardAiConfig
@@ -3442,6 +3623,55 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                            }
+
+                            // NVIDIA (Riva-Translate) Ayarları
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 14
+                                visible: appBackend.selectedEngine === "nvidia"
+
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 18
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; Layout.preferredWidth: 1; spacing: 5
+                                        Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_nvidia_key", "NVIDIA API Key:"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
+                                        TextField {
+                                            id: settingsNvidiaKeyField
+                                            Layout.fillWidth: true; height: 40; text: appBackend.nvidiaApiKey; echoMode: TextInput.Password; placeholderText: (text.length === 0 && !activeFocus) ? ("nvapi-...") : ""
+                                            onEditingFinished: appBackend.nvidiaApiKey = text
+                                            background: Rectangle {
+                                                radius: 8; color: Theme.input
+                                                border.color: parent.activeFocus ? Theme.accent : Theme.cardBorder; border.width: 1
+                                                Behavior on border.color { ColorAnimation { duration: 150 } }
+                                            }
+                                        }
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; Layout.preferredWidth: 1; spacing: 5
+                                        Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_gemini_model", "Model:"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
+                                        TextField {
+                                            id: settingsNvidiaModelField
+                                            Layout.fillWidth: true; height: 40; text: appBackend.nvidiaModel; placeholderText: (text.length === 0 && !activeFocus) ? ("nvidia/riva-translate-4b-instruct-v2") : ""
+                                            onEditingFinished: appBackend.nvidiaModel = text
+                                            background: Rectangle {
+                                                radius: 8; color: Theme.input
+                                                border.color: parent.activeFocus ? Theme.accent : Theme.cardBorder; border.width: 1
+                                                Behavior on border.color { ColorAnimation { duration: 150 } }
+                                            }
+                                        }
+                                    }
+                                }
+                                Connections {
+                                    target: appBackend
+                                    function onNvidiaApiKeyChanged() { settingsNvidiaKeyField.text = appBackend.nvidiaApiKey }
+                                    function onNvidiaModelChanged() { settingsNvidiaModelField.text = appBackend.nvidiaModel }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true; visible: ["nvidia","openai","gemini","deepseek"].indexOf(appBackend.selectedEngine) >= 0
+                                text: appBackend.uiTrigger, appBackend.getTextWithDefault("api_quality_note", "Tip: short one-word lines, names and texts with many placeholders are sometimes kept as-is. You can adjust any of them in the Editor after the run.")
+                                color: Theme.txt2; font.pixelSize: 12; wrapMode: Text.WordWrap
                             }
 
                             // Gemini Ayarları

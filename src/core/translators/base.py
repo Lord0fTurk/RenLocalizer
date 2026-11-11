@@ -15,6 +15,8 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple, Callable
 
 from src.core.constants import USER_AGENTS
+from src.utils import net as _net
+from src.utils.net import build_ssl_context
 
 # True while an engine hands work to its fallback engine. A fallback never hands the
 # same work on again (Bing -> Google -> Bing would otherwise loop).
@@ -29,6 +31,7 @@ class TranslationEngine(Enum):
     LOCAL_LLM = "local_llm"
     LIBRETRANSLATE = "libretranslate"
     BING = "bing"  # Microsoft Edge web-translation endpoint (keyless)
+    NVIDIA = "nvidia"  # NVIDIA API Catalog: Riva-Translate (free nvapi- key)
     CUSTOM = "custom"  # Generic HTTP endpoint (LibreTranslate/Argos/any)
     PSEUDO = "pseudo"  # Pseudo-localization for UI testing
 
@@ -127,6 +130,9 @@ class BaseTranslator(ABC):
                 use_dns_cache=True,
                 force_close=False,
                 enable_cleanup_closed=True,
+                # Packaged Linux builds carry the build machine's OpenSSL paths;
+                # see src/utils/net.py (GitHub #23).
+                ssl=build_ssl_context(),
             )
 
             timeout = aiohttp.ClientTimeout(total=45, connect=10, sock_read=30)
@@ -139,6 +145,26 @@ class BaseTranslator(ABC):
                 connector=self._connector, timeout=timeout, headers=headers
             )
             return self._session
+
+    _tls_error_reported = False
+
+    def note_tls_error(self, exc: BaseException) -> bool:
+        """True (and logs once) when ``exc`` is a certificate verification failure.
+
+        Callers skip their backoff / mirror-ban path for it: retrying another
+        mirror cannot fix a missing CA store and only made runs crawl (#23).
+        """
+        if not _net.is_certificate_error(exc):
+            return False
+        if not BaseTranslator._tls_error_reported:
+            BaseTranslator._tls_error_reported = True
+            self.logger.error(
+                "TLS certificate verification failed (%s). CA source: %s. "
+                "Set SSL_CERT_FILE to your system CA bundle (e.g. /etc/ssl/cert.pem) and restart.",
+                exc,
+                _net.ssl_context_source or "unknown",
+            )
+        return True
 
     def _get_text(self, key: str, default: str, **kwargs) -> str:
         """Helper to get localized text from config_manager."""
@@ -167,6 +193,14 @@ class BaseTranslator(ABC):
 
     def set_proxy_enabled(self, enabled: bool):
         self.use_proxy = enabled
+
+    def _proxy_url(self) -> Optional[str]:
+        """The user's proxy for the next request, or None (Settings > Proxy)."""
+        if self.use_proxy and self.proxy_manager:
+            proxy = self.proxy_manager.get_next_proxy()
+            if proxy:
+                return proxy.url
+        return None
 
     async def _make_request(self, url: str, method: str = "GET", **kwargs):
         session = await self._get_session()

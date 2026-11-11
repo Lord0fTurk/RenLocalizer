@@ -79,6 +79,14 @@ GOOGLE_BATCHEXECUTE_ENDPOINT = (
 # ~50k chars per request is the hard ceiling (HTTP 400 beyond).
 BING_EDGE_TRANSLATE_ENDPOINT = "https://edge.microsoft.com/translate/translatetext"
 
+# NVIDIA API Catalog (build.nvidia.com), OpenAI-compatible. The free tier needs
+# a personal `nvapi-` key (NVIDIA Developer Program, no card) and is limited to
+# roughly 40 requests/minute. Riva-Translate takes the language pair ("en-tr")
+# as the system message and the text as the user message (model card).
+NVIDIA_API_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_DEFAULT_MODEL = "nvidia/riva-translate-4b-instruct-v2"
+NVIDIA_KEYS_URL = "https://build.nvidia.com/nvidia/riva-translate-4b-instruct-v2"  # "Get API Key" lives on the model page
+
 # ── Built-in GGUF runtime (llama.cpp server) ─────────────────────────────────
 # RenLocalizer can run a user-supplied .gguf model through llama.cpp's
 # OpenAI-compatible server, so no Ollama / LM Studio install is required.

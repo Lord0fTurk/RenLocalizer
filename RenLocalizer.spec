@@ -116,6 +116,8 @@ datas_list = [
 # py3langid loads data/model.npz.xz at runtime and has no PyInstaller hook;
 # without it offline language detection silently never runs in the exe.
 try:
+    # cacert.pem: last-resort CA bundle for src/utils/net.py build_ssl_context()
+    datas_list += collect_data_files('certifi')
     datas_list += collect_data_files('py3langid')
 except Exception:
     pass
@@ -270,7 +272,7 @@ if sys.platform == 'darwin':
             'CFBundleShortVersionString': APP_VERSION,
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,
-            'LSMinimumSystemVersion': '11.0',
+            'LSMinimumSystemVersion': '13.0',  # Qt 6.10 targets macOS 13+
             'LSApplicationCategoryType': 'public.app-category.utilities',
         },
     )

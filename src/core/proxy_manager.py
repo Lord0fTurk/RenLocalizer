@@ -70,6 +70,9 @@ class ProxyManager:
         "http://checkip.amazonaws.com",
     ]
 
+    # Small, keyless, answers 204 from anywhere Google is reachable through the proxy.
+    HTTPS_TEST_URL = "https://www.gstatic.com/generate_204"
+
     # Batch test concurrency
     TEST_BATCH_SIZE = 30
 
@@ -90,6 +93,12 @@ class ProxyManager:
 
         # User-provided manual proxy list (host:port or full URLs)
         self.custom_proxy_strings: List[str] = []
+
+        # Master switch (ProxySettings.enabled). While off, `proxies` stays empty,
+        # so no translator can pick one whatever its own use_proxy flag says.
+        self.enabled: bool = False
+        # Entries that could not be used (SOCKS, malformed); shown in the UI.
+        self.rejected_entries: List[str] = []
 
         # Thread-safety for auto-refresh
         self._refresh_lock = threading.Lock()
@@ -122,8 +131,67 @@ class ProxyManager:
             manual = getattr(proxy_settings, "manual_proxies", None)
             if isinstance(manual, list):
                 self.custom_proxy_strings = [str(x).strip() for x in manual if str(x).strip()]
+            self.enabled = bool(getattr(proxy_settings, "enabled", False))
+            self.load_configured()
         except Exception as e:
             self.logger.warning(f"Error configuring ProxyManager from settings: {e}")
+
+    def _parse_configured(self) -> List[ProxyInfo]:
+        """Personal proxy first, then the manual list; records what was rejected."""
+        parsed: List[ProxyInfo] = []
+        rejected: List[str] = []
+        seen = set()
+        entries = ([(self.personal_proxy_url, True)] if self.personal_proxy_url else []) + [
+            (entry, False) for entry in self.custom_proxy_strings
+        ]
+        for entry, personal in entries:
+            proxy = self._parse_proxy_string(entry)
+            if proxy is None:
+                rejected.append(entry)
+                continue
+            if proxy.url in seen:
+                continue
+            seen.add(proxy.url)
+            proxy.is_personal = personal
+            parsed.append(proxy)
+        self.rejected_entries = rejected
+        return parsed
+
+    def load_configured(self) -> None:
+        """Make the configured proxies usable right away, without a network test.
+
+        Nothing called update_proxy_list() before a run, so `proxies` stayed
+        empty and an enabled proxy was never used. A proxy that does not work
+        shows up as failed requests (and in the settings page's test), which is
+        clearer than silently translating without it.
+        """
+        parsed = self._parse_configured()  # always, so rejected_entries is current
+        self.proxies = parsed if self.enabled else []
+        self.current_proxy_index = 0
+        # 0 keeps get_next_proxy() from scheduling the background re-test, which
+        # would drop manual proxies whenever the test sites are unreachable.
+        self.last_proxy_update = 0.0
+
+    async def test_configured(self) -> List[Dict]:
+        """Test every configured proxy (enabled or not) for the settings page.
+
+        Returns one dict per proxy: ``label`` (host:port, never the credentials),
+        ``ok`` and ``ms``. The live list is left as load_configured() built it.
+        """
+        candidates = self._parse_configured()
+        results: List[Dict] = []
+        for i in range(0, len(candidates), self.TEST_BATCH_SIZE):
+            batch = candidates[i: i + self.TEST_BATCH_SIZE]
+            outcomes = await asyncio.gather(
+                *(self.test_proxy(proxy, timeout=12) for proxy in batch), return_exceptions=True
+            )
+            for proxy, ok in zip(batch, outcomes):
+                results.append({
+                    "label": f"{proxy.host}:{proxy.port}",
+                    "ok": ok is True,
+                    "ms": int(round(proxy.response_time * 1000)) if ok is True else 0,
+                })
+        return results
 
     # ------------------------------------------------------------------
     # Proxy Testing
@@ -131,16 +199,20 @@ class ProxyManager:
 
     async def test_proxy(self, proxy: ProxyInfo, timeout: int = 5) -> bool:
         """Test if a proxy is working by making a real HTTP request."""
-        test_url = random.choice(self.TEST_URLS)
+        # Every translation endpoint is HTTPS, so the proxy has to tunnel (CONNECT);
+        # a plain-HTTP check passed proxies that could not carry a single request.
+        test_url = self.HTTPS_TEST_URL
         start_time = time.time()
 
         try:
-            connector = aiohttp.TCPConnector(limit=1, ssl=False)
+            from src.utils.net import build_ssl_context
+
+            connector = aiohttp.TCPConnector(limit=1, ssl=build_ssl_context())
             timeout_obj = aiohttp.ClientTimeout(total=timeout)
 
             async with aiohttp.ClientSession(connector=connector, timeout=timeout_obj) as session:
                 async with session.get(test_url, proxy=proxy.url) as response:
-                    if response.status == 200:
+                    if response.status < 400:
                         proxy.response_time = time.time() - start_time
                         proxy.success_count += 1
                         proxy.is_working = True

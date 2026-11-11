@@ -658,15 +658,24 @@ class AsyncBaseAITranslator(BaseTranslator):
             }
             if self._base_url:
                 kwargs["base_url"] = self._base_url
-                if is_local_endpoint(self._base_url):
-                    # A Windows/VPN system proxy would otherwise swallow every
-                    # request to Ollama / LM Studio / llama-server (see src/utils/net.py).
-                    try:
-                        from openai import DefaultAsyncHttpxClient
-                        kwargs["http_client"] = DefaultAsyncHttpxClient(trust_env=False)
-                    except Exception:
-                        import httpx
-                        kwargs["http_client"] = httpx.AsyncClient(trust_env=False)
+            if self._base_url and is_local_endpoint(self._base_url):
+                # A Windows/VPN system proxy would otherwise swallow every
+                # request to Ollama / LM Studio / llama-server (see src/utils/net.py).
+                try:
+                    from openai import DefaultAsyncHttpxClient
+                    kwargs["http_client"] = DefaultAsyncHttpxClient(trust_env=False)
+                except Exception:
+                    import httpx
+                    kwargs["http_client"] = httpx.AsyncClient(trust_env=False)
+            elif (proxy_url := self._proxy_url()):
+                # The user's proxy (Settings > Proxy). The client is built once,
+                # so one proxy serves this translator's whole run.
+                try:
+                    from openai import DefaultAsyncHttpxClient
+                    kwargs["http_client"] = DefaultAsyncHttpxClient(proxy=proxy_url)
+                except Exception:
+                    import httpx
+                    kwargs["http_client"] = httpx.AsyncClient(proxy=proxy_url)
             self._client = AsyncOpenAI(**kwargs)
         return self._client
 
@@ -1836,6 +1845,13 @@ class GeminiTranslator(BaseTranslator):
             client_kwargs: Dict[str, Any] = {}
             if resolved_key and resolved_key != "none":
                 client_kwargs["api_key"] = resolved_key
+            proxy_url = self._proxy_url()
+            if proxy_url and hasattr(genai, "types") and hasattr(genai.types, "HttpOptions"):
+                # The user's proxy (Settings > Proxy); the SDK reads only env proxies itself.
+                client_kwargs["http_options"] = genai.types.HttpOptions(
+                    client_args={"proxy": proxy_url},
+                    async_client_args={"proxy": proxy_url},
+                )
             self._client = genai.Client(**client_kwargs)
         else:
             if resolved_key and resolved_key != "none" and genai is not None and hasattr(genai, "configure"):

@@ -77,6 +77,7 @@ BRAND_DIM = "dim white"
 ENGINES = [
     ("google",         "Google Translate",  "🌐", "Free — 13 mirror fallback"),
     ("bing",           "Bing / MS Edge",    "🪟", "Free — no API key, Google fallback"),
+    ("nvidia",         "NVIDIA (Riva)",     "🟢", "Free nvapi- key (build.nvidia.com), ~40 req/min"),
     ("openai",         "OpenAI (GPT)",      "🤖", "API key required"),
     ("deepseek",       "DeepSeek",          "🔮", "API key required — OpenAI compatible"),
     ("gemini",         "Google Gemini",     "✨", "API key required"),
@@ -108,6 +109,7 @@ _LLAMA_SERVER = LlamaServerManager()
 ENGINE_MAP = {
     "google": TranslationEngine.GOOGLE,
     "bing": TranslationEngine.BING,
+    "nvidia": TranslationEngine.NVIDIA,
     "openai": TranslationEngine.OPENAI,
     "deepseek": TranslationEngine.OPENAI,
     "gemini": TranslationEngine.GEMINI,
@@ -465,6 +467,15 @@ def setup_engines(config: ConfigManager, engine_id: str, lt_url: str = "", lt_ke
             t = BingTranslator(proxy_manager=proxy_manager, config_manager=config)
             t.set_fallback_translator(google)
             translation_manager.add_translator(TranslationEngine.BING, t)
+        elif engine == TranslationEngine.NVIDIA:
+            from src.core.translator import NvidiaTranslator
+            t = NvidiaTranslator(
+                api_key=config.api_keys.nvidia_api_key or "",
+                model=getattr(config.translation_settings, "nvidia_model", ""),
+                proxy_manager=proxy_manager, config_manager=config,
+            )
+            t.set_fallback_translator(google)
+            translation_manager.add_translator(TranslationEngine.NVIDIA, t)
         elif engine in (TranslationEngine.LIBRETRANSLATE, TranslationEngine.CUSTOM):
             from src.core.translator import LibreTranslateTranslator
             base_url = lt_url or getattr(config.translation_settings, "libretranslate_url", "http://localhost:5000")
@@ -603,6 +614,10 @@ def _apply_ai_overrides(config: ConfigManager, engine_id: str, args) -> None:
         keys.gemini_api_key = api_key or keys.gemini_api_key or os.environ.get("GEMINI_API_KEY", "")
         if model:
             ts.gemini_model = model
+    elif engine_id == "nvidia":
+        keys.nvidia_api_key = api_key or keys.nvidia_api_key or os.environ.get("NVIDIA_API_KEY", "")
+        if model:
+            ts.nvidia_model = model
     elif engine_id in ("openai", "deepseek"):
         env_name = "DEEPSEEK_API_KEY" if engine_id == "deepseek" else "OPENAI_API_KEY"
         keys.openai_api_key = api_key or keys.openai_api_key or os.environ.get(env_name, "")

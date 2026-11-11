@@ -19,6 +19,7 @@ from .services import (
     LibreTranslateTranslator,
     BingTranslator,
 )
+from .nvidia import NvidiaTranslator
 from .manager import TranslationManager
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "DeepLTranslator",
     "LibreTranslateTranslator",
     "BingTranslator",
+    "NvidiaTranslator",
     "TranslationManager",
 ]

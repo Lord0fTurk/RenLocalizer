@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
 
-from src.utils.net import urlopen_direct
+from src.utils.net import build_ssl_context, urlopen_direct
 
 from src.core.constants import (
     LLAMACPP_DEFAULT_PORT,
@@ -335,7 +335,7 @@ def _fetch_release_assets(build: str, timeout: int = 20) -> Dict[str, RuntimeAss
         url, headers={"User-Agent": _USER_AGENT, "Accept": "application/vnd.github+json"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout, context=build_ssl_context()) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise LlamaServerError(f"Could not read llama.cpp release {build}: {exc}") from exc
@@ -362,7 +362,7 @@ def _download_verified(asset: RuntimeAsset, dest: Path,
     digest = hashlib.sha256()
     downloaded = 0
     try:
-        with urllib.request.urlopen(request, timeout=60) as response, open(dest, "wb") as out:
+        with urllib.request.urlopen(request, timeout=60, context=build_ssl_context()) as response, open(dest, "wb") as out:
             total = int(response.headers.get("Content-Length") or asset.size or 0)
             while True:
                 chunk = response.read(262144)
@@ -530,7 +530,7 @@ class LlamaServerManager:
                 LLAMACPP_RELEASE_LIST_API,
                 headers={"User-Agent": _USER_AGENT, "Accept": "application/vnd.github+json"},
             )
-            with urllib.request.urlopen(request, timeout=20) as response:
+            with urllib.request.urlopen(request, timeout=20, context=build_ssl_context()) as response:
                 releases = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, OSError, ValueError) as exc:
             self.logger.debug("Could not list llama.cpp releases: %s", exc)

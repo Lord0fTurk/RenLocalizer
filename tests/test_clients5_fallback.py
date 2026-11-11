@@ -50,7 +50,7 @@ class RoutedSession:
             return RoutedResp(200, self.c5_data)
         return RoutedResp(self.primary_status, [])
 
-    def post(self, url=None, params=None, data=None, headers=None, timeout=None):
+    def post(self, url=None, params=None, data=None, headers=None, timeout=None, proxy=None):
         if "batchexecute" in str(url):
             return RoutedResp(200, self.be_raw or "")
         return RoutedResp(404, "")

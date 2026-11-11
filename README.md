@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/Lord0fTurk/RenLocalizer/releases/latest/download/RenLocalizer-Windows-x64.zip"><img alt="Download for Windows" src="https://img.shields.io/badge/Windows-Download-06B6D4?style=for-the-badge&logo=windows&logoColor=white"></a>
   <a href="https://github.com/Lord0fTurk/RenLocalizer/releases/latest/download/RenLocalizer-Linux-x64.AppImage"><img alt="Download for Linux" src="https://img.shields.io/badge/Linux-Download-06B6D4?style=for-the-badge&logo=linux&logoColor=white"></a>
-  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases/latest/download/RenLocalizer-macOS-arm64.dmg"><img alt="Download for macOS" src="https://img.shields.io/badge/macOS-Download-06B6D4?style=for-the-badge&logo=apple&logoColor=white"></a>
+  <a href="https://github.com/Lord0fTurk/RenLocalizer/releases/latest/download/RenLocalizer-macOS-arm64.dmg"><img alt="Download for macOS (Apple Silicon)" src="https://img.shields.io/badge/macOS%20(Apple%20Silicon)-Download-06B6D4?style=for-the-badge&logo=apple&logoColor=white"></a>
 </p>
 
 <p align="center">
@@ -181,13 +181,18 @@ The app is not code-signed, so Windows SmartScreen may show a warning: click **M
 <summary><b>macOS says the app is damaged or can't be opened.</b></summary>
 <br>
 
-macOS blocks apps downloaded outside the App Store. Move RenLocalizer to Applications, then run this once in Terminal:
+The macOS download needs an **Apple Silicon Mac (M1 or later) running macOS 13 or newer**. On an Intel Mac, [run it from source](#for-power-users). To check your chip, open the Apple menu › About This Mac.
+
+macOS blocks apps that are not notarized. Move RenLocalizer to Applications, then do one of these:
+
+- **macOS 15 Sequoia:** open the app once, then go to **System Settings › Privacy & Security**, scroll down and click **Open Anyway**. Control-click › Open no longer works on Sequoia.
+- **Any version:** run this once in Terminal, then open the app normally:
 
 ```bash
 xattr -cr /Applications/RenLocalizer.app
 ```
 
-The macOS download is for Apple Silicon (M1 and later). On an Intel Mac, [run it from source](#for-power-users).
+If it still does not open, [report it](https://github.com/Lord0fTurk/RenLocalizer/issues) with your macOS version, your chip and the exact message.
 </details>
 
 <details>

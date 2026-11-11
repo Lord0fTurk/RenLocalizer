@@ -8,6 +8,7 @@ Google Translate ve AI motorları (OpenAI, DeepSeek, LocalLLM) ile
 çeviri sürecini yönetir.
 """
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -85,6 +86,9 @@ class AppBackend(QObject):
     translationFinished = pyqtSignal(bool, str, arguments=["success", "message"])
     # Internal: worker thread -> GUI thread hand-off after llama-server start.
     _builtinServerPrepared = pyqtSignal(bool, str)
+    _proxyTestDone = pyqtSignal(object)
+    proxySettingsChanged = pyqtSignal()
+    proxyTestStateChanged = pyqtSignal()
     statsReady = pyqtSignal(
         int, int, int, arguments=["total", "translated", "untranslated"]
     )
@@ -137,6 +141,8 @@ class AppBackend(QObject):
     geminiApiKeyChanged = pyqtSignal()
     geminiModelChanged = pyqtSignal()
     geminiSafetySettingsChanged = pyqtSignal()
+    nvidiaApiKeyChanged = pyqtSignal()
+    nvidiaModelChanged = pyqtSignal()
     localLlmUrlChanged = pyqtSignal()
     localLlmModelChanged = pyqtSignal()
     localLlmModeChanged = pyqtSignal()
@@ -256,6 +262,8 @@ class AppBackend(QObject):
         self.settings.on("gemini_api_key", lambda: self.geminiApiKeyChanged.emit())
         self.settings.on("gemini_model", lambda: self.geminiModelChanged.emit())
         self.settings.on("gemini_safety_settings", lambda: self.geminiSafetySettingsChanged.emit())
+        self.settings.on("nvidia_api_key", lambda: self.nvidiaApiKeyChanged.emit())
+        self.settings.on("nvidia_model", lambda: self.nvidiaModelChanged.emit())
         self.settings.on("local_llm_url", lambda: self.localLlmUrlChanged.emit())
         self.settings.on("local_llm_model", lambda: self.localLlmModelChanged.emit())
         self.settings.on("local_llm_model", lambda: self.hyMt2StatusChanged.emit())
@@ -288,6 +296,10 @@ class AppBackend(QObject):
         self.settings.on("accent_preset", lambda preset: self.accentPresetChanged.emit(preset))
         self.settings.on("glossary", lambda: self.glossaryChanged.emit())
         self._builtinServerPrepared.connect(self._on_builtin_server_prepared)
+        self._proxy_testing = False
+        self._proxy_test_result = ""
+        self._proxy_test_ok = False
+        self._proxyTestDone.connect(self._on_proxy_test_done)
         self._projectInfoReady.connect(self._on_project_info_ready)
 
         # Google translator'ı her zaman hazırla (fallback)
@@ -385,10 +397,34 @@ class AppBackend(QObject):
         except Exception as exc:
             self.logger.error("[AppBackend] Bing translator kurulamadı: %s", exc)
 
+    def _setup_nvidia_translator(self) -> None:
+        """NVIDIA Riva-Translate (ücretsiz nvapi- anahtarı) motorunu kurar; Google fallback bağlanır."""
+        try:
+            from src.core.translator import NvidiaTranslator
+
+            nt = NvidiaTranslator(
+                api_key=self.config.api_keys.nvidia_api_key or "",
+                model=getattr(self.config.translation_settings, "nvidia_model", ""),
+                proxy_manager=self.proxy_manager,
+                config_manager=self.config,
+            )
+            fallback = self.translation_manager.translators.get(TranslationEngine.GOOGLE)
+            if fallback is None:
+                fallback = GoogleTranslator(
+                    proxy_manager=self.proxy_manager,
+                    config_manager=self.config,
+                )
+            nt.set_fallback_translator(fallback)
+            self._replace_translator(TranslationEngine.NVIDIA, nt)
+            self.logger.info("[AppBackend] NVIDIA (Riva-Translate) translator hazır.")
+        except Exception as exc:
+            self.logger.error("[AppBackend] NVIDIA translator kurulamadı: %s", exc)
+
     @staticmethod
     def _engine_from_str(engine_str: str) -> TranslationEngine:
         """Safely converts a string engine name to TranslationEngine enum."""
         mapping = {
+            "nvidia": TranslationEngine.NVIDIA,
             "google": TranslationEngine.GOOGLE,
             "openai": TranslationEngine.OPENAI,
             "local_llm": TranslationEngine.LOCAL_LLM,
@@ -441,6 +477,8 @@ class AppBackend(QObject):
                 self._setup_libretranslate()
             elif engine == TranslationEngine.BING:
                 self._setup_bing_translator()
+            elif engine == TranslationEngine.NVIDIA:
+                self._setup_nvidia_translator()
             elif engine == TranslationEngine.CUSTOM:
                 self._setup_custom_endpoint()
         except Exception as exc:
@@ -479,6 +517,8 @@ class AppBackend(QObject):
             target, args = self._setup_libretranslate, ()
         elif engine == TranslationEngine.BING:
             target, args = self._setup_bing_translator, ()
+        elif engine == TranslationEngine.NVIDIA:
+            target, args = self._setup_nvidia_translator, ()
         elif engine == TranslationEngine.CUSTOM:
             target, args = self._setup_custom_endpoint, ()
         else:
@@ -1042,6 +1082,138 @@ class AppBackend(QObject):
     @geminiModel.setter
     def geminiModel(self, val: str) -> None:
         self.settings.set_gemini_model(val)
+
+    # ── NVIDIA (Riva-Translate) Properties ────────────────────────────────
+
+    @pyqtProperty(str, notify=nvidiaApiKeyChanged)
+    def nvidiaApiKey(self) -> str:
+        return self.settings.get_nvidia_api_key()
+
+    @nvidiaApiKey.setter
+    def nvidiaApiKey(self, val: str) -> None:
+        self.settings.set_nvidia_api_key(val)
+
+    @pyqtProperty(str, notify=nvidiaModelChanged)
+    def nvidiaModel(self) -> str:
+        return self.settings.get_nvidia_model()
+
+    @nvidiaModel.setter
+    def nvidiaModel(self, val: str) -> None:
+        self.settings.set_nvidia_model(val)
+
+    # ── Proxy (Settings > Performance & Network) ──────────────────────────
+
+    def _apply_proxy_settings(self) -> None:
+        """Push config.proxy_settings to the live ProxyManager and save it."""
+        self.proxy_manager.configure_from_settings(self.config.proxy_settings)
+        try:
+            self.config.save_config()
+        except Exception as exc:
+            self.logger.warning("[AppBackend] proxy settings could not be saved: %s", exc)
+        if self._proxy_test_result:
+            self._proxy_test_result = ""  # the old result no longer describes the settings
+            self.proxyTestStateChanged.emit()
+        self.proxySettingsChanged.emit()
+
+    @pyqtProperty(bool, notify=proxySettingsChanged)
+    def proxyEnabled(self) -> bool:
+        return bool(self.config.proxy_settings.enabled)
+
+    @proxyEnabled.setter
+    def proxyEnabled(self, val: bool) -> None:
+        if bool(val) != bool(self.config.proxy_settings.enabled):
+            self.config.proxy_settings.enabled = bool(val)
+            self._apply_proxy_settings()
+
+    @pyqtProperty(str, notify=proxySettingsChanged)
+    def proxyUrl(self) -> str:
+        return self.config.proxy_settings.proxy_url or ""
+
+    @proxyUrl.setter
+    def proxyUrl(self, val: str) -> None:
+        val = (val or "").strip()
+        if val != (self.config.proxy_settings.proxy_url or ""):
+            self.config.proxy_settings.proxy_url = val
+            self._apply_proxy_settings()
+
+    @pyqtProperty(str, notify=proxySettingsChanged)
+    def proxyList(self) -> str:
+        """The manual proxy list, one address per line."""
+        return chr(10).join(self.config.proxy_settings.manual_proxies or [])
+
+    @proxyList.setter
+    def proxyList(self, val: str) -> None:
+        entries = [line.strip() for line in (val or "").splitlines() if line.strip()]
+        if entries != list(self.config.proxy_settings.manual_proxies or []):
+            self.config.proxy_settings.manual_proxies = entries
+            self._apply_proxy_settings()
+
+    @pyqtProperty(bool, notify=proxySettingsChanged)
+    def proxyAutoRotate(self) -> bool:
+        return bool(self.config.proxy_settings.auto_rotate)
+
+    @proxyAutoRotate.setter
+    def proxyAutoRotate(self, val: bool) -> None:
+        if bool(val) != bool(self.config.proxy_settings.auto_rotate):
+            self.config.proxy_settings.auto_rotate = bool(val)
+            self._apply_proxy_settings()
+
+    @pyqtProperty(int, notify=proxySettingsChanged)
+    def proxyIgnoredCount(self) -> int:
+        """Entries that cannot be used (SOCKS or malformed)."""
+        return len(self.proxy_manager.rejected_entries)
+
+    @pyqtProperty(bool, notify=proxyTestStateChanged)
+    def proxyTesting(self) -> bool:
+        return self._proxy_testing
+
+    @pyqtProperty(str, notify=proxyTestStateChanged)
+    def proxyTestResult(self) -> str:
+        return self._proxy_test_result
+
+    @pyqtProperty(bool, notify=proxyTestStateChanged)
+    def proxyTestOk(self) -> bool:
+        return self._proxy_test_ok
+
+    @pyqtSlot()
+    def testProxies(self) -> None:
+        """Test the configured proxies in a worker thread (HTTPS through each one)."""
+        if self._proxy_testing:
+            return
+        self._proxy_testing = True
+        self._proxy_test_result = ""
+        self.proxyTestStateChanged.emit()
+
+        def work() -> None:
+            results = []
+            try:
+                loop = asyncio.new_event_loop()
+                try:
+                    results = loop.run_until_complete(self.proxy_manager.test_configured())
+                finally:
+                    loop.close()
+            except Exception as exc:
+                self.logger.warning("[AppBackend] proxy test failed: %s", exc)
+            self._proxyTestDone.emit(results)
+
+        threading.Thread(target=work, daemon=True, name="proxy-test").start()
+
+    def _on_proxy_test_done(self, results) -> None:
+        results = list(results or [])
+        working = [r for r in results if r.get("ok")]
+        self._proxy_testing = False
+        self._proxy_test_ok = bool(working)
+        if not results:
+            self._proxy_test_result = self._t("proxy_none_configured", "No usable proxy address entered.")
+        elif working:
+            self._proxy_test_result = self._t(
+                "proxy_test_ok", "Working: {working} of {total} (fastest {ms} ms)"
+            ).format(working=len(working), total=len(results), ms=min(r.get("ms", 0) for r in working))
+        else:
+            self._proxy_test_result = self._t(
+                "proxy_test_fail", "No proxy answered ({total} tested). Check the address, port and password."
+            ).format(total=len(results))
+        self.proxyTestStateChanged.emit()
 
     @pyqtProperty(str, notify=geminiSafetySettingsChanged)
     def geminiSafetySettings(self) -> str:
@@ -1796,6 +1968,8 @@ class AppBackend(QObject):
             return False
         try:
             self.settings.factory_reset()
+            self.proxy_manager.configure_from_settings(self.config.proxy_settings)
+            self.proxySettingsChanged.emit()
 
             # Sync runtime engine state back to the default engine
             self._selected_engine = TranslationEngine.GOOGLE

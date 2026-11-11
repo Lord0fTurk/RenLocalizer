@@ -263,6 +263,7 @@ class GoogleTranslator(BaseTranslator):
                 session = await self._get_session()
                 async with session.get(
                     url,
+                    proxy=self._proxy_url(),
                     timeout=aiohttp.ClientTimeout(total=6),
                     headers=GOOGLE_BROWSER_HEADERS,
                 ) as resp:
@@ -382,7 +383,7 @@ class GoogleTranslator(BaseTranslator):
                 session = await self._get_session()
                 # Reduced timeout to 6s for faster failover
                 async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=6)
+                    url, proxy=self._proxy_url(), timeout=aiohttp.ClientTimeout(total=6)
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -423,6 +424,7 @@ class GoogleTranslator(BaseTranslator):
             session = await self._get_session()
             async with session.get(
                 GOOGLE_CLIENTS5_ENDPOINT,
+                proxy=self._proxy_url(),
                 params=params,
                 timeout=aiohttp.ClientTimeout(total=8),
                 headers=GOOGLE_BROWSER_HEADERS,
@@ -459,6 +461,7 @@ class GoogleTranslator(BaseTranslator):
             session = await self._get_session()
             async with session.post(
                 GOOGLE_BATCHEXECUTE_ENDPOINT,
+                proxy=self._proxy_url(),
                 params=params,
                 data=f"f.req={urllib.parse.quote(freq)}&",
                 headers=headers,
@@ -574,6 +577,7 @@ class GoogleTranslator(BaseTranslator):
             session = await self._get_session()
             async with session.post(
                 GOOGLE_BATCHEXECUTE_ENDPOINT,
+                proxy=self._proxy_url(),
                 params=params,
                 data=f"f.req={urllib.parse.quote(freq)}&",
                 headers=headers,
@@ -945,6 +949,8 @@ class GoogleTranslator(BaseTranslator):
                             self.proxy_manager.mark_proxy_failed(proxy_url_used)
 
                 except aiohttp.ClientError as e:
+                    if self.note_tls_error(e):
+                        return None  # a CA problem is not the mirror's fault
                     # Network/Timeout errors — likely proxy failure
                     if proxy_url_used and self.proxy_manager:
                         self.proxy_manager.mark_proxy_failed(proxy_url_used)
@@ -1719,9 +1725,9 @@ class GoogleTranslator(BaseTranslator):
 
                 async with session.get(
                     endpoint,
+                    proxy=self._proxy_url(),
                     params=params,
                     timeout=aiohttp.ClientTimeout(total=5),
-                    ssl=False,
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json(content_type=None)
@@ -1746,9 +1752,9 @@ class GoogleTranslator(BaseTranslator):
             }
             async with session.get(
                 GOOGLE_CLIENTS5_ENDPOINT,
+                proxy=self._proxy_url(),
                 params=params5,
                 timeout=aiohttp.ClientTimeout(total=6),
-                ssl=False,
                 headers=GOOGLE_BROWSER_HEADERS,
             ) as resp:
                 if resp.status == 200:
@@ -2319,6 +2325,8 @@ class GoogleTranslator(BaseTranslator):
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
+                    if self.note_tls_error(e):
+                        return None  # a CA problem is not the mirror's fault
                     if endpoint in self._endpoint_health:
                         self._endpoint_health[endpoint]["fails"] += 1
                         if (

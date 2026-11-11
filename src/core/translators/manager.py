@@ -23,6 +23,7 @@ from .base import (
 )
 from .google import GoogleTranslator
 from .services import DeepLTranslator, LibreTranslateTranslator, BingTranslator
+from .nvidia import NvidiaTranslator
 
 _CORRUPT_OR_PROTECTED_CACHE_RE = re.compile(
     r'<ph\b|\bph\s*>|</\s*ph\s*>|\u27e6|\u27e7|__PH_\d+__|XRPYX_|RLPH[0-9A-F]{3,}'
@@ -451,6 +452,23 @@ class TranslationManager:
             f"Failed: {last_err}",
         )
 
+    STOP_POLL_SECONDS = 0.2
+
+    async def _await_unless_stopped(self, awaitable):
+        """Await `awaitable`, but cancel it (aborting open HTTP calls) as soon as the
+        user asks to stop. Returns None when it was cancelled that way."""
+        fut = asyncio.ensure_future(awaitable)
+        while not fut.done():
+            await asyncio.wait({fut}, timeout=self.STOP_POLL_SECONDS)
+            if not fut.done() and self.should_stop_callback and self.should_stop_callback():
+                fut.cancel()
+                try:
+                    await fut
+                except BaseException:
+                    pass
+                return None
+        return fut.result()
+
     async def translate_batch(
         self, requests: List[TranslationRequest]
     ) -> List[TranslationResult]:
@@ -556,12 +574,19 @@ class TranslationManager:
                 or isinstance(tr, DeepLTranslator)
                 or isinstance(tr, LibreTranslateTranslator)
                 or isinstance(tr, BingTranslator)
+                or isinstance(tr, NvidiaTranslator)
             )
 
             translated_items: List[TranslationResult] = []
             if can_batch and len(only) > 1:
                 try:
-                    bout = await tr.translate_batch(only)
+                    bout = await self._await_unless_stopped(tr.translate_batch(only))
+                    if bout is None:  # stopped while requests were in flight
+                        bout = [
+                            TranslationResult(r.text, "", r.source_lang, r.target_lang,
+                                              r.engine, False, "Stopped by user")
+                            for r in only
+                        ]
                     if bout and len(bout) == len(only):
                         translated_items = bout
                     else:
@@ -608,7 +633,15 @@ class TranslationManager:
                             await asyncio.sleep(self.ai_request_delay)
                         return ix, res
 
-                results = await asyncio.gather(*[run_single(i, r) for i, r in items])
+                results = await self._await_unless_stopped(
+                    asyncio.gather(*[run_single(i, r) for i, r in items])
+                )
+                if results is None:  # stopped while requests were in flight
+                    results = [
+                        (i, TranslationResult(r.text, "", r.source_lang, r.target_lang,
+                                              r.engine, False, "Stopped by user"))
+                        for i, r in items
+                    ]
                 for idx, res in results:
                     final_results[idx] = res
                     if res and res.success:

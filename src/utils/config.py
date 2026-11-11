@@ -71,6 +71,9 @@ MAX_AI_BATCH_SIZE = 10000
 ENGINE_BATCH_SIZE_CAPS: dict[str, int] = {
     "google": 1000,
     "bing": 100,  # edge.microsoft.com: ≤100 items / ~50k chars per request
+    # NvidiaTranslator splits a step into adaptive sub-batches itself; the step only
+    # has to be big enough to keep its few parallel requests fed.
+    "nvidia": 200,
 }
 
 EXTRACTION_MODE_THRESHOLDS: dict[str, float] = {
@@ -285,6 +288,7 @@ class TranslationSettings:
     openai_model: str = "gpt-4o-mini"  # Same fallback the engine and settings backend use
     openai_base_url: str = ""  # For OpenRouter or Local
     gemini_model: str = "gemini-2.5-flash"
+    nvidia_model: str = "nvidia/riva-translate-4b-instruct-v2"
     gemini_safety_settings: str = "BLOCK_NONE"  # BLOCK_NONE, BLOCK_ONLY_HIGH, STANDARD
     local_llm_model: str = "llama3.2"
     local_llm_url: str = "http://localhost:11434/v1"
@@ -430,6 +434,7 @@ class TranslationSettings:
             "local_llm",
             "libretranslate",
             "bing",
+            "nvidia",
             "deepseek",
             "custom",
             "pseudo",
@@ -510,12 +515,14 @@ class ApiKeys:
     deepl_api_key: str = ""
     openai_api_key: str = ""
     gemini_api_key: str = ""
+    nvidia_api_key: str = ""
 
     def __post_init__(self):
         """Strip whitespace from all API keys."""
         self.deepl_api_key = (self.deepl_api_key or "").strip()
         self.openai_api_key = (self.openai_api_key or "").strip()
         self.gemini_api_key = (self.gemini_api_key or "").strip()
+        self.nvidia_api_key = (self.nvidia_api_key or "").strip()
 
 
 @dataclass

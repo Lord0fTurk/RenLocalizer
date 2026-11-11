@@ -28,6 +28,7 @@ from src.core.translator import (
     DeepLTranslator,
     LibreTranslateTranslator,
     BingTranslator,
+    NvidiaTranslator,
 )
 from src.core.ai_translator import (
     OpenAITranslator,
@@ -2171,6 +2172,21 @@ class TranslationPipeline(QObject):
             t.set_fallback_translator(fallback)
             t.status_callback = self.log_message.emit
             self.translation_manager.add_translator(TranslationEngine.BING, t)
+
+        if self.engine == TranslationEngine.NVIDIA and self.engine not in self.translation_manager.translators:
+            t = NvidiaTranslator(
+                api_key=self.config.api_keys.nvidia_api_key,
+                model=getattr(self.config.translation_settings, "nvidia_model", ""),
+                proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
+                config_manager=self.config,
+            )
+            fallback = self.translation_manager.translators.get(TranslationEngine.GOOGLE)
+            if fallback is None:
+                fallback = GoogleTranslator(proxy_manager=getattr(self.translation_manager, "proxy_manager", None), config_manager=self.config)
+                fallback.status_callback = self.log_message.emit
+            t.set_fallback_translator(fallback)
+            t.status_callback = self.log_message.emit
+            self.translation_manager.add_translator(TranslationEngine.NVIDIA, t)
 
         # Fail fast instead of quietly translating everything with the Google
         # fallback when the selected AI server is down or the key is wrong.

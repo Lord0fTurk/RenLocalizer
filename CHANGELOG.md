@@ -4,6 +4,52 @@ render_with_liquid: false
 
 # RenLocalizer Changelog
 
+#### [2.8.22] - 2026-11-11
+
+> **A new free engine (NVIDIA Riva-Translate), a proxy that finally works and has a settings card, Stop that cancels requests already in flight, and a fix for certificate verification in packaged Linux builds (AppImage / tar.gz) on distributions other than the build machine's, which made Bing fail and Google crawl.**
+
+##### 🔒 Packaged Linux Builds: Certificate Verification (GitHub #23)
+
+> **(`utils/net.py`, `core/translators/base.py`, `core/translators/google.py`, `core/translators/services.py`, `core/local_llm_server.py`, `RenLocalizer.spec`)**
+> - **Cause:** The AppImage / tar.gz carries the OpenSSL of the machine that built it, whose compiled-in CA paths do not exist on other distributions (e.g. Arch). Every HTTPS request failed certificate verification, so Bing errored and Google crawled through retries and mirror bans.
+> - **Fix:** `build_ssl_context()` picks CAs in order: `SSL_CERT_FILE`/`SSL_CERT_DIR` and OpenSSL defaults when they hold certificates, known system bundles (Arch, Fedora, Debian/Ubuntu, SUSE), then the bundled certifi. Verification stays on; system CAs (corporate proxy, antivirus roots) keep working. Used by the translator session and the llama.cpp runtime downloads.
+> - **Clear error:** A certificate failure is reported once, with the CA source used and the `SSL_CERT_FILE` hint, and no longer triggers backoff, mirror bans or retries.
+
+##### 🟢 New Engine: NVIDIA Riva-Translate (free key)
+
+> **(`core/translators/nvidia.py`, `core/constants.py`, `utils/config.py`, `backend/*`, `cli_main.py`, `Main.qml`, `locales/*`, `tests/test_nvidia_translator.py`)**
+> - **What:** `nvidia/riva-translate-4b-instruct-v2` (37 languages, Turkish included) through the NVIDIA API Catalog. Needs a personal `nvapi-` key from build.nvidia.com (NVIDIA Developer Program, no card). Selectable in the dashboard engine list (key and model fields appear there and in Settings) and as `-e nvidia` in the CLI.
+> - **Placeholders:** the `⟦RLPH…⟧` token scheme (same as Google/Bing) survives; the XML `<ph>` scheme does not, so the engine never uses it. The language pair (`en-tr`) is the system message; a free-form instruction breaks the model.
+> - **Speed within a ~40 requests/minute limit:** several lines share one request as numbered tags (`<s0>…</s0> <s1>…</s1>`). A plain separator lost lines whenever the model read one fragment as the continuation of the previous one (code-like strings such as `Changing person` + `to '` became a single line); on a real game's strings the tags recovered 120/120 lines, the separator only 4 of 8 groups right. A line that is missing or lost a placeholder token is asked again alone, so one odd line never costs a whole group. `AdaptiveBatchSizer` starts at 15, adds 3 after 3 clean full requests (max 30), and shrinks to 70 % (minimum 4) only when a second bad request follows within the last 6.
+> - **Limits and fallback:** requests are spaced evenly at 35/minute instead of sent in bursts (the free tier answered a burst with 429 even within the per-minute total, and a sliding window then stalled for most of a minute); a 429 pauses every waiting request. A 3500-character cap per request, 75 s request timeout, texts containing line breaks translated per line and rejoined, and hard failures handed to Google like Bing. The key is checked before a run starts with a one-word request (`probe_endpoint`; the `/models` list answers 200 for any key, so it cannot tell). A key rejected during a run (HTTP 401/403) is an error: nothing more is sent and Google does not translate the run in this engine's name. Request time, batch size and 429s are written to the UI log. 200 real strings: 43 s (the first version took 128 s).
+> - **Editor tip:** selecting an API engine (NVIDIA, OpenAI, Gemini, DeepSeek) shows a neutral tip on the dashboard and in Settings (`api_quality_note`, 9 languages): short one-word lines, names and placeholder-heavy texts are sometimes kept as-is and can be adjusted in the Editor.
+
+##### 🌍 Proxy: Settings Card, and a Proxy That Is Actually Used
+
+> **(`core/proxy_manager.py`, `core/translators/base.py`, `core/translators/google.py`, `core/translators/services.py`, `core/translators/nvidia.py`, `core/ai_translator.py`, `backend/app_backend.py`, `Main.qml`, `locales/*`, `tests/test_proxy_wiring.py`)**
+> - **Cause:** the proxy code had no place in the interface, and it did not work from `config.json` either: nothing ever loaded the configured addresses into the list the engines read, so an enabled proxy was never used. Bing and LibreTranslate also passed their arguments to the base class in the wrong order, which left them without a proxy manager.
+> - **Settings › Performance & Network › Proxy Settings:** a switch, the proxy address (`http://user:pass@host:port`), an optional list of further addresses with rotation, and a **Test Connections** button that reports how many answered and the fastest time. Addresses that cannot be used (SOCKS, wrong format) are counted on the page instead of being dropped silently. 9 languages.
+> - **Every engine follows the setting:** Google (including its alternate endpoints, Lingva and language detection, which used to bypass the proxy), Bing, NVIDIA, DeepL, LibreTranslate, OpenAI, DeepSeek and Gemini. Local models (Ollama, LM Studio, the built-in GGUF server) never go through it. With the switch off no engine can pick a proxy.
+> - **The test checks what matters:** it opens an HTTPS connection through the proxy (every translation endpoint is HTTPS) instead of fetching a plain-HTTP page, and a failed test no longer removes the proxy from the list.
+> - **Certificate verification stays on in language detection:** two Google detection requests disabled it (`ssl=False`); they now verify like every other request.
+> - **Limits:** SOCKS proxies are not supported. OpenAI, DeepSeek and Gemini build their connection once per run, so they use one proxy for the whole run and do not rotate. Checked against a local tunnelling proxy (each engine's requests arrive there, a local LLM's do not); not checked against a commercial proxy with a password.
+
+##### ⏹ Stop Cancels In-Flight Requests
+
+> **(`core/translators/manager.py`, `core/translators/nvidia.py`, `tests/test_nvidia_translator.py`)**
+> - **Cause:** the stop flag was only checked before a request was sent, so a slow request (10-30 s on the free NVIDIA tier) kept the run going after Stop, and lines that failed with "Stopped by user" were then handed to the fallback engine.
+> - **Fix:** `TranslationManager` polls the flag every 0.2 s while a batch is in flight and cancels it, which aborts the open HTTP calls (all engines). The NVIDIA engine also skips its Google fallback once stopped, and cancels its own open requests when the manager's poll notices Stop first (they used to run on to their timeout in the background). Already-translated lines stay in the cache.
+> - **Tests:** the suite now covers the order that happens in a real run (the manager notices Stop before the engine does); the earlier test only covered the engine's own check.
+
+##### 🍎 macOS Launch Guidance
+
+> **(`README.md`, `RenLocalizer.spec`, `.github/workflows/release.yml`)**
+> - The macOS download is labelled Apple Silicon only, with the macOS 13+ requirement and the Sequoia step (System Settings › Privacy & Security › Open Anyway; Control-click › Open no longer works) next to the `xattr -cr` fallback.
+> - `LSMinimumSystemVersion` is now 13.0 (Qt 6.10's floor), so older systems get macOS's own "requires macOS 13" message instead of a crash.
+> - The release workflow adds an informational startup test on the real Cocoa platform (the existing tests only run offscreen).
+
+---
+
 #### [2.8.21] - 2026-11-01
 
 > **Clear and transparent translation completion modal featuring Playable/Ready Rate (`% Playable`) and a 3-badge visual breakdown separating translated dialogue, intentionally preserved source strings (names, sound effects, punctuation) and safety-guarded lines; user-toggleable Character and Speaker name translation option in Settings -> General & Output with full 9-language localization; callback registry hardening in SettingsBackend; Universal Multi-Theme UI System featuring 3 reactive themes (Obsidian, Daylight, Cyber Neon) and 4 customizable accent color presets with zero-breakage backward compatibility; QML dialog stability fixes and Patreon support link update.**

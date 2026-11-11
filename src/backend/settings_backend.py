@@ -15,6 +15,7 @@ import threading
 from typing import Any, Callable, Dict, List, Optional
 
 from src.core.translator import TranslationEngine, TranslationManager, GoogleTranslator
+from src.core.constants import NVIDIA_DEFAULT_MODEL
 from src.utils.config import ConfigManager
 
 
@@ -54,6 +55,7 @@ class SettingsBackend:
             TranslationEngine.LOCAL_LLM,
             TranslationEngine.LIBRETRANSLATE,
             TranslationEngine.BING,
+            TranslationEngine.NVIDIA,
             TranslationEngine.CUSTOM,
         ):
             self._selected_engine = TranslationEngine.GOOGLE
@@ -99,6 +101,9 @@ class SettingsBackend:
             "gemini_api_key": [],
             "gemini_model": [],
             "gemini_safety_settings": [],
+            # NVIDIA (Riva-Translate)
+            "nvidia_api_key": [],
+            "nvidia_model": [],
             # Advanced AI
             "ai_temperature": [],
             "ai_timeout": [],
@@ -149,6 +154,7 @@ class SettingsBackend:
             "gemini": TranslationEngine.GEMINI,
             "libretranslate": TranslationEngine.LIBRETRANSLATE,
             "bing": TranslationEngine.BING,
+            "nvidia": TranslationEngine.NVIDIA,
             "custom": TranslationEngine.CUSTOM,
         }
         return mapping.get(engine_str.lower(), TranslationEngine.GOOGLE)
@@ -564,6 +570,24 @@ class SettingsBackend:
         self.config.translation_settings.gemini_model = val.strip()
         self._emit("gemini_model")
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  NVIDIA (Riva-Translate) Settings
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def get_nvidia_api_key(self) -> str:
+        return self.config.api_keys.nvidia_api_key or ""
+
+    def set_nvidia_api_key(self, val: str) -> None:
+        self.config.api_keys.nvidia_api_key = (val or "").strip()
+        self._emit("nvidia_api_key")
+
+    def get_nvidia_model(self) -> str:
+        return getattr(self.config.translation_settings, "nvidia_model", "") or NVIDIA_DEFAULT_MODEL
+
+    def set_nvidia_model(self, val: str) -> None:
+        self.config.translation_settings.nvidia_model = (val or "").strip() or NVIDIA_DEFAULT_MODEL
+        self._emit("nvidia_model")
+
     def get_gemini_safety_settings(self) -> str:
         return getattr(self.config.translation_settings, "gemini_safety_settings", "BLOCK_NONE") or "BLOCK_NONE"
 
@@ -821,6 +845,8 @@ class SettingsBackend:
         gemini_key = self.config.api_keys.gemini_api_key or ""
         gemini_model = self.config.translation_settings.gemini_model or "gemini-2.5-flash"
         gemini_safety = getattr(self.config.translation_settings, "gemini_safety_settings", "BLOCK_NONE") or "BLOCK_NONE"
+        nvidia_key = self.config.api_keys.nvidia_api_key or ""
+        nvidia_model = self.get_nvidia_model()
 
         libretranslate_url = (
             getattr(self.config.translation_settings, "libretranslate_url", "")
@@ -878,6 +904,10 @@ class SettingsBackend:
             self.config.api_keys.gemini_api_key = gemini_key
             self.config.translation_settings.gemini_model = gemini_model
             self.config.translation_settings.gemini_safety_settings = gemini_safety
+
+            # NVIDIA
+            self.config.api_keys.nvidia_api_key = nvidia_key
+            self.config.translation_settings.nvidia_model = nvidia_model
 
             # LibreTranslate / Custom
             self.config.translation_settings.libretranslate_url = libretranslate_url

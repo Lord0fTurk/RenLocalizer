@@ -51,6 +51,7 @@ from src.core.translators import (
     DeepLTranslator,
     LibreTranslateTranslator,
     BingTranslator,
+    NvidiaTranslator,
     TranslationManager,
 )
 
@@ -70,6 +71,7 @@ __all__ = [
     "DeepLTranslator",
     "LibreTranslateTranslator",
     "BingTranslator",
+    "NvidiaTranslator",
     # Manager
     "TranslationManager",
     # Syntax guard

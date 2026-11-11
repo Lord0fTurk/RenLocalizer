@@ -257,6 +257,16 @@ jobs:
           export QT_QUICK_BACKEND="software"
           ./dist/RenLocalizer.app/Contents/MacOS/RenLocalizer
 
+      - name: Smoke test Qt startup (real Cocoa platform, informational)
+        # The offscreen tests above never load the cocoa plugin that real users
+        # hit. Informational: a runner without a window server must not block
+        # a release, but a failure here is worth reading.
+        continue-on-error: true
+        run: |
+          export RENLOCALIZER_QT_SMOKE_TEST="1"
+          export QT_QPA_PLATFORM="cocoa"
+          ./dist/RenLocalizer.app/Contents/MacOS/RenLocalizer
+
       - name: Create DMG (.app + Applications symlink for drag-install)
         run: |
           mkdir -p dmg_contents
