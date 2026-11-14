@@ -7,9 +7,7 @@ Google Translate ve yapay zeka motorlarıyla otomatik çeviri sunar.
 
 import os
 import sys
-import shutil
 import warnings
-import logging
 import tempfile
 import subprocess
 import stat
