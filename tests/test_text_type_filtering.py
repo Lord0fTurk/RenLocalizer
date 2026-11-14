@@ -189,7 +189,7 @@ menu:
         try:
             entries = self.parser.extract_text_entries(Path(fname))
             texts = [e['text'] for e in entries]
-            types = [e.get('text_type', '') for e in entries]
+            [e.get('text_type', '') for e in entries]
 
             # Dialogue should be present
             self.assertTrue(

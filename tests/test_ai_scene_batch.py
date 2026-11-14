@@ -3,7 +3,6 @@ Tests for Context-Aware Scene / Screenplay Batch Mode in AI Translator.
 Validates scene building with speaker attribution, robust regex parsing,
 and fallback behaviors.
 """
-import pytest
 from src.core.ai_translator import (
     _build_scene_batch,
     _parse_scene_batch,

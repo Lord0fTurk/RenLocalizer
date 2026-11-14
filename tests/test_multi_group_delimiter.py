@@ -5,7 +5,6 @@ Tests for split_angle_pipe_groups() and rejoin_angle_pipe_groups()
 which handle <seg1|seg2|seg3> patterns including multi-group strings,
 surrounding text, short/single-word segments, and numeric groups.
 """
-import pytest
 import sys
 import os
 

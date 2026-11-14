@@ -9,6 +9,24 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    name: Lint (ruff, correctness rules)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Run ruff
+        # Rules live in pyproject.toml: bugs and dead code only, no style.
+        run: |
+          python -m pip install "ruff>=0.16,<0.17"
+          python -m ruff check src tests scripts run.py run_cli.py
+
   core-regression:
     name: Core regression (py${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -16,7 +34,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
         include:
           # macOS (Apple Silicon): one job on the Python the release DMG is built with
           - os: macos-latest

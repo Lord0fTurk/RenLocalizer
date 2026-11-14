@@ -7,10 +7,8 @@ Tests edge cases, keyword filtering, multiline triple-quotes, ATL statements,
 screen language elements, dotted/quoted speakers, and TLID sanitization.
 """
 
-import pytest
-from pathlib import Path
 
-from src.core.renpy_lexer import RenPyLexer, LexerToken
+from src.core.renpy_lexer import RenPyLexer
 from src.core.parser import RenPyParser
 from src.utils.config import ConfigManager
 from src.core.output_formatter import format_renpy_speaker

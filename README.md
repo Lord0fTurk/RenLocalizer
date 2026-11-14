@@ -47,7 +47,7 @@ No setup and no programming. Download, unzip, run.
       <h3>1. Drop in your game</h3>
       Drag the game folder or its <code>.exe</code> onto the window, or use <b>Folder</b> / <b>EXE File</b>. RenLocalizer shows the game's name, version and Ren'Py version.
     </td>
-    <td><img src=".github/assets/step-1-game.png" width="520" alt="The Project Setup card with a game loaded"></td>
+    <td><img src=".github/assets/step-1-game.png" width="520" alt="The Translate page with a game loaded: game name and version, language pair, engine and the Run panel"></td>
   </tr>
   <tr>
     <td>
@@ -59,9 +59,9 @@ No setup and no programming. Download, unzip, run.
   <tr>
     <td>
       <h3>3. Translate and play</h3>
-      Press <b>Start Translation</b>. When it finishes, click <b>Launch Game</b>. It opens in your language.
+      Press <b>Translate</b>. When it finishes, click <b>Launch Game</b>. It opens in your language.
     </td>
-    <td><img src=".github/assets/step-3-play.png" width="520" alt="The summary after translating: 45 lines translated, with Launch Game and Review in Editor buttons"></td>
+    <td><img src=".github/assets/step-3-play.png" width="520" alt="The summary after translating: how many lines were translated, with Launch Game and Review in Editor buttons"></td>
   </tr>
 </table>
 

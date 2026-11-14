@@ -11,12 +11,11 @@ import hashlib
 import io
 import json
 import os
-import sys
 import tarfile
 import time
 import zipfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

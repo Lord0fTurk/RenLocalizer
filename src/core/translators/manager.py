@@ -5,7 +5,6 @@ TranslationManager: manages translator instances, caches, and dispatching.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -24,6 +23,7 @@ from .base import (
 from .google import GoogleTranslator
 from .services import DeepLTranslator, LibreTranslateTranslator, BingTranslator
 from .nvidia import NvidiaTranslator
+from src.utils.engine_registry import is_llm_engine
 
 _CORRUPT_OR_PROTECTED_CACHE_RE = re.compile(
     r'<ph\b|\bph\s*>|</\s*ph\s*>|\u27e6|\u27e7|__PH_\d+__|XRPYX_|RLPH[0-9A-F]{3,}'
@@ -560,11 +560,7 @@ class TranslationManager:
                     )
                 continue
 
-            is_ai = engine in (
-                TranslationEngine.OPENAI,
-                TranslationEngine.GEMINI,
-                TranslationEngine.LOCAL_LLM,
-            )
+            is_ai = is_llm_engine(engine)
             only = [r for _, r in items]
 
             # Batch çeviri desteği kontrolü
@@ -617,7 +613,7 @@ class TranslationManager:
                 sem = asyncio.Semaphore(concurrency)
 
                 async def run_single(ix: int, rq: TranslationRequest):
-                    async with sem:
+                    async with sem:  # noqa: B023
                         if self.should_stop_callback and self.should_stop_callback():
                             return ix, TranslationResult(
                                 rq.text,
@@ -629,7 +625,7 @@ class TranslationManager:
                                 "Stopped by user",
                             )
                         res = await self.translate_with_retry(rq)
-                        if is_ai and self.ai_request_delay > 0:
+                        if is_ai and self.ai_request_delay > 0:  # noqa: B023
                             await asyncio.sleep(self.ai_request_delay)
                         return ix, res
 
@@ -780,8 +776,6 @@ class TranslationManager:
             return
 
         try:
-            import json
-            import tempfile
 
             # Veriyi JSON formatına hazırla. Boş cache de diske boş obje olarak yazılır;
             # bu, "clear cache" gibi akışlarda eski dosyanın yeniden yüklenmesini engeller.

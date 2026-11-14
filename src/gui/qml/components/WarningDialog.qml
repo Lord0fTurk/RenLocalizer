@@ -34,7 +34,7 @@ Dialog {
 
     background: Rectangle {
         color: Theme.card
-        radius: 18
+        radius: 10
         border.color: Theme.alpha(Theme.warn, 0.5)
         border.width: 1.5
         clip: true

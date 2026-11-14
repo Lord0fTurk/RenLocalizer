@@ -39,6 +39,7 @@ from src.utils.constants import (
     AI_DEFAULT_TEMPERATURE,
     AI_DEFAULT_TIMEOUT,
     AI_LOCAL_TIMEOUT,
+    AI_LOCAL_CPU_TIMEOUT,
     AI_DEFAULT_MAX_TOKENS,
     AI_MAX_RETRIES,
     AI_LOCAL_URL,
@@ -1664,9 +1665,30 @@ class LocalLLMTranslator(OpenAITranslator):
         except (TypeError, ValueError):
             self._semaphore_count = 2
         self._semaphore = None
-        self._timeout = AI_LOCAL_TIMEOUT
+        self._timeout = self._local_timeout(config_manager)
         self._batch_size = 10  # Smaller batches for slower local models
         self._engine = TranslationEngine.LOCAL_LLM
+
+    @staticmethod
+    def _local_timeout(config_manager) -> float:
+        """Request timeout for a local model.
+
+        A 15-line batch is ~500 tokens: about 45 s on a 1.8B model but minutes
+        on a 7B+ model on a CPU. The floor stays at AI_LOCAL_TIMEOUT, the user's
+        ``ai_timeout`` can raise it (it used to be ignored here), and the built-in
+        runtime on the CPU backend gets a longer floor since it has no GPU to lean on.
+        """
+        timeout = float(AI_LOCAL_TIMEOUT)
+        ts = getattr(config_manager, "translation_settings", None) if config_manager else None
+        if ts is not None:
+            try:
+                timeout = max(timeout, float(getattr(ts, "ai_timeout", 0) or 0))
+            except (TypeError, ValueError):
+                pass
+            if (getattr(ts, "local_llm_mode", "external") == "builtin"
+                    and str(getattr(ts, "local_llm_backend", "")).lower() == "cpu"):
+                timeout = max(timeout, float(AI_LOCAL_CPU_TIMEOUT))
+        return timeout
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1700,8 +1722,8 @@ def _build_gemini_safety_settings(safety_level: str = "BLOCK_NONE") -> List[Any]
             if cat is not None and hasattr(genai.types, "SafetySetting"):
                 try:
                     settings.append(genai.types.SafetySetting(category=cat, threshold=selected_threshold))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logging.getLogger(__name__).warning("Gemini safety setting for %s could not be built; the API default applies: %s", cat, exc)
         return settings
 
     # Legacy SDK or fallback dict structure

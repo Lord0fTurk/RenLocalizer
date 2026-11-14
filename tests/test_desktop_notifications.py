@@ -5,9 +5,7 @@ Verifies config defaults, SettingsBackend integration, AppBackend slots/properti
 and locales dictionary keys for desktop notifications across languages.
 """
 
-import os
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from src.utils.config import ConfigManager, AppSettings
 from src.backend.settings_backend import SettingsBackend

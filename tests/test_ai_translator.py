@@ -3,7 +3,6 @@
 
 import json as _json
 import re
-import sys
 from unittest.mock import MagicMock, patch, AsyncMock
 from types import SimpleNamespace
 
@@ -259,7 +258,7 @@ class TestGeminiTranslator:
         """Verify single translation with mock client response."""
         import asyncio
         from src.core.ai_translator import GeminiTranslator
-        from src.core.translator import TranslationRequest, TranslationEngine
+        from src.core.translator import TranslationEngine
 
         t = GeminiTranslator(api_key="fake-key")
         mock_response = MagicMock()
@@ -279,7 +278,7 @@ class TestGeminiTranslator:
         """Verify that safety filter triggers delegation to fallback translator."""
         import asyncio
         from src.core.ai_translator import GeminiTranslator
-        from src.core.translator import TranslationRequest, TranslationResult, TranslationEngine
+        from src.core.translator import TranslationResult, TranslationEngine
 
         t = GeminiTranslator(api_key="fake-key")
         mock_models = MagicMock()
@@ -308,7 +307,7 @@ class TestGeminiTranslator:
         """Verify structured XML batch translation parsing in one request."""
         import asyncio
         from src.core.ai_translator import GeminiTranslator
-        from src.core.translator import TranslationRequest, TranslationEngine
+        from src.core.translator import TranslationEngine
 
         t = GeminiTranslator(api_key="fake-key")
         mock_response = MagicMock()
@@ -357,7 +356,7 @@ class TestGeminiTranslator:
     @staticmethod
     def _protected_request(source):
         from src.core.syntax_guard import protect_renpy_syntax_xml
-        from src.core.translator import TranslationRequest, TranslationEngine
+        from src.core.translator import TranslationEngine
 
         protected, placeholders = protect_renpy_syntax_xml(source)
         req = TranslationRequest(
@@ -440,7 +439,7 @@ class TestGeminiTranslator:
     def test_batch_restores_placeholders_even_when_model_unescapes_tags(self):
         """Models often return <ph> tags unescaped inside <item>; inner content must survive."""
         import asyncio
-        from src.core.translator import TranslationRequest, TranslationEngine
+        from src.core.translator import TranslationEngine
 
         source = "Hello [player_name], {color=#f00}welcome{/color}!"
         req0, protected, _ = self._protected_request(source)
@@ -466,7 +465,7 @@ class TestGeminiTranslator:
         """Large request lists are split into ai_batch_size XML chunks (not one giant request)."""
         import asyncio
         from src.core.ai_translator import GeminiTranslator
-        from src.core.translator import TranslationRequest, TranslationEngine
+        from src.core.translator import TranslationEngine
 
         t = GeminiTranslator(api_key="fake-key", batch_size=4)
         seen_sizes = []
@@ -488,7 +487,7 @@ class TestGeminiTranslator:
 
     def test_batch_missing_item_falls_back_to_single(self):
         import asyncio
-        from src.core.translator import TranslationRequest, TranslationEngine
+        from src.core.translator import TranslationEngine
 
         t, mock_models = self._make_gemini(response_text='<translations><item id="0">Bir</item></translations>')
         single_resp = MagicMock()
@@ -507,7 +506,7 @@ class TestGeminiTranslator:
     def test_unchanged_answer_is_still_a_success(self):
         """Same-text answers (e.g. proper nouns) are legitimate results, not failures."""
         import asyncio
-        from src.core.translator import TranslationRequest, TranslationEngine
+        from src.core.translator import TranslationEngine
 
         t, _ = self._make_gemini(response_text="Sorcerer")
         req = TranslationRequest(text="Sorcerer", source_lang="en", target_lang="tr", engine=TranslationEngine.GEMINI)

@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 
-import pytest
 
 from src.core.translator import (
     TranslationEngine,

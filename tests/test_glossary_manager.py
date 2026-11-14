@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for GlossaryManager."""
 
-import pytest
 from src.core.glossary_manager import GlossaryManager, preserve_case
 
 

@@ -3,8 +3,6 @@
 Tests for EndpointRouter — smart endpoint routing between Google families.
 """
 import asyncio
-import time
-import pytest
 from src.core.translator import _FamilyHealth, EndpointRouter
 
 # ── _FamilyHealth ──────────────────────────────────────────────────────────
@@ -71,7 +69,6 @@ def test_router_recovers_on_success():
     assert not r.primary_blocked
 
 def test_probe_task_singleton():
-    import asyncio
     from src.core.constants import RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD as T
     async def run():
         r = EndpointRouter()

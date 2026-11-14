@@ -3,10 +3,12 @@
 Translation-stage functions extracted from TranslationPipeline.
 """
 
+import logging
 import re
-import asyncio
 import time
-from typing import Optional, List, Dict, Tuple, Any, Union
+
+from src.utils.engine_registry import is_llm_engine
+from typing import Optional, List, Dict, Tuple, Any
 
 from .constants import (
     SEPARATOR_REMNANTS, PLACEHOLDER_REMNANT_RE, HTML_LEAK_RE,
@@ -17,7 +19,6 @@ from .constants import (
 
 def reset_translation_diagnostics(diagnostic_report) -> None:
     """Reset diagnostic counters before a new translation run."""
-    from src.core.diagnostics import DiagnosticReport
     if diagnostic_report is None:
         return
     diagnostic_report.__init__()
@@ -364,8 +365,8 @@ def sanitize_translation_for_output(
             original_text=original,
             translated_text=translated,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Blocked entry could not be recorded in the diagnostic report: %s", exc)
     return original, reason
 
 
@@ -457,17 +458,15 @@ def should_retry_unchanged(original_text: str) -> Tuple[bool, str]:
 
 
 def get_requested_translation_batch_size(engine, config) -> int:
-    from src.core.translator import TranslationEngine
-    if engine in (TranslationEngine.OPENAI, TranslationEngine.GEMINI, TranslationEngine.LOCAL_LLM):
+    if is_llm_engine(engine):
         return getattr(config.translation_settings, 'ai_batch_size', 15)
     return getattr(config.translation_settings, 'max_batch_size', 100)
 
 
 def get_effective_translation_batch_size(engine, config) -> int:
-    from src.core.translator import TranslationEngine
     from src.utils.config import get_effective_batch_size as _get_eff
     requested = get_requested_translation_batch_size(engine, config)
-    if engine in (TranslationEngine.OPENAI, TranslationEngine.GEMINI, TranslationEngine.LOCAL_LLM):
+    if is_llm_engine(engine):
         # translate_batch() runs its chunks in parallel, up to ai_concurrency.
         # A step of one chunk (ai_batch_size) left a single request in flight
         # in scene/JSON/XML mode whatever the setting said (GitHub #21).
@@ -498,7 +497,7 @@ def execute_single_request_with_retry_mode(loop, translator, request) -> Optiona
             if original_flag is not None:
                 translator.aggressive_retry = True
             return loop.run_until_complete(translator.translate_single(request))
-        except Exception as exc:
+        except Exception:
             return None
         finally:
             if original_flag is not None:
@@ -513,7 +512,7 @@ def execute_single_request_with_retry_mode(loop, translator, request) -> Optiona
         if original_translator_flag is not None:
             translator.aggressive_retry = True
         return loop.run_until_complete(translator.translate_single(request))
-    except Exception as exc:
+    except Exception:
         return None
     finally:
         if ts_settings is not None:

@@ -15,7 +15,6 @@ import os
 import tempfile
 from types import SimpleNamespace
 
-import pytest
 
 from src.core.syntax_guard import protect_renpy_syntax_xml
 from src.core.translator import (

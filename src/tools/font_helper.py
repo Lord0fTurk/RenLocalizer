@@ -19,7 +19,7 @@ import re
 import logging
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Tuple, Any
+from typing import List, Dict, Tuple, Any
 
 # Try to import fontTools (optional dependency)
 try:

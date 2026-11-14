@@ -16,10 +16,8 @@ Covers:
 
 import collections
 import io
-import logging
 import pickle
 import struct
-import tempfile
 import zlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock

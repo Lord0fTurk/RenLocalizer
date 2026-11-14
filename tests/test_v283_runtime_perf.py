@@ -12,12 +12,7 @@ Covers:
 """
 
 import re
-import sys
-import time
-from types import SimpleNamespace
-from unittest.mock import patch
 
-import pytest
 
 from src.core import runtime_hook_template as rht
 

@@ -1,5 +1,4 @@
-import pytest
-from src.core.renpy_lexer import RenPyLexer, LexerToken
+from src.core.renpy_lexer import RenPyLexer
 from src.core.parser import RenPyParser
 from src.utils.config import ConfigManager
 

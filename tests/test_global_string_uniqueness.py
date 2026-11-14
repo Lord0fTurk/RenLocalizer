@@ -16,7 +16,6 @@ location on purpose (multi-branch support).
 
 import re
 
-import pytest
 
 from src.core.pipeline.extraction import generate_native_tlid_content
 

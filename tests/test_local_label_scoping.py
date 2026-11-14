@@ -1,4 +1,3 @@
-import pytest
 from src.core.parser import RenPyParser
 from src.core.pipeline.extraction import generate_native_tlid_content
 from src.core.rpyc_reader import ASTTextExtractor, FakeLabel, FakeSay

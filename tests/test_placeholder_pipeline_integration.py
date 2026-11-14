@@ -10,9 +10,7 @@ v3.4 düzeltmeleri:
 """
 
 import re
-import uuid
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from src.core.syntax_guard import (
     protect_renpy_syntax,
     restore_renpy_syntax,
@@ -22,7 +20,6 @@ from src.core.translator import (
     GoogleTranslator,
     TranslationEngine,
     TranslationRequest,
-    TranslationResult,
 )
 
 

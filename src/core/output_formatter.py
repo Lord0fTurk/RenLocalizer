@@ -7,12 +7,11 @@ Formats translation results into Ren'Py translate block format.
 
 import logging
 import hashlib
-from typing import List, Dict, Set, TYPE_CHECKING, Optional
-from pathlib import Path
+from typing import List, Dict, TYPE_CHECKING, Optional
 import re
 
 if TYPE_CHECKING:
-    from src.core.translator import TranslationResult
+    pass
 
 
 def _preserve_case(src: str, dst: str) -> str:
@@ -923,7 +922,7 @@ class RenPyOutputFormatter:
         # According to RenPy documentation: menu choices use "translate strings" format
         
         block = f"# NOTE: Menu choices should be in 'translate {language_code} strings:' block\n"
-        block += f"# This is the old format and may not work properly in RenPy\n\n"
+        block += "# This is the old format and may not work properly in RenPy\n\n"
         
         if not menu_id:
             menu_id = f"menu_{self.sanitize_translation_id('_'.join([opt['original'] for opt in menu_options[:3]]))}"

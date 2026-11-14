@@ -9,7 +9,6 @@
 * OpenAI/DeepSeek never received the API key; DeepSeek hit OpenAI's URL;
   Gemini was missing; TL mode was unreachable; failures exited with 0.
 """
-import os
 import sys
 from types import SimpleNamespace
 from unittest import mock

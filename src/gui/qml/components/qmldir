@@ -7,3 +7,6 @@ singleton Icons 1.0 Icons.qml
 Icon 1.0 Icon.qml
 IconLabel 1.0 IconLabel.qml
 PageHeader 1.0 PageHeader.qml
+Sidebar 1.0 Sidebar.qml
+RlSwitch 1.0 RlSwitch.qml
+RlSlider 1.0 RlSlider.qml

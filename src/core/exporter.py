@@ -120,7 +120,7 @@ def export_strings_to_rpy(project_path: str, target_lang: str, skip_dynamic: boo
         export_file_path = os.path.join(tl_dir, f"zz_rl_exported_{target_lang}.rpy")
         
         lines = [
-            f"# Exported from RenLocalizer strings.json",
+            "# Exported from RenLocalizer strings.json",
             f"# Target Language: {target_lang}",
             "",
             f"translate {target_lang} strings:",

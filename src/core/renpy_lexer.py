@@ -9,10 +9,9 @@ without relying on fragile monolithic regular expressions.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional
 import re
 
-from src.core.output_formatter import format_renpy_speaker
 
 
 def _bracket_delta(line: str) -> int:

@@ -291,7 +291,7 @@ class RenPyParser:
             'hotspot', 'hotbar', 'areapicker', 'drag', 'draggroup', 'showif', 'vpgrid',
             # Special Labels & Internal Variables
             'after_load', 'after_warp', 'before_main_menu', 'splashscreen',
-            'config', 'preferences', 'gui', 'style', 'persistent',
+            'preferences', 'style', 'persistent',
             # Python Technical & Error Classes
             'Callable', 'Literal', 'Self', 'overload', 'override',
             'AssertionError', 'TypeError', 'ValueError', 'ZeroDivisionError',
@@ -299,10 +299,10 @@ class RenPyParser:
             'KeyError', 'NameError', 'RuntimeError', 'StopIteration',
             # Style properties & Engine UI
             'kerning', 'line_leading', 'outlines', 'antialias', 'hinting',
-            'vscroller', 'hscroller', 'viewport', 'button', 'input',
+            'vscroller', 'hscroller',
             # Additional engine terms
             'zsync', 'zsyncmake', 'rpu', 'ecdsa', 'rsa', 'bbcode', 'markdown',
-            'utf8', 'latin1', 'ascii'
+            'utf8', 'latin1'
         }
 
         # New: CamelCase or dot notation strings that are likely technical
@@ -2170,7 +2170,6 @@ class RenPyParser:
                 close_char = '}' if char == '{' else ']'
                 end_idx = self._find_balanced_markup_end(text, i + 1, close_char)
                 if end_idx != -1:
-                    candidate = text[i:end_idx + 1]
                     # Disambiguation tags and placeholders are removed structurally.
                     i = end_idx + 1
                     continue
@@ -2264,7 +2263,6 @@ class RenPyParser:
             def recurse(obj, path, current_key):
                 if isinstance(obj, str):
                     # Tighten JSON filters and include raw_text for ID stability
-                    import re
                     if not self._is_meaningful_data_value(obj, current_key):
                         return
                     raw_text = '"' + (obj.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')) + '"'
@@ -4262,7 +4260,7 @@ class RenPyParser:
                         return
 
                     # v2.8.17: Skip code identifiers, docstrings, and Sphinx directives.
-                    if text in ignored_strings:
+                    if text in ignored_strings:  # noqa: B023
                         return
                     if ':doc:' in text or re.match(r'^\s*:(?:doc|param|return|type|rtype|class|func|var)\b', text):
                         return
@@ -4276,7 +4274,7 @@ class RenPyParser:
                     confidence = score_extraction_confidence(
                         text,
                         text_type,
-                        lines[min(block_start + lineno - 1, len(lines) - 1)] if lines else '',
+                        lines[min(block_start + lineno - 1, len(lines) - 1)] if lines else '',  # noqa: B023
                         ['deep_scan_ast'],
                     )
                     if confidence < resolve_minimum_extraction_confidence(self.config, default=0.0):
@@ -4287,8 +4285,8 @@ class RenPyParser:
                     # independently — calling it here would be wasted CPU.
                     entries.append({
                         'text': text,
-                        'line_number': block_start + lineno,
-                        'context_line': lines[min(block_start + lineno - 1, len(lines) - 1)] if lines else '',
+                        'line_number': block_start + lineno,  # noqa: B023
+                        'context_line': lines[min(block_start + lineno - 1, len(lines) - 1)] if lines else '',  # noqa: B023
                         'text_type': text_type,
                         'context_path': ['deep_scan_ast'],
                         'is_deep_scan': True,
@@ -4459,7 +4457,6 @@ class RenPyParser:
         blocks: List[Tuple[int, str]] = []
         
         # init python ve python bloklarını bul
-        python_block_re = re.compile(r'^(\s*)(?:init\s+(?:[-+]?\d+\s+)?)?python\s*(?:\w+)?:', re.MULTILINE)
         
         in_block = False
         block_start = 0

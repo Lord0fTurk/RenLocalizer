@@ -7,6 +7,7 @@ HTML page if needed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import re
 from typing import Optional, Tuple
 
@@ -54,8 +55,8 @@ def _fetch_latest_release(timeout: int = 10) -> Tuple[str, str]:
             url = (payload.get("html_url") or RELEASES_URL).strip()
             if tag:
                 return tag, url or RELEASES_URL
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Update check failed: %s", exc)
 
     # Fallback: releases HTML page
     response = requests.get(RELEASES_URL, timeout=timeout, headers=headers)

@@ -7,14 +7,12 @@ from __future__ import annotations
 import asyncio
 import aiohttp
 import json
-import logging
-import os
 import re
 import time
 import urllib.parse
-from collections import OrderedDict, deque, Counter
+from collections import Counter
 import random
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Tuple
 
 from src.core.syntax_guard import (
     protect_renpy_syntax,
@@ -30,7 +28,6 @@ from src.core.constants import (
     GOOGLE_CLIENTS5_ENDPOINT,
     GOOGLE_BATCHEXECUTE_ENDPOINT,
     LINGVA_INSTANCES,
-    USER_AGENTS,
     MIRROR_MAX_FAILURES,
     MIRROR_BAN_TIME,
     RATE_LIMIT_CIRCUIT_BREAKER_THRESHOLD,
@@ -38,12 +35,9 @@ from src.core.constants import (
     RATE_LIMIT_PRIMARY_PROBE_INTERVAL,
 )
 from src.core.exceptions import (
-    RateLimitError,
-    QuotaExceededError,
     NetworkConnectionError,
 )
 from src.utils.config import get_effective_batch_size
-from src.version import VERSION as _APP_VERSION
 
 from .base import (
     IN_FALLBACK,
@@ -52,7 +46,7 @@ from .base import (
     TranslationRequest,
     TranslationResult,
 )
-from .router import EndpointRouter, _FamilyHealth
+from .router import EndpointRouter
 
 # client= ids /translate_a/single answers with the same reply. Since 2026-09 Google
 # answers client=gtx with 429 in some regions while "at" and "dict-chrome-ex" still work.
@@ -996,7 +990,6 @@ class GoogleTranslator(BaseTranslator):
 
             return None
 
-        translated_text = None
         max_unchanged_retries = 2  # Retry limit for unchanged translations
 
         # Multi-endpoint mode: Try 1 endpoint at a time to reduce ban pressure
@@ -1122,7 +1115,7 @@ class GoogleTranslator(BaseTranslator):
                         and final_text.strip() == source_text.strip()
                     ):
                         self.logger.debug(
-                            f"Translation unchanged. Starting Aggressive Retry chain..."
+                            "Translation unchanged. Starting Aggressive Retry chain..."
                         )
 
                         # LEVEL 1: Try another Google Endpoint
@@ -1469,7 +1462,7 @@ class GoogleTranslator(BaseTranslator):
                     final_text, lingva_map
                 ):
                     self.logger.warning(
-                        f"Integrity check failed (Lingva): Placeholders missing in translation. Using original text."
+                        "Integrity check failed (Lingva): Placeholders missing in translation. Using original text."
                     )
                     final_text = source_text
 
@@ -1516,7 +1509,7 @@ class GoogleTranslator(BaseTranslator):
                             final_text, placeholders
                         ):
                             self.logger.warning(
-                                f"Integrity check failed (Fallback): Placeholders missing. Using original text."
+                                "Integrity check failed (Fallback): Placeholders missing. Using original text."
                             )
                             final_text = source_text
 
@@ -1687,7 +1680,7 @@ class GoogleTranslator(BaseTranslator):
             return winner_lang
         else:
             self.logger.warning(
-                f"[Smart Detect] Results too ambiguous. Using auto mode."
+                "[Smart Detect] Results too ambiguous. Using auto mode."
             )
             return None
 
@@ -1891,7 +1884,6 @@ class GoogleTranslator(BaseTranslator):
             *tasks
         )
         # Unique sonuç tablosu (unique sıraya göre)
-        unique_results: Dict[int, TranslationResult] = {}
         for lst in gathered:
             for orig_idx, res in lst:
                 # orig_idx burada unique_list içindeki orijinal global indeks değil; unique_list'te kaydettiğimiz idx
@@ -2150,7 +2142,6 @@ class GoogleTranslator(BaseTranslator):
         }
         if use_html:
             params["format"] = "html"
-        query = urllib.parse.urlencode(params)
 
         async def try_endpoint(endpoint: str) -> Optional[List[str]]:
             """Try a single endpoint with retries, return list of translations or None."""

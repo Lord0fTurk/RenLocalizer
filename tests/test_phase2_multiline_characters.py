@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.core.parser import RenPyParser, TextType
+from src.core.parser import RenPyParser
 
 
 class TestPhase2MultilineCharacterDefinitions(unittest.TestCase):
@@ -201,7 +201,7 @@ define charlie = Character("Charlie")'''
                 if 'test_char' in str(file_path):
                     all_entries.extend(entries_list)
             
-            eve_entries = [e for e in all_entries if 'Eve' in e.get('text', '')]
+            [e for e in all_entries if 'Eve' in e.get('text', '')]
             # This is an edge case - might not be captured,  but should not crash
             self.assertIsNotNone(entries_by_file)
     
@@ -269,7 +269,7 @@ define narrator = NVLCharacter("Narrator",
             
             char_entries = [e for e in all_entries if e.get('text_type') == 'character_name']
             
-            print(f"\n--- Phase 2 Benchmark ---")
+            print("\n--- Phase 2 Benchmark ---")
             print(f"Total entries found: {len(all_entries)}")
             print(f"Character entries: {len(char_entries)}")
             

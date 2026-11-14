@@ -8,12 +8,10 @@ import asyncio
 import aiohttp
 import json
 import logging
-import os
 import random
 import re
-import time
 import urllib.parse
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Tuple
 
 from src.core.constants import USER_AGENTS, BING_EDGE_TRANSLATE_ENDPOINT
 from src.core.exceptions import (
@@ -356,7 +354,7 @@ class DeepLTranslator(BaseTranslator):
                         last_error = f"HTTP {resp.status}: {msg[:100]}"
                         if is_quota:
                             # Quota exhausted — no point retrying, return immediately
-                            qe = QuotaExceededError(f"DeepL API quota aşıldı (HTTP 456)", code=456)
+                            qe = QuotaExceededError("DeepL API quota aşıldı (HTTP 456)", code=456)
                             self.emit_log("error", qe.get_user_friendly_message())
                             return [
                                 TranslationResult(
@@ -1112,6 +1110,13 @@ class BingTranslator(BaseTranslator):
                 chunk_errors[i] = ("Placeholder integrity check failed", False)
                 failed_indices.append(i)
                 continue
+            if self._has_token_remnant(restored, meta.get("original_text", req.text)):
+                # The service dropped or split a token: every real one was restored,
+                # but a stray bracket is left. The pipeline guard would discard the
+                # line and keep the English source, so hand it to the fallback now.
+                chunk_errors[i] = ("Placeholder token remnant in output", False)
+                failed_indices.append(i)
+                continue
             results[i] = TranslationResult(
                 original_text=meta.get("original_text", req.text),
                 translated_text=restored,
@@ -1164,6 +1169,14 @@ class BingTranslator(BaseTranslator):
                     results[i] = self._failed(requests[i], err, quota)
 
         return results  # type: ignore[return-value]
+
+    @staticmethod
+    def _has_token_remnant(restored: str, source: str) -> bool:
+        """True when a ⟦ ⟧ bracket or RLPH marker survived restoration (and was not in the source)."""
+        for marker in ("⟦", "⟧", "RLPH"):
+            if marker in restored and marker not in (source or ""):
+                return True
+        return False
 
     async def _translate_indices(
         self,

@@ -13,7 +13,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional, List
 
 # Check if we're running in a frozen/bundled environment (PyInstaller)
 IS_FROZEN = getattr(sys, 'frozen', False)

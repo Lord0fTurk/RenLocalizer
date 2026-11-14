@@ -49,6 +49,23 @@ def speaker_names(game_dir: str) -> Dict[str, str]:
     return names
 
 
+def rejected_originals(game_dir: str, language: str) -> Dict[str, str]:
+    """Lines the last run refused (guard) -> reason code, from the run's diagnostics report."""
+    report = os.path.join(game_dir, "tl", ".diagnostics", language, "translation_blocked_or_fallback.json")
+    try:
+        data = read_json_safely(report) if os.path.isfile(report) else None
+    except Exception as exc:
+        logger.debug("Guard report unreadable: %s", exc)
+        return {}
+    out: Dict[str, str] = {}
+    for sample in (data or {}).get("samples", []) if isinstance(data, dict) else []:
+        if isinstance(sample, dict) and sample.get("category") == "blocked_as_corrupted":
+            key = (sample.get("original_preview") or "").strip()
+            if key:
+                out.setdefault(key, sample.get("detail") or "blocked")
+    return out
+
+
 @dataclass
 class LoadedLanguage:
     rows: List[Dict[str, Any]] = field(default_factory=list)
@@ -62,6 +79,7 @@ def load_language(game_dir: str, language: str) -> LoadedLanguage:
     if not os.path.isdir(lang_dir):
         return result
     names = speaker_names(game_dir)
+    rejected = rejected_originals(game_dir, language)
     parser = TLParser()
     paths: List[str] = []
     for root, dirs, files in os.walk(lang_dir):
@@ -90,6 +108,7 @@ def load_language(game_dir: str, language: str) -> LoadedLanguage:
                 "source_ref": e.source_comment or "",
                 "original": e.original_text,
                 "translated": e.translated_text or "",
+                "rejected": rejected.get((e.original_text or "").strip()[:160], ""),
             })
     return result
 

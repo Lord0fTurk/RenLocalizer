@@ -10,8 +10,8 @@ APPDIR="$(dirname "$(readlink -f "$0")")"
 # Set Qt environment variables for proper rendering
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 
-# Software rendering fallback support
-if [ "${RENLOCALIZER_QT_RENDER_MODE}" = "software" ]; then
+# Software rendering fallback support (manual override / Python relaunch)
+if [ "${RENLOCALIZER_QT_RENDER_MODE}" = "software" ] || [ "${RENLOCALIZER_QT_RENDER_MODE}" = "raster" ]; then
     export LIBGL_ALWAYS_SOFTWARE=1
     export QT_QUICK_BACKEND=software
 fi
@@ -30,5 +30,44 @@ if [ -d "${APPDIR}/usr/bin/RenLocalizer/fonts" ]; then
     export FONTCONFIG_PATH="${APPDIR}/usr/bin/RenLocalizer/fonts"
 fi
 
-# Launch the main binary
-exec "${APPDIR}/usr/bin/RenLocalizer/RenLocalizer" "$@"
+BINARY="${APPDIR}/usr/bin/RenLocalizer/RenLocalizer"
+
+# ── OpenGL / GLX crash-and-retry ─────────────────────────────────────────
+# Qt's XCB-GLX plugin calls abort() when it cannot create a context
+# (Could not initialize GLX). That kills the process before Python-level
+# sceneGraphError recovery can run. Retry once with software rendering,
+# matching RenLocalizer.sh for the portable tar.gz.
+#
+# Removed accidentally in 2.8.12 when AppRun was rewritten; restored for 2.9.0.
+
+if [ -n "${RENLOCALIZER_GL_RETRY:-}" ]; then
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export QT_QUICK_BACKEND=software
+    exec "$BINARY" "$@"
+fi
+
+# First attempt — do not exec, so we can inspect the exit code
+set +e
+"$BINARY" "$@"
+EXIT_CODE=$?
+set -e
+
+if [ "$EXIT_CODE" -eq 0 ]; then
+    exit 0
+fi
+
+# Only retry for signal-based crashes (exit > 128 means killed by signal).
+# SIGABRT (134 = 128+6) is the typical GLX failure mode.
+# Normal error exits (1–127) are handled by Python-level recovery.
+if [ "$EXIT_CODE" -le 128 ]; then
+    exit "$EXIT_CODE"
+fi
+
+echo "[RenLocalizer] Application crashed with signal $((EXIT_CODE - 128)) (exit code $EXIT_CODE)." >&2
+echo "[RenLocalizer] Retrying with software rendering (QT_QUICK_BACKEND=software)..." >&2
+
+export LIBGL_ALWAYS_SOFTWARE=1
+export QT_QUICK_BACKEND=software
+export RENLOCALIZER_QT_RENDER_MODE=software
+export RENLOCALIZER_GL_RETRY=1
+exec "$BINARY" "$@"

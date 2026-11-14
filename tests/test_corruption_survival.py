@@ -7,7 +7,6 @@ are faithfully recovered by restore_renpy_syntax.
 """
 from pathlib import Path
 import random
-import re
 from src.core.parser import RenPyParser
 from src.core.syntax_guard import (
     protect_renpy_syntax,

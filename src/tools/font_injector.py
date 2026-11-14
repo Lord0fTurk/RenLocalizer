@@ -14,7 +14,7 @@ import zipfile
 import io
 import shutil
 from pathlib import Path
-from typing import Dict, Optional, Tuple, List, Any
+from typing import Dict, Tuple, Any
 
 logger = logging.getLogger(__name__)
 

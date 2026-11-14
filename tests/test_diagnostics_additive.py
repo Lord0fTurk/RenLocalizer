@@ -8,8 +8,7 @@ Tests for v2.8.17 additive diagnostic report enhancements:
   - alias_kinds tracking for synthesized variants
 """
 
-import pytest
-from src.core.diagnostics import DiagnosticReport, FileReport
+from src.core.diagnostics import DiagnosticReport
 
 
 class TestDiagnosticsAdditiveFields:

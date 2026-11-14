@@ -6,11 +6,9 @@ Tests for:
 3. Quoted speaker and single/double quote handling in tl_parser.py
 """
 
-import ast
 import tempfile
 from pathlib import Path
 
-import pytest
 from src.core.parser import RenPyParser
 from src.core.rpyc_reader import ASTTextExtractor
 from src.core.tl_parser import TLParser

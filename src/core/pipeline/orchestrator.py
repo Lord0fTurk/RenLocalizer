@@ -12,9 +12,8 @@ import re
 import time
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-import shutil
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from .signals import Signal
 
 from src.utils.config import ConfigManager
 from src.utils.encoding import save_text_safely
@@ -26,24 +25,19 @@ from src.core.translator import (
     TranslationEngine,
     GoogleTranslator,
     DeepLTranslator,
-    LibreTranslateTranslator,
-    BingTranslator,
-    NvidiaTranslator,
 )
+from src.core.translators.factory import build_translator, engine_enum
+from src.utils.engine_registry import is_llm_engine, normalize_engine_id
 from src.core.ai_translator import (
-    OpenAITranslator,
-    GeminiTranslator,
-    LocalLLMTranslator,
     profile_prefers_single_segment as _profile_prefers_single_segment,
 )
 from src.core.output_formatter import RenPyOutputFormatter
 from src.core.diagnostics import DiagnosticReport
 from src.core.exceptions import EngineUnavailableError
 
-from .base import PipelineStage, PipelineResult, PipelineWorker
+from .base import PipelineStage, PipelineResult
 from .constants import (
     RENPY_TO_API_LANG,
-    TRANSLATION_ID_KEY_RE,
     DEEP_SCAN_VAR_ONLY_RE,
     DEEP_SCAN_MARKUP_STRIP_RE,
     LATIN_EXTENDED_CHAR_RE,
@@ -69,13 +63,11 @@ from .extraction import (
     audit_image_only_ui, audit_compiled_only_scripts, audit_dynamic_ui_runtime,
 )
 from .translating import (
-    reset_translation_diagnostics as _reset_diag,
     record_translation_guard_event as _record_guard,
     classify_translation_corruption, get_guard_reason_text,
     sanitize_translation_for_output as _sanitize,
     validate_placeholders, extract_validation_placeholders,
     should_retry_unchanged_core_ui,
-    is_sentence_shaped_natural_language,
     should_retry_unchanged,
     retry_unchanged_candidate,
     normalize_outer_color_wrapper,
@@ -110,7 +102,7 @@ _OFFLINE_LANG_TO_API = {"zh": "zh-CN"}
 CACHE_CHECKPOINT_INTERVAL = 100
 
 
-class TranslationPipeline(QObject):
+class TranslationPipeline:
     """
     Entegre çeviri pipeline'ı.
     
@@ -123,19 +115,22 @@ class TranslationPipeline(QObject):
     6. new "..." alanlarına yazma ve kaydetme
     """
 
-    stage_changed = pyqtSignal(str, str)
-    progress_updated = pyqtSignal(int, int, str)
-    log_message = pyqtSignal(str, str)
-    finished = pyqtSignal(object)
-    show_warning = pyqtSignal(str, str)
-
     def __init__(
         self,
         config: ConfigManager,
         translation_manager: TranslationManager,
-        parent=None
+        parent=None  # accepted for older callers; the pipeline is not a QObject
     ):
-        super().__init__(parent)
+        # Plain-Python signals: the core runs without Qt (CLI, tests, scripts).
+        # Listeners are called in the thread that runs the pipeline.
+        self.stage_changed = Signal("stage_changed")        # (stage, display name)
+        self.progress_updated = Signal("progress_updated")  # (current, total, text)
+        self.log_message = Signal("log_message")            # (level, message)
+        self.finished = Signal("finished")                  # (PipelineResult)
+        self.show_warning = Signal("show_warning")          # (title, message)
+        # One freshly translated line per batch, for the live preview:
+        # (speaker, original, translation).
+        self.line_translated = Signal("line_translated")
         self.logger = logging.getLogger(__name__)
 
         self.config = config
@@ -165,7 +160,7 @@ class TranslationPipeline(QObject):
         self._deep_scan_completed_in_generating: bool = False
         self._translation_guard_events: List[Dict[str, Any]] = []
         self._translation_guard_counts: Dict[str, int] = {}
-        self._translation_guard_sample_limit = 200
+        self._translation_guard_sample_limit = 5000  # the editor's Rejected filter reads these
 
     # ---- Diagnostics helpers ----
 
@@ -1105,7 +1100,6 @@ class TranslationPipeline(QObject):
                 stage=PipelineStage.ERROR,
             )
 
-        rpyc_only_mode = False
         if not has_rpy and has_rpyc:
             if getattr(self, '_rpyc_explicit', False):
                 rpyc_enabled = bool(getattr(self, 'include_rpyc', False))
@@ -1113,7 +1107,6 @@ class TranslationPipeline(QObject):
                 rpyc_enabled = getattr(self.config.translation_settings, 'enable_rpyc_reader', False) or getattr(self, 'include_rpyc', False)
             if rpyc_enabled:
                 self.log_message.emit("info", self.config.get_ui_text("pipeline_rpyc_only_mode", "RPYC-only mode: No .rpy files found, reading .rpyc files directly."))
-                rpyc_only_mode = True
             else:
                 return PipelineResult(
                     success=False,
@@ -1935,7 +1928,7 @@ class TranslationPipeline(QObject):
         from src.core.syntax_guard import (
             split_delimited_text, rejoin_delimited_text,
             split_angle_pipe_groups, rejoin_angle_pipe_groups,
-            protect_renpy_syntax_xml, restore_renpy_syntax_xml,
+            protect_renpy_syntax_xml,
         )
         translations = {}
         self._last_atomic_segments = {}
@@ -1944,8 +1937,8 @@ class TranslationPipeline(QObject):
             _engine_val = getattr(self.engine, 'value', str(self.engine))
             _model_val = getattr(getattr(self.config, 'api_keys', None), 'openai_model', '')
             self.diagnostic_report.set_provenance(engine=_engine_val, model=_model_val)
-        except Exception:
-            pass
+        except Exception as exc:
+            self.logger.debug("Diagnostic provenance could not be recorded: %s", exc)
 
         filtered_entries: List[TranslationEntry] = []
         for entry in entries:
@@ -1986,7 +1979,7 @@ class TranslationPipeline(QObject):
         requested_batch_size = self._get_requested_translation_batch_size()
         batch_size = self._get_effective_translation_batch_size()
 
-        if self.engine in (TranslationEngine.OPENAI, TranslationEngine.GEMINI, TranslationEngine.LOCAL_LLM):
+        if is_llm_engine(self.engine):
             _ai_batch_format = str(
                 getattr(self.config.translation_settings, 'ai_batch_format', 'scene') or ''
             ).strip().lower()
@@ -2102,91 +2095,20 @@ class TranslationPipeline(QObject):
             dt.status_callback = self.log_message.emit
             self.translation_manager.add_translator(TranslationEngine.DEEPL, dt)
 
-        if self.engine == TranslationEngine.OPENAI and self.engine not in self.translation_manager.translators:
-            base_url = self.config.translation_settings.openai_base_url
-            api_key_to_use = self.config.api_keys.openai_api_key
-            if base_url and "deepseek" in base_url.lower():
-                ds_key = getattr(self.config.api_keys, "deepseek_api_key", "")
-                if ds_key:
-                    self.log_message.emit("info", self.config.get_log_text('log_deepseek_mode'))
-                    api_key_to_use = ds_key
-                else:
-                    self.log_message.emit("info", self.config.get_log_text('log_deepseek_fallback'))
-            t = OpenAITranslator(
-                api_key=api_key_to_use, model=self.config.translation_settings.openai_model,
-                base_url=base_url, proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
-                config_manager=self.config, temperature=self.config.translation_settings.ai_temperature,
-                timeout=self.config.translation_settings.ai_timeout,
-                max_tokens=self.config.translation_settings.ai_max_tokens
+        if self.engine not in self.translation_manager.translators:
+            # Callers normally register the translator (GUI refresh, CLI setup).
+            # When they did not, build it here with the same factory they use.
+            _engine_id = normalize_engine_id(getattr(self.config.translation_settings, 'selected_engine', ''))
+            if engine_enum(_engine_id) != self.engine:
+                _engine_id = self.engine.value
+            _built = build_translator(
+                _engine_id, self.config,
+                getattr(self.translation_manager, "proxy_manager", None),
+                google=self.translation_manager.translators.get(TranslationEngine.GOOGLE),
+                status_callback=self.log_message.emit,
             )
-            t.status_callback = self.log_message.emit
-            self.translation_manager.add_translator(TranslationEngine.OPENAI, t)
-
-        if self.engine == TranslationEngine.GEMINI and self.engine not in self.translation_manager.translators:
-            t = GeminiTranslator(
-                api_key=self.config.api_keys.gemini_api_key, model=self.config.translation_settings.gemini_model,
-                safety_level=self.config.translation_settings.gemini_safety_settings,
-                proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
-                config_manager=self.config, temperature=self.config.translation_settings.ai_temperature,
-                timeout=self.config.translation_settings.ai_timeout,
-                max_tokens=self.config.translation_settings.ai_max_tokens
-            )
-            fallback = GoogleTranslator(proxy_manager=getattr(self.translation_manager, "proxy_manager", None), config_manager=self.config)
-            fallback.status_callback = self.log_message.emit
-            t.set_fallback_translator(fallback)
-            t.status_callback = self.log_message.emit
-            self.translation_manager.add_translator(TranslationEngine.GEMINI, t)
-
-        if self.engine == TranslationEngine.LOCAL_LLM and self.engine not in self.translation_manager.translators:
-            t = LocalLLMTranslator(
-                model=self.config.translation_settings.local_llm_model,
-                base_url=self.config.translation_settings.local_llm_url,
-                proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
-                config_manager=self.config, temperature=self.config.translation_settings.ai_temperature,
-                timeout=self.config.translation_settings.ai_timeout,
-                max_tokens=self.config.translation_settings.ai_max_tokens
-            )
-            t.status_callback = self.log_message.emit
-            self.translation_manager.add_translator(TranslationEngine.LOCAL_LLM, t)
-
-        if self.engine == TranslationEngine.LIBRETRANSLATE and self.engine not in self.translation_manager.translators:
-            from src.core.translator import LibreTranslateTranslator
-            t = LibreTranslateTranslator(
-                base_url=self.config.translation_settings.libretranslate_url,
-                api_key=self.config.translation_settings.libretranslate_api_key,
-                proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
-                config_manager=self.config
-            )
-            t.status_callback = self.log_message.emit
-            self.translation_manager.add_translator(TranslationEngine.LIBRETRANSLATE, t)
-
-        if self.engine == TranslationEngine.BING and self.engine not in self.translation_manager.translators:
-            t = BingTranslator(
-                proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
-                config_manager=self.config,
-            )
-            fallback = self.translation_manager.translators.get(TranslationEngine.GOOGLE)
-            if fallback is None:
-                fallback = GoogleTranslator(proxy_manager=getattr(self.translation_manager, "proxy_manager", None), config_manager=self.config)
-                fallback.status_callback = self.log_message.emit
-            t.set_fallback_translator(fallback)
-            t.status_callback = self.log_message.emit
-            self.translation_manager.add_translator(TranslationEngine.BING, t)
-
-        if self.engine == TranslationEngine.NVIDIA and self.engine not in self.translation_manager.translators:
-            t = NvidiaTranslator(
-                api_key=self.config.api_keys.nvidia_api_key,
-                model=getattr(self.config.translation_settings, "nvidia_model", ""),
-                proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
-                config_manager=self.config,
-            )
-            fallback = self.translation_manager.translators.get(TranslationEngine.GOOGLE)
-            if fallback is None:
-                fallback = GoogleTranslator(proxy_manager=getattr(self.translation_manager, "proxy_manager", None), config_manager=self.config)
-                fallback.status_callback = self.log_message.emit
-            t.set_fallback_translator(fallback)
-            t.status_callback = self.log_message.emit
-            self.translation_manager.add_translator(TranslationEngine.NVIDIA, t)
+            if _built is not None:
+                self.translation_manager.add_translator(self.engine, _built)
 
         # Fail fast instead of quietly translating everything with the Google
         # fallback when the selected AI server is down or the key is wrong.
@@ -2282,8 +2204,8 @@ class TranslationPipeline(QObject):
                             self.diagnostic_report.mark_unchanged(
                                 entry.file_path, translation_id, original_text=entry.original_text
                             )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self.logger.debug("Diagnostic entry (external TM) could not be recorded: %s", exc)
                     continue
 
             # 2. Already translated in current session (e.g. repeated string)
@@ -2300,8 +2222,8 @@ class TranslationPipeline(QObject):
                         self.diagnostic_report.mark_unchanged(
                             entry.file_path, translation_id, original_text=entry.original_text
                         )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.logger.debug("Diagnostic entry (existing translation) could not be recorded: %s", exc)
                 continue
 
             # 3. TranslationManager Fast-Path Cache Check
@@ -2338,8 +2260,8 @@ class TranslationPipeline(QObject):
                             self.diagnostic_report.mark_unchanged(
                                 entry.file_path, translation_id, original_text=entry.original_text
                             )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self.logger.debug("Diagnostic entry (fast-path cache) could not be recorded: %s", exc)
                     continue
 
             # Unresolved -> needs actual translation engine call
@@ -2368,7 +2290,7 @@ class TranslationPipeline(QObject):
             failed_entries: List[str] = []
             sample_logs: List[str] = []
             stop_quota = False
-            is_ai_engine = self.engine in (TranslationEngine.OPENAI, TranslationEngine.GEMINI, TranslationEngine.LOCAL_LLM)
+            is_ai_engine = is_llm_engine(self.engine)
             batch_entries = pending_entries
             pending_total = len(batch_entries)
             resolved_base = total - pending_total
@@ -2712,6 +2634,14 @@ class TranslationPipeline(QObject):
                         else:
                             _entry_results.append(("", None, entry, False, "missing_result", None))
 
+                # Live preview: the last line of this batch that actually changed.
+                for _tid, _text, _entry, _ok, _err, _req in reversed(_entry_results):
+                    if _ok and _text and _text.strip() != (_entry.original_text or '').strip():
+                        self.line_translated.emit(
+                            getattr(_entry, 'character', None) or '', _entry.original_text or '', _text
+                        )
+                        break
+
                 for tid, restored, entry, success, error, request in _entry_results:
                     if success and restored is not None:
                         retry_recovered = False
@@ -2769,14 +2699,14 @@ class TranslationPipeline(QObject):
                             # Evict corrupted output from cache so it never poisons persistent storage
                             try:
                                 loop.run_until_complete(self.translation_manager.cache_remove(cache_key))
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                self.logger.warning("A rejected translation could not be removed from the cache: %s", exc)
                         elif was_normalized or retry_recovered or restored != before_guard:
                             # Update cache entry with cleaned, normalized or tag-order repaired translation
                             try:
                                 loop.run_until_complete(self.translation_manager.cache_update_text(cache_key, restored))
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                self.logger.warning("A repaired translation could not be written back to the cache: %s", exc)
 
                         if restored:
                             translations[tid] = restored

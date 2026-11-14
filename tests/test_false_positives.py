@@ -2,7 +2,6 @@
 import os
 import sys
 from pathlib import Path
-import re
 
 # Add src to path
 sys.path.append(os.getcwd())
@@ -52,7 +51,7 @@ def verify_false_positives():
 
     print("\n[NEGATIVE CASES (Should be EMPTY)]")
     for code in negative_cases:
-        found_any = any(text in code for text in extracted_texts if text and text in code)
+        any(text in code for text in extracted_texts if text and text in code)
         # Check specifically for the string value
         found_val = False
         parts = code.split('"')

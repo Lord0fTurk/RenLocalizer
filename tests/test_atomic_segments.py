@@ -6,7 +6,6 @@ Verifies that delimiter groups (<A|B|C>) produce individual segment
 translations alongside the combined block, so Ren'Py's runtime vary()
 can find each segment independently.
 """
-import pytest
 from src.core.syntax_guard import split_angle_pipe_groups, rejoin_angle_pipe_groups, split_delimited_text
 
 

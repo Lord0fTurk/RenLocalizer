@@ -151,7 +151,7 @@ class TLParser:
         # Clauses Ren'Py allows after the text of a say statement. A menu's
         # caption is stored as 'who "what" nointeract'; without this tail the
         # line was not recognised and its translation was never filled in.
-        _say_tail = r'(?P<tail>(?:\s+(?:nointeract|with\s+[^\s(]+(?:\((?:[^()]|\([^()]*\))*\))?|id\s+\w+))*)'
+        _say_tail = r'(?P<tail>(?:\s+(?:nointeract|with\s+[^\s(]+(?:\((?:[^()]|\([^()]*\))*\))?|id\s+\w+|\((?:[^()]|\([^()]*\))*\)))*)'
 
         # Body of a quoted Ren'Py string. An escaped quote (\") or any other
         # backslash escape is consumed as a unit, so the text can only end at a
@@ -324,7 +324,6 @@ class TLParser:
         while i < len(lines):
             line = lines[i]
             stripped = line.strip()
-            ctx = [current_block_id] if current_block_id else []
             
             # Boş satırları atla
             if not stripped:
@@ -410,9 +409,7 @@ class TLParser:
                 # Önce karakterli diyalog kontrol et (# gg "Hello")
                 comment_match = self._dialogue_comment_re.match(stripped)
                 if comment_match:
-                    character = comment_match.group('speaker')
                     original_text = self._unescape_string(comment_match.group('text'))
-                    ctx = [current_block_id] if current_block_id else []
                     
                     # Sonraki satırda karakter "" olmalı
                     if i + 1 < len(lines):
@@ -453,7 +450,6 @@ class TLParser:
                 narrator_match = self._narrator_comment_re.match(stripped)
                 if narrator_match:
                     original_text = self._unescape_string(narrator_match.group('text'))
-                    ctx = [current_block_id] if current_block_id else []
                     
                     # Sonraki satırda "" olmalı
                     if i + 1 < len(lines):

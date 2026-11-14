@@ -1,9 +1,7 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
-import pytest
 
 from src.core.pipeline.orchestrator import TranslationPipeline
 

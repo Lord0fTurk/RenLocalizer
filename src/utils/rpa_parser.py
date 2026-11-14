@@ -9,13 +9,12 @@ Used when:
 2. unrpa is not installed
 """
 
-import os
 import pickle
 import zlib
 import hashlib
 import logging
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, BinaryIO
+from typing import Dict, Tuple, Optional, BinaryIO
 
 
 # ============================================================================

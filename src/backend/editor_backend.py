@@ -114,6 +114,7 @@ class EditorBackend(QObject):
             "translated": row["translated"],
             "status": row["status"],
             "problem": row["problem"],
+            "rejected": row["rejected"],
             "modified": bool(row["modified"]),
         }
 
@@ -155,6 +156,7 @@ class EditorBackend(QObject):
                 "blockId": row["block_id"],
                 "tokens": code_tokens(row["original"]),
                 "problemText": self._problem_text(row["problem"]),
+                "rejectedText": self._problem_text(row["rejected"]) if row["rejected"] and row["status"] == "source_copy" else "",
                 "prevSpeaker": (prev["speaker_name"] or prev["speaker"]) if prev else "",
                 "prevText": (prev["translated"] or prev["original"]) if prev else "",
                 "nextSpeaker": (nxt["speaker_name"] or nxt["speaker"]) if nxt else "",

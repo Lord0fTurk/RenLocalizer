@@ -164,7 +164,7 @@ def _decompile_via_subprocess(rpyc_path: Path, out_dir: Path, method: str) -> bo
 
     try:
         # Run decompiler; it writes file.rpy next to file.rpyc by default
-        result = subprocess.run(cmd, capture_output=True, timeout=60, cwd=str(out_dir), **_SUBPROCESS_NO_WINDOW)
+        subprocess.run(cmd, capture_output=True, timeout=60, cwd=str(out_dir), **_SUBPROCESS_NO_WINDOW)
         # The decompiler writes to cwd by default; look for the output
         out_rpy = out_dir / (rpyc_path.stem + ".rpy")
         if not out_rpy.exists():
@@ -208,7 +208,7 @@ def _decompile_via_rpycdec(rpyc_path: Path, out_dir: Path) -> bool:
             rpycdec.decompile(str(rpyc_path), str(out_rpy))
         else:
             # Fallback: call via subprocess (rpycdec installs a CLI entrypoint)
-            result = subprocess.run(
+            subprocess.run(
                 [sys.executable, "-m", "rpycdec", "decompile", str(rpyc_path)],
                 capture_output=True, timeout=60, cwd=str(out_dir), **_SUBPROCESS_NO_WINDOW
             )

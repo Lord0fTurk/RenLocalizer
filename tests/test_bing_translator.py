@@ -13,7 +13,6 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from src.core.syntax_guard import protect_renpy_syntax
 from src.core.translator import (
@@ -244,6 +243,32 @@ class TestErrorsAndFallback:
         results = asyncio.run(t.translate_batch(reqs))
         assert [r.translated_text for r in results] == ["TR:A", "FB:B"]
         assert [r.text for r in fallback.translate_batch.await_args.args[0]] == ["B"]
+
+    def test_stray_token_bracket_goes_to_fallback(self, monkeypatch):
+        """A service reply that keeps every placeholder but leaves a stray ⟧ would be
+        discarded by the pipeline guard (English source kept); Bing hands it to Google."""
+        source = "Hello [player_name]!"
+        req = _preprotected(source)
+
+        def stray(payload):
+            return DummyResp(200, [{"translations": [{"text": f"Merhaba {payload[0].split(' ', 1)[1]} ⟧"}]}])
+
+        t, _ = _make(monkeypatch, [stray])
+        fallback = MagicMock()
+        fallback._engine = TranslationEngine.GOOGLE
+        fallback.translate_batch = AsyncMock(return_value=[TranslationResult(
+            source, "Merhaba [player_name]!", "en", "tr", TranslationEngine.GOOGLE, True)])
+        t.set_fallback_translator(fallback)
+
+        res = asyncio.run(t.translate_single(req))
+        assert fallback.translate_batch.await_count == 1
+        assert res.success and res.translated_text == "Merhaba [player_name]!"
+        assert res.metadata.get("fallback_engine") == "google"
+
+    def test_remnant_check_ignores_brackets_the_source_had(self):
+        assert BingTranslator._has_token_remnant("a ⟧", "plain") is True
+        assert BingTranslator._has_token_remnant("a ⟧", "src ⟧") is False
+        assert BingTranslator._has_token_remnant("Merhaba [x]!", "Hello [x]!") is False
 
     def test_empty_batch(self):
         assert asyncio.run(BingTranslator().translate_batch([])) == []

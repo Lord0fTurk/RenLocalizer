@@ -10,10 +10,7 @@ import ast
 import time
 import logging
 import hashlib
-import json
-import tempfile
-import shutil
-from typing import List, Dict, Optional, Set, Tuple, Any, Union
+from typing import List, Dict, Optional, Set, Tuple, Any
 from pathlib import Path
 
 from .constants import (
@@ -21,7 +18,7 @@ from .constants import (
     TEXTUAL_UI_HINT_RE, HELPER_PROPERTY_RE, IMAGE_ONLY_BLOCK_RE,
     DYNAMIC_UI_LINE_RE, RENPY_KEYWORDS_TO_SKIP,
 )
-from .validating import has_rpyc_files, has_rpy_files, is_generated_export_file
+from .validating import has_rpyc_files
 from src.core.output_formatter import format_renpy_speaker
 
 logger = logging.getLogger(__name__)
@@ -727,6 +724,11 @@ def generate_native_tlid_content(
                 continue
 
             fmt_who = format_renpy_speaker(who)
+            # Image attributes written between speaker and text ('gwen talk laugh "..."')
+            # belong to the statement: the translation line repeats them, or the sprite change is lost.
+            say_attrs = str(entry.get('say_attrs') or '')
+            if fmt_who and say_attrs:
+                fmt_who += say_attrs
             # Clauses after the text (" nointeract", " with vpunch") are part
             # of the id and the translation must repeat them: a menu question
             # without "nointeract" waits for a click before the choices appear.
@@ -770,7 +772,7 @@ def generate_native_tlid_content(
                 # compiled) — approximate it, matching encode_say_string() so
                 # quotes/backslashes/newlines don't silently break the match.
                 encoded_text = encode_say_string_for_tlid(collapse_source_whitespace(text))
-                hash_source = (f'{who} "{encoded_text}"' if who else f'"{encoded_text}"') + say_tail
+                hash_source = (f'{who}{say_attrs} "{encoded_text}"' if who else f'"{encoded_text}"') + say_tail
                 tlid_hash = hashlib.md5((hash_source + '\r\n').encode('utf-8')).hexdigest()[:8]
                 base_tlid = f'{label}_{tlid_hash}'
 

@@ -46,6 +46,10 @@ def _make_backend_stub(model="llama3.2", concurrency=2, profile="auto"):
         logMessage=SimpleNamespace(emit=lambda *a, **k: None),
     )
     for name in (
+        "_build_engine",
+        "_setup_engine",
+        "_engine_id_for",
+        "_is_builtin_local_llm",
         "_setup_ai_translator",
         "_setup_libretranslate",
         "_setup_custom_endpoint",

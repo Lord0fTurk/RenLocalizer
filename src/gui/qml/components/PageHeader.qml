@@ -52,7 +52,8 @@ Rectangle {
                 spacing: 14
                 Rectangle {
                     id: tile
-                    visible: header.glyph.length > 0
+                    // The tile was decoration; the title carries the page on its own.
+                    visible: false
                     implicitWidth: 40; implicitHeight: 40; radius: 10
                     color: Theme.alpha(Theme.accent, 0.12)
                     border.color: Theme.alpha(Theme.accent, 0.3); border.width: 1
@@ -65,7 +66,7 @@ Rectangle {
                         id: titleLabel
                         Layout.fillWidth: true
                         text: header.title
-                        font.pixelSize: 24; font.bold: true; color: Theme.txt
+                        font.pixelSize: 24; font.weight: Font.DemiBold; color: Theme.txt
                         elide: Text.ElideRight
                     }
                     Label {

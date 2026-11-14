@@ -4,11 +4,9 @@ Tests for clean tl/<lang>/ output, Native TLID strings.json omission,
 isolated diagnostics relocation, and AI batch size defaults (v2.8.17).
 """
 import os
-import shutil
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 from src.utils.config import ConfigManager, TranslationSettings
 from src.core.pipeline.saving import (
@@ -206,7 +204,6 @@ def test_generate_native_tlid_content_includes_ui_strings():
 def test_dialogue_inside_menu_retains_dialogue_type():
     """Verify that dialogue lines inside menu blocks retain dialogue type and do not become menu strings."""
     from src.core.parser import RenPyParser
-    from src.utils.config import ConfigManager
 
     parser = RenPyParser(ConfigManager())
     script_content = '''
@@ -281,7 +278,6 @@ translate turkish strings:
 def test_multibranch_duplicate_dialogue_preserved(tmp_path: Path):
     """Verify that identical dialogue in different if/else branches is preserved for Native TLID."""
     from src.core.parser import RenPyParser
-    from src.utils.config import ConfigManager
     from src.core.pipeline.extraction import generate_native_tlid_content
 
     script = """label branch_test:

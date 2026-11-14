@@ -8,12 +8,9 @@ RPYC flag overrides, and AI concurrency semaphores.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from src.core.tag_structure import (
     introduces_replacement_char, tag_structure_error, tag_structure_regression,

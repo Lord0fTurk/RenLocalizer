@@ -11,11 +11,12 @@ any Qt dependency.  Callers wire themselves via callbacks.
 from __future__ import annotations
 
 import logging
-import threading
 from typing import Any, Callable, Dict, List, Optional
 
-from src.core.translator import TranslationEngine, TranslationManager, GoogleTranslator
+from src.core.translator import TranslationEngine, TranslationManager
 from src.core.constants import NVIDIA_DEFAULT_MODEL
+from src.core.translators.factory import engine_enum
+from src.utils.engine_registry import engine_ids
 from src.utils.config import ConfigManager
 
 
@@ -48,16 +49,7 @@ class SettingsBackend:
         # Resolve initial engine
         cfg_engine = self.config.translation_settings.selected_engine or "google"
         self._selected_engine: TranslationEngine = self._engine_getter(cfg_engine)
-        if self._selected_engine not in (
-            TranslationEngine.GOOGLE,
-            TranslationEngine.OPENAI,
-            TranslationEngine.GEMINI,
-            TranslationEngine.LOCAL_LLM,
-            TranslationEngine.LIBRETRANSLATE,
-            TranslationEngine.BING,
-            TranslationEngine.NVIDIA,
-            TranslationEngine.CUSTOM,
-        ):
+        if self._selected_engine not in {engine_enum(eid) for eid in engine_ids(gui=True)}:
             self._selected_engine = TranslationEngine.GOOGLE
 
         # ── Callback registries ──────────────────────────────────────────
@@ -146,18 +138,7 @@ class SettingsBackend:
     @staticmethod
     def _engine_from_str(engine_str: str) -> TranslationEngine:
         """Safely converts a string engine name to TranslationEngine enum."""
-        mapping = {
-            "google": TranslationEngine.GOOGLE,
-            "openai": TranslationEngine.OPENAI,
-            "local_llm": TranslationEngine.LOCAL_LLM,
-            "deepseek": TranslationEngine.OPENAI,
-            "gemini": TranslationEngine.GEMINI,
-            "libretranslate": TranslationEngine.LIBRETRANSLATE,
-            "bing": TranslationEngine.BING,
-            "nvidia": TranslationEngine.NVIDIA,
-            "custom": TranslationEngine.CUSTOM,
-        }
-        return mapping.get(engine_str.lower(), TranslationEngine.GOOGLE)
+        return engine_enum(engine_str)
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  General Translation Settings
@@ -716,7 +697,7 @@ class SettingsBackend:
         return self.config.app_settings.theme_mode or "obsidian"
 
     def set_theme_mode(self, mode: str) -> None:
-        if mode not in ("obsidian", "daylight", "cyber_neon"):
+        if mode not in ("obsidian", "daylight"):  # a stored "cyber_neon" (2.8.21) becomes dark
             mode = "obsidian"
         self.config.app_settings.theme_mode = mode
         self.config.save_config()
@@ -953,6 +934,6 @@ class SettingsBackend:
                     google_translator.aggressive_retry = aggressive
 
             return None
-        except Exception as exc:
+        except Exception:
             self.logger.exception("[SettingsBackend] save_settings error")
             raise

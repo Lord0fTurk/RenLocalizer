@@ -4,6 +4,107 @@ render_with_liquid: false
 
 # RenLocalizer Changelog
 
+#### [2.9.0] - 2026-11-12
+
+> **A new look (two themes, a rebuilt Translate page with a live preview of the line being translated), API keys moved out of `config.json` into the system credential store, a large internal cleanup (one table for all engines, a translation core that no longer needs Qt, and a `Main.qml` split into pages), and the AppImage again recovering from a GLX startup abort by retrying once in software mode.**
+
+##### 🎨 New Look
+
+> **(`gui/qml/components/Theme.qml`, `Sidebar.qml`, `pages/*`, `dialogs/*`, `locales/*`)**
+> - **Two themes:** Dark and Light. Cyber Neon is gone (a saved Cyber Neon choice opens as Dark). The four accent colours stay; in the Light theme each uses a darker step so text and the main button stay readable on white.
+> - **Quieter interface:** no bordered cards, no glow, no gradients. Pages are separated by space and thin lines. The accent colour is used for the main button, progress and focus only; the selected menu entry, icons, switches and sliders are neutral.
+> - **Translate page** (the old Dashboard): four rows (Game, Languages, Engine, Output) and a Run panel on the right. The language pair is the largest thing on the page, written in each language's own name. Below about 1000 px the Run panel becomes a bar at the bottom. An empty page asks "Which game do you want to translate?" and lists recent games.
+> - **Live preview:** while a run is going the panel shows the last translated line, original above translation (about once per batch; the speaker is the script's variable name, for example `e`).
+> - **Menu:** the order is now Translate, Editor, Glossary, Toolbox, Log, Settings. The support link is a plain row with a small heartbeat on the heart.
+> - **Other pages and dialogs** follow the same rules: flat sections, neutral selection, no gradient stripes on dialogs, no coloured tiles or all-caps badges in the Toolbox. Their inner layout is unchanged.
+> - 16 new texts and the new Dark/Light names in all nine languages.
+
+##### 🔐 API Keys in the System Credential Store
+
+> **(`utils/secret_store.py`, `utils/config.py`, `utils/logger.py`, `RenLocalizer.spec`, `tests/test_secret_store.py`)**
+> - **What:** API keys (OpenAI/DeepSeek, Gemini, NVIDIA, DeepL, LibreTranslate, custom endpoint) and proxy addresses that contain a login are no longer written to `config.json`. They go to Windows Credential Manager or, on Linux, the Secret Service (GNOME Keyring, KWallet). Nothing changes for the user: the fields work as before.
+> - **Automatic move:** keys found in an existing `config.json` are moved on first start and the file is rewritten without them.
+> - **Never loses a key:** if the store is missing, refuses a value or cannot read it back, the value stays in `config.json` as before.
+> - **Not used on:** portable installs (the folder should stay movable), macOS (the app is not notarized, so Keychain would ask again for every key after each update), and when `RENLOCALIZER_NO_KEYRING=1` is set.
+> - **Factory reset** also empties the store.
+> - **Logs:** `nvapi-` keys and `user:password@` in URLs are hidden, including inside error messages (the filter now masks the finished message, not only plain arguments).
+> - **Going back to 2.8.x:** older versions do not read the store, so the keys will look empty there and have to be typed again. They are not lost; 2.9.0 still has them.
+
+##### ▶ Continue Where It Stopped
+
+> **(`core/run_state.py`, `backend/app_backend.py`, `pages/DashboardPage.qml`, `tests/test_run_state.py`)**
+> - **What:** when you stop a run (or it ends with lines left), the Translate page remembers it for that game and language. The Run panel then says "31 of 72 lines done" and the main button reads **Continue**. A finished run clears the note.
+> - **How it works:** nothing new in the pipeline. Translated lines are already in the cache, so a second run sends only the rest. Checked with a stopped demo run: the second run sent only the remaining lines, none twice.
+> - **Kept in** `run_state.json` in the data folder, per game and language; a broken file is read as empty.
+> - **Estimate before a run** (`core/estimate.py`): the lines are counted in the background (a slight overcount: lines later dropped as technical text are included). The time is learned from your own finished runs per engine (lines sent to the engine per second, end to end, smoothed), so it stays hidden until the engine has one; there are no made-up speed numbers. When resuming, only the lines left are counted.
+
+##### 🪟 Bing: Stray Placeholder Brackets
+
+> **(`core/translators/services.py`, `tests/test_bing_translator.py`)**
+> - If the service keeps every placeholder but leaves a stray `⟦` or `⟧` in a line, Bing now hands that line to the Google fallback. Before, the pipeline guard dropped the line and the English source stayed. Google is unchanged.
+
+##### ✏ Editor: Rejected Filter
+
+> **(`core/editor/*`, `backend/editor_backend.py`, `components/EditorPage.qml`, `core/pipeline/orchestrator.py`, `tests/test_editor_core.py`)**
+> - A new **Rejected** chip lists the lines the last run refused (the guard found the engine's output corrupted, so the original was kept). It appears only when there are such lines, and selecting one says why (for example a leftover placeholder token). Editing the line clears it.
+> - It reads the run's `translation_blocked_or_fallback.json`; the sample limit in that report went from 200 to 5000 so large games are covered.
+
+##### 🏠 Local Model Timeout
+
+> **(`core/ai_translator.py`, `utils/constants.py`, `tests/test_local_llm_timeout.py`)**
+> - The local model's request timeout was fixed at 180 s and ignored the AI Timeout setting. A 15-line batch is about 500 tokens: roughly 45 s on a 1.8B model on a CPU, but minutes on a 7B+ model, so slow machines timed out on every request. The setting can now raise it (180 s stays the floor), and the built-in runtime on the CPU backend starts from 480 s.
+> - Measured on a CPU-only run of the built-in runtime: the server starts and translates fine; only the time limit was the problem.
+
+##### 🧬 .rpyc: Exact Ids, Image Attributes and Say Arguments
+
+> **(`core/rpyc_reader.py`, `core/pipeline/extraction.py`, `core/tl_parser.py`, `tests/test_rpyc_slots_and_say_code.py`)**
+> - **Slot 2 first:** a compiled `.rpyc` holds the script twice. Ren'Py reads the second copy, where every line is already wrapped with its real translation id. The reader took the first copy, so it had no ids and guessed them from a hash of the text. Now it reads slot 2 first (slot 1 is the fallback) and uses the real ids.
+> - **Image attributes and arguments:** lines like `gwen talk laugh "..."` and `protag "No." (multiple=2)` have the attributes and arguments in their code, so the guessed id never matched and the game showed the English line. Both are now written into the comment and the translated line, and the translation file reader accepts the `(multiple=2)` clause.
+> - **No more junk entries:** an argument list such as `(multiple=2)` produced a bogus "multiple" line to translate; only quoted values are taken now.
+> - **Measured on a test game** (Ren'Py 8.5, scripts only as `.rpyc`) against the ids the game's own engine builds: lines missing from the translation fell from 338 to 261 and ids that matched nothing from 125 to 10. What is left is almost only `...` and `[variable]` lines, which have nothing to translate.
+
+##### 🧩 One Table for All Engines
+
+> **(`utils/engine_registry.py`, `core/translators/factory.py`, `utils/config.py`, `cli_main.py`, `backend/*`, `tests/test_engine_registry.py`)**
+> - **Why:** adding an engine meant touching about ten places, and the copies had drifted apart (NVIDIA lost its proxy that way).
+> - **Now:** each engine is one record (id, name, icon, key field, model field, batch cap, Google fallback, whether it is an instruction-following model). The settings check, the batch caps, the dashboard engine list, the CLI menu and `--engine` choices and the pipeline's AI checks all read it. One factory builds the translator for the GUI, the CLI and the pipeline.
+> - **Fix found on the way:** when the pipeline built the DeepSeek translator itself it never used the DeepSeek class and looked for a `deepseek_api_key` field that does not exist. The GUI normally built the translator first, so this was rarely reached.
+> - The CLI menu order is unchanged and pinned by a test.
+
+##### 🏗 Internal Structure
+
+> **(`gui/qml/*`, `backend/*`, `core/pipeline/*`, `cli_main.py`)**
+> - **`Main.qml`:** 6,458 lines became a 493-line window shell; the pages, dialogs and the sidebar are separate files. Checked with 99 screenshots before and after (both window sizes, every page, nine engines, four dialogs): no pixel differs outside running animations.
+> - **`AppBackend`:** the proxy, toolbox and glossary parts are their own objects (`appBackend.proxy`, `.toolbox`, `.glossary`).
+> - **Translation core without Qt:** the pipeline and the CLI no longer import PyQt6 (a test blocks PyQt6 and imports them). The GUI listens through a small Qt bridge that keeps delivery on the GUI thread.
+> - **CLI:** Ctrl+C now stops a run cleanly.
+> - **A run of a small demo game** was translated through the GUI (offscreen) and through the CLI with PyQt6 blocked, after the split.
+
+##### 🧪 Safety Net
+
+> **(`pyproject.toml`, `.github/workflows/tests.yml`, `requirements-dev.txt`, `tests/*`)**
+> - **`ruff`** with correctness rules only (bugs and dead code, no style rules) runs in CI. 190+ unused imports, variables and empty f-strings were removed.
+> - **Five tests that never ran:** `tests/test_parser.py` defined five tests twice, so the first copies were hidden by the second and never executed. The fuller copies remain.
+> - **Errors that were swallowed with `pass`** (a rejected translation that could not be removed from the cache, a Gemini safety setting that could not be built, diagnostic report writes, the update check) are now logged.
+> - **CI** also tests Python 3.13 and 3.14.
+> - **New tests** open every page and fail on any Python exception (PyQt ends the process when a function called from QML raises, which the unit tests could not see) and check that names used by the moved QML files still resolve.
+
+##### 🐧 Linux AppImage: GLX Startup Crash Recovery
+
+> **(`build/linux/AppRun`, `tests/test_release_linux_artifacts.py`)**
+> - **Cause:** On some Linux systems Qt's XCB-GLX plugin cannot create a context (`qglx_findConfig` / `Could not initialize GLX`) and calls `abort()`. The process dies before the Python `sceneGraphError` relaunch can run. The AppImage entry point used to catch that (exit code above 128, typically SIGABRT = 134) and retry once with `QT_QUICK_BACKEND=software`; the 2.8.12 AppRun rewrite dropped the retry and left only a manual software env flag. The portable `RenLocalizer.sh` for the tar.gz still had the net, so only the AppImage was affected. Reported as a regression versus earlier AppImages.
+> - **Fix:** `AppRun` again launches without `exec` on the first try, and on a signal crash relaunches once with software rendering (`QT_QUICK_BACKEND=software`, `RENLOCALIZER_QT_RENDER_MODE=software`, `RENLOCALIZER_GL_RETRY=1`). A second crash is not retried. Manual `--safe-graphics` / `RENLOCALIZER_QT_RENDER_MODE=software` still works as before.
+> - **Guard:** a release-artifact test asserts the retry contract stays in `AppRun` and that the release workflow still copies that file into the AppDir.
+
+##### ⚠️ Known Limits
+
+> - Before a run the Translate page shows the line count and, once an engine has finished a run on this machine, a time estimate. There is no cost estimate: prices change too often to ship a table that would be right.
+> - The Settings, Glossary, Toolbox, Log and Editor pages have the new look but keep their old inner layout.
+> - The credential store was checked against the real Windows Credential Manager only; the Linux Secret Service and a packaged build were not tried.
+> - macOS keeps keys in `config.json` until the app is notarized.
+
+---
+
 #### [2.8.22] - 2026-11-11
 
 > **A new free engine (NVIDIA Riva-Translate), a proxy that finally works and has a settings card, Stop that cancels requests already in flight, and a fix for certificate verification in packaged Linux builds (AppImage / tar.gz) on distributions other than the build machine's, which made Bing fail and Google crawl.**

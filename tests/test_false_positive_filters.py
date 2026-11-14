@@ -126,9 +126,8 @@ class TestShortAllCapsGameTerms:
     def test_7plus_allcaps_not_caught_by_short(self, fmt, text):
         # This specific 7-char string with no underscores is NOT caught by
         # SHORT_ALL_CAPS_RE or SCREAMING_SNAKE_RE
-        result = fmt._should_skip_translation(text)
+        fmt._should_skip_translation(text)
         # It may or may not be skipped by other rules; just verify SHORT rule doesn't catch it
-        import re
         assert not fmt._SHORT_ALL_CAPS_RE.match(text)
 
 

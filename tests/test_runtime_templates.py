@@ -1,6 +1,3 @@
-import json
-import tempfile
-from pathlib import Path
 import sys
 
 
@@ -17,7 +14,6 @@ class MockRenpyLoader:
 
 class MockRenpy:
     config = None
-    current_screen = None
 
     def __init__(self):
         self.loader = MockRenpyLoader()

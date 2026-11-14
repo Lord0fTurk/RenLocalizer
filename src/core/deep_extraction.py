@@ -281,7 +281,7 @@ class MultiLineStructureParser:
         Returns list of {'text': str, 'lineno': int, 'context': key}
         """
         results = []
-        lines = block.splitlines()
+        block.splitlines()
 
         # Translatable key names commonly used in Ren'Py game data structures.
         # Categories: quest systems, character profiles, phone/chat, schedule,

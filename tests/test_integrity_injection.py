@@ -6,8 +6,6 @@ v3.5 düzeltmeleri:
 2. inject_missing_placeholders: Google'ın tamamen sildiği tokenları oransal pozisyona enjekte eder
 """
 
-import re
-import pytest
 from src.core.syntax_guard import (
     protect_renpy_syntax,
     restore_renpy_syntax,

@@ -1,4 +1,3 @@
-import pytest
 from src.core.output_formatter import format_renpy_speaker, RenPyOutputFormatter
 
 

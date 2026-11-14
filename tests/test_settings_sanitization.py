@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import pytest
 from unittest.mock import MagicMock
 from src.backend.settings_backend import SettingsBackend
 

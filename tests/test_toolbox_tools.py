@@ -7,14 +7,10 @@ Tests for RenLocalizer Toolbox tools:
 - Glossary Extractor
 """
 
-import os
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
-from src.tools.font_helper import FontHelper, check_font_for_project
-from src.tools.font_injector import inject_font, _normalize_lang_code, FONT_CANDIDATES
-from src.tools.renpy_lint import lint_translation_output, RenpyTranslationLint
+from src.tools.font_helper import FontHelper
+from src.tools.font_injector import _normalize_lang_code, FONT_CANDIDATES
+from src.tools.renpy_lint import lint_translation_output
 from src.tools.glossary_extractor.extractor import GlossaryExtractor
 
 

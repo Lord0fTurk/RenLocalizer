@@ -4,7 +4,6 @@ Test to ensure Main.qml and all QML components load without syntax or binding er
 """
 import os
 import sys
-import pytest
 from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtQml import QQmlApplicationEngine
@@ -80,7 +79,7 @@ def test_hy_mt_prompt_warning_is_gated_like_the_control_it_points_at():
     """
     import re
 
-    qml = os.path.join(os.path.dirname(__file__), "..", "src", "gui", "qml", "Main.qml")
+    qml = os.path.join(os.path.dirname(__file__), "..", "src", "gui", "qml", "pages", "SettingsPage.qml")
     with open(qml, encoding="utf-8") as fh:
         content = fh.read()
 
@@ -88,7 +87,7 @@ def test_hy_mt_prompt_warning_is_gated_like_the_control_it_points_at():
     assert 'visible: appBackend.selectedEngine === "local_llm"' in content
 
     index = content.find("ai_prompt_ignored_hy_mt2")
-    assert index != -1, "prompt-ignored warning key missing from Main.qml"
+    assert index != -1, "prompt-ignored warning key missing from SettingsPage.qml"
     block = content[max(0, index - 900):index]
     visible_lines = re.findall(r"visible: ([^\n]+)", block)
     assert visible_lines, "warning label has no visible binding"
@@ -175,20 +174,37 @@ def test_pages_use_the_shared_page_header():
     import re
 
     qml_root = os.path.join(os.path.dirname(__file__), "..", "src", "gui", "qml")
-    with open(os.path.join(qml_root, "Main.qml"), encoding="utf-8") as fh:
-        main = fh.read()
-    with open(os.path.join(qml_root, "components", "EditorPage.qml"), encoding="utf-8") as fh:
-        editor = fh.read()
-    # Dashboard, Settings, Logs, Toolbox, Glossary + the editor page
-    assert len(re.findall(r"^\s*PageHeader \{", main, re.M)) == 5
-    assert len(re.findall(r"^\s*PageHeader \{", editor, re.M)) == 1
+    # The Translate page (DashboardPage) has no header on purpose: the game's
+    # name is its title, and its one 24 px line is the empty-state headline.
+    pages = [os.path.join("pages", name + ".qml") for name in
+             ("SettingsPage", "LogPage", "ToolboxPage", "GlossaryPage")]
+    pages.append(os.path.join("components", "EditorPage.qml"))
+    for rel in pages:
+        with open(os.path.join(qml_root, rel), encoding="utf-8") as fh:
+            headers = re.findall(r"^\s*PageHeader \{", fh.read(), re.M)
+        assert len(headers) == 1, f"{rel}: expected one PageHeader, found {len(headers)}"
 
     offenders = []
     for path in glob.glob(os.path.join(qml_root, "**", "*.qml"), recursive=True):
-        if os.path.basename(path) == "PageHeader.qml":
+        if os.path.basename(path) in ("PageHeader.qml", "DashboardPage.qml"):
             continue
         with open(path, encoding="utf-8") as fh:
             for lineno, line in enumerate(fh, 1):
                 if re.search(r"pixelSize:\s*24\b", line):
                     offenders.append(f"{os.path.relpath(path, qml_root)}:{lineno}")
     assert not offenders, "Page-title size outside PageHeader:\n" + "\n".join(offenders)
+
+
+def test_translate_page_has_one_headline_and_one_primary_button():
+    """The Translate page has no PageHeader: a single 24 px line (the empty-state
+    headline) and one primary action, defined once and used by the panel and
+    the bottom dock."""
+    import re
+
+    qml_root = os.path.join(os.path.dirname(__file__), "..", "src", "gui", "qml")
+    with open(os.path.join(qml_root, "pages", "DashboardPage.qml"), encoding="utf-8") as fh:
+        page = fh.read()
+    assert len(re.findall(r"pixelSize:\s*24\b", page)) == 1
+    assert len(re.findall(r"^\s*component RunButton:", page, re.M)) == 1
+    assert len(re.findall(r"^\s*RunButton \{", page, re.M)) == 2          # panel + dock
+    assert "appBackend.startTranslation()" in page and page.count("appBackend.startTranslation()") == 1

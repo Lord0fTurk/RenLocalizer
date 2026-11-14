@@ -1,8 +1,6 @@
-import tempfile
 from pathlib import Path
-import pytest
 
-from src.core.output_formatter import format_renpy_speaker, RenPyOutputFormatter
+from src.core.output_formatter import format_renpy_speaker
 from src.core.pipeline.extraction import generate_native_tlid_content
 from src.core.renpy_lexer import RenPyLexer
 from src.core.parser import RenPyParser
@@ -83,7 +81,7 @@ label start:
     tokens = lexer.tokenize(content, "script.rpy")
 
     texts = [t.text for t in tokens]
-    types = [t.text_type for t in tokens]
+    [t.text_type for t in tokens]
     chars = [t.character for t in tokens]
 
     assert "Who goes there?" in texts

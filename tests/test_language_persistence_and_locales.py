@@ -11,7 +11,6 @@ import json
 import os
 import sys
 from pathlib import Path
-import pytest
 
 REQUIRED_DIALOG_KEYS = [
     "completion_summary_subtitle",

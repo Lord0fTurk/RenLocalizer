@@ -43,7 +43,6 @@ import binascii
 import sys
 from src.core.deep_extraction import (
     DeepExtractionConfig,
-    DeepVariableAnalyzer,
     FStringReconstructor,
     confidence_band,
     resolve_minimum_extraction_confidence,
@@ -1219,16 +1218,38 @@ def read_rpyc_header(data: bytes) -> RpycHeader:
 def read_rpyc_file(file_path: Union[str, Path]) -> List[Any]:
     """
     Read .rpyc file and return AST nodes.
-    
+
+    A v2 file holds the script twice: slot 1 is the plain AST, slot 2 is the same
+    AST after Ren'Py's static transforms, where every dialogue line is wrapped in a
+    ``TranslateSay`` node that carries the exact translation id and the full say
+    statement (image attributes, ``(multiple=2)`` arguments). Ren'Py itself reads
+    slot 2 first (``for slot in [2, 1]``), so the ids it looks up at runtime are
+    the ones stored there. Slot 1 only serves as a fallback.
+
     Args:
         file_path: Path to .rpyc file
-        
+
     Returns:
         List of AST nodes
-        
+
     Raises:
         RpycReadError: If file cannot be read/parsed
     """
+    try:
+        header = read_rpyc_header(Path(file_path).read_bytes())
+    except (OSError, RpycReadError):
+        header = None
+    if header is not None and header.version == 2 and 2 in header.slots and 1 in header.slots:
+        try:
+            return _read_rpyc_file(file_path, slot=2)
+        except RpycReadError as exc:
+            logger.warning(f"Slot 2 of {file_path} unreadable ({exc}); falling back to slot 1")
+            return _read_rpyc_file(file_path, slot=1)
+    return _read_rpyc_file(file_path)
+
+
+def _read_rpyc_file(file_path: Union[str, Path], slot: Optional[int] = None) -> List[Any]:
+    """Reads one slot of a .rpyc file (the first available one when *slot* is None)."""
     file_path = Path(file_path)
     
     if not file_path.exists():
@@ -1259,7 +1280,7 @@ def read_rpyc_file(file_path: Union[str, Path]) -> List[Any]:
     else:
         # v2.7.2: Slot fallback — try slot 1 first, then slot 2 if unavailable
         slot_id = None
-        for candidate_slot in (1, 2):
+        for candidate_slot in ((slot,) if slot else (1, 2)):
             if candidate_slot in header.slots:
                 slot_id = candidate_slot
                 break
@@ -1381,6 +1402,9 @@ class ExtractedText:
     # Clauses after a say statement's text, as Say.get_code() writes them
     # (" nointeract", " with vpunch"); the translation line must repeat them.
     say_tail: str = ""
+    # Image attributes between the speaker and the text (' talk laugh03'); part of
+    # the say statement's code, so the translation line has to repeat them.
+    say_attrs: str = ""
     # The author wrapped this string in _(), __(), ___() or _p().
     marked: bool = False
 
@@ -1537,6 +1561,7 @@ class ASTTextExtractor:
         node_type: str = "",
         identifier: str = "",
         say_tail: str = "",
+        say_attrs: str = "",
     ) -> None:
         """Add extracted text if it's meaningful."""
         if not text or not text.strip():
@@ -1609,6 +1634,7 @@ class ASTTextExtractor:
             confidence_band=confidence_band(confidence),
             identifier=identifier or "",
             say_tail=say_tail,
+            say_attrs=say_attrs,
         )
         self.extracted.append(self.seen_map[key])
         logger.info(f"[AST ENTRY] {self.current_file}:{line_number} [{node_type or text_type}] ctx={context_path} text={text}")
@@ -2001,6 +2027,57 @@ class ASTTextExtractor:
             elif "_(" in source:
                 self._extract_strings_from_code(source, line_number)
 
+    @staticmethod
+    def _arguments_code(args: Any) -> str:
+        """``(multiple=2)`` as Ren'Py's ArgumentInfo.get_code() writes it, or ''."""
+        items = getattr(args, 'arguments', None) if args is not None else None
+        if not items:
+            return ""
+        starred = set(getattr(args, 'starred_indexes', None) or ())
+        double = set(getattr(args, 'doublestarred_indexes', None) or ())
+        parts = []
+        for i, item in enumerate(items):
+            try:
+                keyword, expression = item
+            except (TypeError, ValueError):
+                return ""
+            expression = str(expression)
+            if i in starred:
+                parts.append("*" + expression)
+            elif i in double:
+                parts.append("**" + expression)
+            elif keyword is not None:
+                parts.append(f"{keyword}={expression}")
+            else:
+                parts.append(expression)
+        return "(" + ", ".join(parts) + ")"
+
+    @classmethod
+    def _say_code_parts(cls, node: Any):
+        """(attributes, tail) of a say statement, in Say.get_code() order.
+
+        who, attributes, "@" temporary attributes, text, nointeract, id, arguments, with.
+        The id clause only appears when the author wrote one; arguments such as
+        ``(multiple=2)`` are part of the statement's id, so a translation line
+        without them would never be found by the game.
+        """
+        attrs = list(getattr(node, 'attributes', None) or ())
+        temporary = list(getattr(node, 'temporary_attributes', None) or ())
+        say_attrs = "".join(f" {a}" for a in attrs)
+        if temporary:
+            say_attrs += " @" + "".join(f" {a}" for a in temporary)
+        tail = "" if getattr(node, 'interact', True) else " nointeract"
+        identifier = getattr(node, 'identifier', None)
+        if identifier and getattr(node, 'explicit_identifier', False):
+            tail += f" id {identifier}"
+        arguments = cls._arguments_code(getattr(node, 'arguments', None))
+        if arguments:
+            tail += f" {arguments}"
+        with_ = getattr(node, 'with_', None)
+        if with_ and isinstance(with_, str):
+            tail += f" with {with_.strip()}"
+        return say_attrs, tail
+
     def _process_node(self, node: Any, context: str = "", identifier: str = "") -> None:
         """Process a single AST node."""
         if node is None:
@@ -2017,6 +2094,7 @@ class ASTTextExtractor:
             lang = getattr(node, 'language', None)
             real_id = (getattr(node, 'identifier', '') or '') if lang is None else ''
             if what and isinstance(what, str):
+                say_attrs, say_tail = self._say_code_parts(node)
                 self._add_text(
                     str(what),
                     getattr(node, 'linenumber', 0),
@@ -2025,6 +2103,8 @@ class ASTTextExtractor:
                     context=f"translate:{getattr(node, 'identifier', '')}",
                     node_type=node_type,
                     identifier=real_id,
+                    say_tail=say_tail,
+                    say_attrs=say_attrs,
                 )
         
         # Dialogue (Say statement)
@@ -2036,11 +2116,7 @@ class ASTTextExtractor:
 
             # Metadata optimization: what can be a FakePyExpr (subclass of str) or literal str
             if what and isinstance(what, str):
-                # Same order as Ren'Py's Say.get_code(): nointeract, then with.
-                say_tail = "" if getattr(node, 'interact', True) else " nointeract"
-                with_ = getattr(node, 'with_', None)
-                if with_ and isinstance(with_, str):
-                    say_tail += f" with {with_.strip()}"
+                say_attrs, say_tail = self._say_code_parts(node)
                 self._add_text(
                     str(what),
                     getattr(node, 'linenumber', 0),
@@ -2050,6 +2126,7 @@ class ASTTextExtractor:
                     node_type=node_type,
                     identifier=identifier,
                     say_tail=say_tail,
+                    say_attrs=say_attrs,
                 )
             
             # Check arguments for additional text (e.g. what_prefix="...")
@@ -2059,7 +2136,13 @@ class ASTTextExtractor:
                  # FakeArgumentInfo or tuple/list
                  candidates = []
                  if isinstance(args, FakeArgumentInfo):
-                     candidates.extend([a for arg_tuple in args.arguments for a in arg_tuple if isinstance(a, str)])
+                     # (keyword, expression) pairs: only the expression can hold text.
+                     # Taking the keyword too turned 'multiple=2' into a "multiple"
+                     # translation entry.
+                     for arg_tuple in args.arguments:
+                         expr = arg_tuple[-1] if arg_tuple else None
+                         if isinstance(expr, str) and len(expr) >= 2 and expr[0] == expr[-1] and expr[0] in ('"', "'"):
+                             candidates.append(expr[1:-1])
                  elif isinstance(args, (list, tuple)):
                      candidates.extend([a for a in args if isinstance(a, str)])
                  
@@ -2505,7 +2588,6 @@ class ASTTextExtractor:
 
         # Regex for context: var = [  OR  var = {  OR  "key":  OR var = "string" (assignment)
         list_context_re = re.compile(r'(?P<var>[a-zA-Z_]\w*)\s*(?:=\s*[\[\(\{]|\+=\s*[\[\(]|\.(?:append|extend|insert)\s*\()|["\'](?P<key>\w+)["\']\s*[:=]')
-        assignment_context_re = re.compile(r'(?P<var>[a-zA-Z_]\w*)\s*=\s*')
 
         for match in generic_string_re.finditer(code):
             raw_text = match.group('quote')
@@ -2856,6 +2938,7 @@ def extract_texts_from_rpyc(
             # Real Ren'Py-assigned translate id from the compiled AST, when available.
             'identifier': r.identifier,
             'say_tail': r.say_tail,
+            'say_attrs': r.say_attrs,
             'marked': r.marked,
         }
         for r in results

@@ -4,7 +4,6 @@ Unit tests for orjson-accelerated serialization, multicore parsing, and py3langi
 
 import tempfile
 from pathlib import Path
-import pytest
 from src.utils.encoding import save_json_safely, read_json_safely, dumps_json, loads_json
 from src.core.parser import RenPyParser
 from src.utils.config import ConfigManager

@@ -14,6 +14,10 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 
+# Tests must never read or write the developer's real credential store
+# (Windows Credential Manager / Secret Service); see src/utils/secret_store.py.
+os.environ["RENLOCALIZER_NO_KEYRING"] = "1"
+
 # Force Qt offscreen platform plugin in headless environments if not already specified
 if "QT_QPA_PLATFORM" not in os.environ and sys.platform != "win32":
     os.environ["QT_QPA_PLATFORM"] = "offscreen"

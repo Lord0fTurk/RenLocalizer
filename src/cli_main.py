@@ -6,21 +6,22 @@ Modern terminal interface powered by Rich
 
 import sys
 import atexit
+import threading
 import os
 import argparse
-import signal
 import json
 import logging
 import time
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QCoreApplication, QObject, pyqtSlot
 
 from src.utils.config import ConfigManager
-from src.core.translation_pipeline import TranslationPipeline, PipelineResult, PipelineStage
+from src.core.translation_pipeline import TranslationPipeline, PipelineResult
 from src.core.translator import TranslationManager, TranslationEngine, PseudoTranslator
 from src.core.local_llm_server import LlamaServerManager, cleanup_stale_server
+from src.core.translators.factory import build_translator, engine_enum
+from src.utils.engine_registry import ENGINES as ENGINE_SPECS
 from src.core.proxy_manager import ProxyManager
 from src.version import VERSION
 
@@ -31,9 +32,7 @@ try:
     from rich.table import Table
     from rich.text import Text
     from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn, TaskProgressColumn, MofNCompleteColumn
-    from rich.columns import Columns
     from rich.align import Align
-    from rich.rule import Rule
     from rich import box
     from rich.traceback import install as install_rich_traceback
     install_rich_traceback(show_locals=False, width=100)
@@ -74,16 +73,10 @@ BRAND_ERROR = "bright_red"
 BRAND_WARNING = "yellow"
 BRAND_DIM = "dim white"
 
+# (id, name, icon, note) for the terminal menu; the table lives in engine_registry.
 ENGINES = [
-    ("google",         "Google Translate",  "🌐", "Free — 13 mirror fallback"),
-    ("bing",           "Bing / MS Edge",    "🪟", "Free — no API key, Google fallback"),
-    ("nvidia",         "NVIDIA (Riva)",     "🟢", "Free nvapi- key (build.nvidia.com), ~40 req/min"),
-    ("openai",         "OpenAI (GPT)",      "🤖", "API key required"),
-    ("deepseek",       "DeepSeek",          "🔮", "API key required — OpenAI compatible"),
-    ("gemini",         "Google Gemini",     "✨", "API key required"),
-    ("local_llm",      "Local LLM",         "🏠", "Ollama / LM Studio / built-in GGUF"),
-    ("libretranslate", "LibreTranslate",    "🔓", "Self-hosted — Docker/Local"),
-    ("custom",         "Custom Endpoint",   "🔗", "Any LibreTranslate-compatible API"),
+    (spec.id, spec.cli_label or spec.label, spec.cli_icon, spec.cli_note)
+    for spec in ENGINE_SPECS if spec.in_cli
 ]
 
 LANGUAGES = [
@@ -106,17 +99,7 @@ LANGUAGES = [
 # atexit hook in run_translate_command guarantees it is not left behind.
 _LLAMA_SERVER = LlamaServerManager()
 
-ENGINE_MAP = {
-    "google": TranslationEngine.GOOGLE,
-    "bing": TranslationEngine.BING,
-    "nvidia": TranslationEngine.NVIDIA,
-    "openai": TranslationEngine.OPENAI,
-    "deepseek": TranslationEngine.OPENAI,
-    "gemini": TranslationEngine.GEMINI,
-    "local_llm": TranslationEngine.LOCAL_LLM,
-    "libretranslate": TranslationEngine.LIBRETRANSLATE,
-    "custom": TranslationEngine.CUSTOM,
-}
+ENGINE_MAP = {spec.id: engine_enum(spec.id) for spec in ENGINE_SPECS if spec.in_cli}
 
 
 # ============================================================
@@ -127,7 +110,7 @@ def print_banner():
     if not RICH_AVAILABLE:
         print(f"\n{'=' * 60}")
         print(f"       RenLocalizer CLI v{VERSION}")
-        print(f"       Ren'Py Game Translation Tool")
+        print("       Ren'Py Game Translation Tool")
         print(f"{'=' * 60}")
         return
 
@@ -236,7 +219,7 @@ def print_menu(title: str, options: list, show_back: bool = True, icons: list = 
         for i, option in enumerate(options, 1):
             print(f"    [{i}] {option}")
         if show_back:
-            print(f"    [0] Back")
+            print("    [0] Back")
         print()
 
     while True:
@@ -280,15 +263,15 @@ def clear_screen():
 # CliHandler — Pipeline Signal Receiver
 # ============================================================
 
-class CliHandler(QObject):
+class CliHandler:
     def __init__(self, pipeline: TranslationPipeline, verbose: bool = False):
-        super().__init__()
         self.pipeline = pipeline
         self.verbose = verbose
         self._progress = None
         self._progress_task = None
         self._start_time = time.time()
         self.succeeded = False
+        self.done = threading.Event()  # set when the pipeline reports its result
 
         self.pipeline.stage_changed.connect(self.on_stage_changed)
         self.pipeline.progress_updated.connect(self.on_progress_updated)
@@ -296,7 +279,6 @@ class CliHandler(QObject):
         self.pipeline.finished.connect(self.on_finished)
         self.pipeline.show_warning.connect(self.on_warning)
 
-    @pyqtSlot(str, str)
     def on_stage_changed(self, stage: str, message: str):
         if self._progress is not None:
             try:
@@ -312,7 +294,6 @@ class CliHandler(QObject):
         else:
             print(f"\n>> STAGE: {message}")
 
-    @pyqtSlot(int, int, str)
     def on_progress_updated(self, current: int, total: int, text: str):
         if total <= 0:
             return
@@ -334,7 +315,6 @@ class CliHandler(QObject):
             sys.stdout.write(f"\rProgress: [{current}/{total}] {pct}%")
             sys.stdout.flush()
 
-    @pyqtSlot(str, str)
     def on_log_message(self, level: str, message: str):
         if not self.verbose and level in ("info", "debug"):
             return
@@ -346,7 +326,6 @@ class CliHandler(QObject):
         else:
             print(f"\n[{level.upper()}] {message}")
 
-    @pyqtSlot(str, str)
     def on_warning(self, title: str, message: str):
         if RICH_AVAILABLE:
             console.print(Panel(f"[{BRAND_WARNING}]{message}[/]", title=f"[bold {BRAND_WARNING}]⚠ {title}[/]",
@@ -354,7 +333,6 @@ class CliHandler(QObject):
         else:
             print(f"\n[WARNING] {title}: {message}")
 
-    @pyqtSlot(object)
     def on_finished(self, result: PipelineResult):
         if self._progress is not None:
             try:
@@ -392,7 +370,7 @@ class CliHandler(QObject):
             else:
                 print(f"\n{'=' * 60}\nFAILED\n{result.message}\n{'=' * 60}")
 
-        QCoreApplication.quit()
+        self.done.set()
 
 
 # ============================================================
@@ -423,66 +401,31 @@ def setup_engines(config: ConfigManager, engine_id: str, lt_url: str = "", lt_ke
         return config, translation_manager
 
     try:
-        if engine == TranslationEngine.GEMINI:
-            from src.core.ai_translator import GeminiTranslator
-            t = GeminiTranslator(
-                api_key=config.api_keys.gemini_api_key or "",
-                proxy_manager=proxy_manager, config_manager=config,
+        # Same factory as the GUI and the pipeline. The CLI's --lt-url/--lt-key
+        # flags apply to both self-hosted engines; "custom" keeps reading the
+        # LibreTranslate URL when no custom endpoint is stored, as it always did.
+        base_url = lt_url
+        if engine == TranslationEngine.CUSTOM and not base_url:
+            ts = config.translation_settings
+            base_url = getattr(ts, "custom_endpoint_url", "") or getattr(ts, "libretranslate_url", "") or "http://localhost:5000"
+        t = build_translator(engine_id, config, proxy_manager, google=google, base_url=base_url, api_key=lt_key)
+        if t is None:
+            raise RuntimeError("engine could not be built from the current settings")
+        if engine == TranslationEngine.LOCAL_LLM and getattr(config.translation_settings, "local_llm_mode", "external") == "builtin":
+            # Built-in GGUF mode: run llama-server ourselves (no Ollama/LM Studio).
+            ts = config.translation_settings
+            t._base_url = _LLAMA_SERVER.start(
+                model_path=getattr(ts, "local_llm_gguf_path", ""),
+                user_path=getattr(ts, "local_llm_server_path", ""),
+                backend=getattr(ts, "local_llm_backend", "vulkan"),
+                gpu_layers=getattr(ts, "local_llm_gpu_layers", -1),
+                ctx_size=getattr(ts, "local_llm_ctx_size", 4096),
+                parallel=max(1, int(getattr(ts, "ai_concurrency", 2) or 2)),
+                port=getattr(ts, "local_llm_server_port", 0),
             )
-            # Safety-blocked / quota / placeholder-broken items go to Google (same as GUI).
-            t.set_fallback_translator(google)
-            translation_manager.add_translator(TranslationEngine.GEMINI, t)
-        elif engine in (TranslationEngine.OPENAI, TranslationEngine.LOCAL_LLM):
-            from src.core.ai_translator import OpenAITranslator, LocalLLMTranslator, DeepSeekTranslator
-            if engine == TranslationEngine.OPENAI:
-                # OpenAITranslator does not read the key from config itself; the
-                # CLI used to send "none" so OpenAI/DeepSeek could never work.
-                api_key = config.api_keys.openai_api_key or ""
-                base_url = getattr(config.translation_settings, "openai_base_url", "") or ""
-                if engine_id == "deepseek" or "deepseek" in base_url.lower():
-                    t = DeepSeekTranslator(api_key=api_key, proxy_manager=proxy_manager, config_manager=config)
-                else:
-                    t = OpenAITranslator(api_key=api_key, proxy_manager=proxy_manager, config_manager=config)
-                translation_manager.add_translator(TranslationEngine.OPENAI, t)
-            else:
-                t = LocalLLMTranslator(proxy_manager=proxy_manager, config_manager=config)
-                # Built-in GGUF mode: run llama-server ourselves (no Ollama/LM Studio).
-                if getattr(config.translation_settings, "local_llm_mode", "external") == "builtin":
-                    ts = config.translation_settings
-                    base_url = _LLAMA_SERVER.start(
-                        model_path=getattr(ts, "local_llm_gguf_path", ""),
-                        user_path=getattr(ts, "local_llm_server_path", ""),
-                        backend=getattr(ts, "local_llm_backend", "vulkan"),
-                        gpu_layers=getattr(ts, "local_llm_gpu_layers", -1),
-                        ctx_size=getattr(ts, "local_llm_ctx_size", 4096),
-                        parallel=max(1, int(getattr(ts, "ai_concurrency", 2) or 2)),
-                        port=getattr(ts, "local_llm_server_port", 0),
-                    )
-                    t._base_url = base_url
-                    t._client = None  # rebuilt lazily against the new URL
-                    print_success(f"Built-in llama-server ready: {base_url}")
-                translation_manager.add_translator(TranslationEngine.LOCAL_LLM, t)
-        elif engine == TranslationEngine.BING:
-            from src.core.translator import BingTranslator
-            t = BingTranslator(proxy_manager=proxy_manager, config_manager=config)
-            t.set_fallback_translator(google)
-            translation_manager.add_translator(TranslationEngine.BING, t)
-        elif engine == TranslationEngine.NVIDIA:
-            from src.core.translator import NvidiaTranslator
-            t = NvidiaTranslator(
-                api_key=config.api_keys.nvidia_api_key or "",
-                model=getattr(config.translation_settings, "nvidia_model", ""),
-                proxy_manager=proxy_manager, config_manager=config,
-            )
-            t.set_fallback_translator(google)
-            translation_manager.add_translator(TranslationEngine.NVIDIA, t)
-        elif engine in (TranslationEngine.LIBRETRANSLATE, TranslationEngine.CUSTOM):
-            from src.core.translator import LibreTranslateTranslator
-            base_url = lt_url or getattr(config.translation_settings, "libretranslate_url", "http://localhost:5000")
-            api_key = lt_key or getattr(config.translation_settings, "libretranslate_api_key", "")
-            t = LibreTranslateTranslator(base_url=base_url, api_key=api_key,
-                                         proxy_manager=proxy_manager, config_manager=config)
-            translation_manager.add_translator(engine, t)
+            t._client = None  # rebuilt lazily against the new URL
+            print_success(f"Built-in llama-server ready: {t._base_url}")
+        translation_manager.add_translator(engine, t)
     except Exception as e:
         print_warning(f"Engine {engine_id} setup failed, using Google fallback: {e}")
 
@@ -580,9 +523,15 @@ def run_translate_command(args) -> int:
     worker = PipelineWorker(pipeline)
     worker.start()
 
-    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
-    app.exec()
-    worker.wait(5000)
+    # The handler prints from the worker thread; this thread only waits, in
+    # short slices so Ctrl+C is noticed and can stop the run cleanly.
+    try:
+        while worker.isRunning() and not handler.done.is_set():
+            handler.done.wait(0.2)
+    except KeyboardInterrupt:
+        print_warning("Stopping... (finishing the request in flight)")
+        worker.stop()
+    worker.wait(15000)
     # Non-zero on failure so scripts and CI can tell (it was always 0).
     return 0 if handler.succeeded else 1
 

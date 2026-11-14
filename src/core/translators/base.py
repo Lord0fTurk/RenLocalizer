@@ -12,7 +12,7 @@ import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Callable
 
 from src.core.constants import USER_AGENTS
 from src.utils import net as _net

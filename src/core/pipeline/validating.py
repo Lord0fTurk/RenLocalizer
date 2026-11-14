@@ -5,12 +5,9 @@ Each function operates independently, receiving needed state via parameters.
 """
 
 import os
-import ast
 import logging
-from typing import List, Optional
 from pathlib import Path
 
-from .constants import COVERAGE_AUDIT_EXCLUDE_DIRS
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +28,6 @@ def extract_strings_from_rpymc_ast(ast_root) -> list:
     Recursion yerine Stack kullanarak derin nested yapılarda çökme riskini (StackOverflow) önler.
     """
     strings = set()
-    PRIORITY_KEYS = {'text', 'content', 'value', 'caption', 'label', 'description', 'message', 'body'}
     stack = [ast_root]
 
     while stack:

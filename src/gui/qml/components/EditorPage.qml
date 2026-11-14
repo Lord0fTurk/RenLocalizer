@@ -134,7 +134,7 @@ Item {
             radius: 8
             color: actionButton.down ? Theme.cardHover : (actionButton.hovered && actionButton.enabled ? Theme.cardHover : Theme.input)
             border.color: actionButton.emphasized ? actionButton.tint
-                        : (actionButton.hovered && actionButton.enabled ? Theme.accent : Theme.cardBorder)
+                        : (actionButton.hovered && actionButton.enabled ? Theme.txtDim : Theme.borderControl)
             border.width: 1
             Behavior on border.color { ColorAnimation { duration: 150 } }
         }
@@ -156,7 +156,7 @@ Item {
         background: Rectangle {
             radius: 8
             color: Theme.input
-            border.color: combo.hovered || combo.visualFocus ? Theme.accent : Theme.cardBorder
+            border.color: combo.hovered || combo.visualFocus ? Theme.txtDim : Theme.borderControl
             border.width: 1
             Behavior on border.color { ColorAnimation { duration: 150 } }
         }
@@ -172,10 +172,10 @@ Item {
             width: combo.width
             contentItem: Label {
                 text: modelData
-                color: combo.highlightedIndex === index ? Theme.accent : Theme.txt
+                color: combo.highlightedIndex === index ? Theme.txt : Theme.txt
                 font.pixelSize: 12; leftPadding: 12; elide: Text.ElideRight
             }
-            background: Rectangle { color: hovered ? Theme.alpha(Theme.accent, 0.12) : "transparent" }
+            background: Rectangle { color: hovered ? Theme.cardHover : "transparent" }
         }
         popup: Popup {
             y: combo.height + 4
@@ -202,7 +202,7 @@ Item {
         implicitHeight: 34
         radius: 8
         color: Theme.input
-        border.color: inputField.activeFocus ? Theme.accent : Theme.cardBorder
+        border.color: inputField.activeFocus ? Theme.txtDim : Theme.borderControl
         border.width: 1
         Behavior on border.color { ColorAnimation { duration: 150 } }
         RowLayout {
@@ -358,6 +358,13 @@ Item {
                 active: editorBackend.statusFilter === "warnings"
                 onClicked: { page.commitPending(); editorBackend.setStatusFilter("warnings") }
             }
+            Chip {
+                visible: (editorBackend.stats.rejected || 0) > 0
+                tint: Theme.error
+                label: page.t("editor_status_rejected", "Rejected") + "  " + (editorBackend.stats.rejected || 0)
+                active: editorBackend.statusFilter === "rejected"
+                onClicked: { page.commitPending(); editorBackend.setStatusFilter("rejected") }
+            }
             Item { Layout.fillWidth: true }
         }
 
@@ -428,7 +435,7 @@ Item {
                     height: 50
                     radius: 6
                     readonly property bool current: editorBackend.selected.id === modelData.id
-                    color: current ? Theme.alpha(Theme.accent, 0.10) : (rowMouse.containsMouse ? Theme.cardHover : "transparent")
+                    color: current ? Theme.cardHover : (rowMouse.containsMouse ? Theme.cardHover : "transparent")
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 10; anchors.rightMargin: 10
@@ -549,6 +556,12 @@ Item {
                 }
                 Label {
                     Layout.fillWidth: true
+                    visible: !!editorBackend.selected.rejectedText
+                    text: "⚠ " + page.t("editor_rejected_note", "The last run rejected the engine's translation of this line and kept the original:") + " " + editorBackend.selected.rejectedText
+                    color: Theme.warn; font.pixelSize: 12; wrapMode: Text.WordWrap
+                }
+                Label {
+                    Layout.fillWidth: true
                     visible: !!editorBackend.selected.prevText
                     text: "↑ " + (editorBackend.selected.prevSpeaker ? editorBackend.selected.prevSpeaker + ": " : "") + (editorBackend.selected.prevText || "")
                     color: Theme.txtDim; font.pixelSize: 11; elide: Text.ElideRight; textFormat: Text.PlainText
@@ -589,7 +602,7 @@ Item {
                             textFormat: TextEdit.PlainText
                             topInset: 0; bottomInset: 0; padding: 10; topPadding: 10
                             color: Theme.txt
-                            background: Rectangle { radius: 8; color: Theme.input; border.color: transArea.activeFocus ? Theme.accent : Theme.cardBorder }
+                            background: Rectangle { radius: 8; color: Theme.input; border.color: transArea.activeFocus ? Theme.txtDim : Theme.borderControl }
                             onTextChanged: liveCheckTimer.restart()
                             Keys.onPressed: function(event) {
                                 if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & Qt.ControlModifier)) {

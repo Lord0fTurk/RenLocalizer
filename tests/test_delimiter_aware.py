@@ -9,7 +9,6 @@ Covers:
 - Edge cases: nested brackets, single segment, empty, Ren'Py tags inside segments
 - Structural corruption detection and rollback
 """
-import pytest
 from src.core.syntax_guard import (
     split_delimited_text,
     rejoin_delimited_text,

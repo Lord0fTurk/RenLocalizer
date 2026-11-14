@@ -14,7 +14,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 
 
 # ============================================================================
@@ -343,7 +342,7 @@ class TestExporterEnhanced:
         project_dir, tl_dir = self._prepare_tl_dir(tmp_path)
         (tl_dir / "strings.json").write_text("{}", encoding="utf-8")
 
-        result = export_strings_to_rpy(str(project_dir), "turkish")
+        export_strings_to_rpy(str(project_dir), "turkish")
         # With no translations, either returns True with empty file or False
         exported_path = tl_dir / "zz_rl_exported_turkish.rpy"
         if exported_path.exists():

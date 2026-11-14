@@ -59,6 +59,7 @@ def test_gui_accepts_the_app(tmp_path):
     stub = SimpleNamespace(
         _project_path="", _tl_mode=False, _tl_source_path="",
         refreshProjectInfo=lambda: refreshed.append(True),
+        _refresh_resume_info=lambda: None,
         config=SimpleNamespace(
             app_settings=SimpleNamespace(last_input_directory=""),
             save_config=lambda: None,

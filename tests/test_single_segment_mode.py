@@ -14,7 +14,6 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import pytest
 
 from src.core.ai_translator import (
     LocalLLMTranslator,

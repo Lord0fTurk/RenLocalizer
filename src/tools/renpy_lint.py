@@ -23,7 +23,7 @@ import subprocess
 import logging
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Set, Dict
+from typing import List, Optional, Dict
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -245,7 +245,7 @@ class RenpyTranslationLint:
             m = _RE_TRANSLATE_BLOCK.match(line)
             if m:
                 report.translate_blocks += 1
-                lang, tid = m.group(1), m.group(2)
+                _lang, tid = m.group(1), m.group(2)
 
                 # Duplicate ID check
                 if tid in seen_ids:
@@ -318,7 +318,7 @@ class RenpyTranslationLint:
                                 line=i + 1,
                                 severity=LintSeverity.ERROR,
                                 code="E030",
-                                message=f'old "..." not followed by new "..."',
+                                message='old "..." not followed by new "..."',
                                 suggestion="Every old line must be followed by a new line",
                                 snippet=lines[i].rstrip()[:80],
                             )

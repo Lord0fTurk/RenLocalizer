@@ -216,3 +216,43 @@ def test_sync_strings_json_and_cache(tmp_path):
     assert data["google"]["auto"]["de"] == {"Start": "Starten"}
     assert data["openai"]["en"]["tr"] == {"Start": "Başla"}
     assert sync_translation_cache(str(tmp_path / "missing.json"), ["tr"], {"Start": "x"}) == 0
+
+
+# ── Rejected filter (lines the guard refused in the last run) ──────────
+
+def _write_guard_report(game, samples):
+    diag = os.path.join(game, "tl", ".diagnostics", "turkish")
+    os.makedirs(diag, exist_ok=True)
+    with open(os.path.join(diag, "translation_blocked_or_fallback.json"), "w", encoding="utf-8") as fh:
+        json.dump({"samples": samples}, fh)
+
+
+def test_rejected_filter_lists_lines_the_guard_refused(game):
+    _write_guard_report(game, [
+        {"category": "blocked_as_corrupted", "detail": "placeholder_remnant",
+         "original_preview": "I {i}really{/i} like it."},
+        {"category": "unchanged_by_engine", "original_preview": "Start"},   # not a rejection
+    ])
+    store = EditorStore()
+    store.load(load_language(game, "turkish").rows)
+    rows, total = store.query(status="rejected")
+    assert total == 1 and rows[0]["original"] == "I {i}really{/i} like it."
+    assert rows[0]["rejected"] == "placeholder_remnant"
+    assert store.stats()["rejected"] == 1
+
+
+def test_rejected_clears_once_the_line_is_translated(game):
+    _write_guard_report(game, [{"category": "blocked_as_corrupted", "detail": "placeholder_remnant",
+                                "original_preview": "I {i}really{/i} like it."}])
+    store = EditorStore()
+    store.load(load_language(game, "turkish").rows)
+    entry_id = store.query(status="rejected")[0][0]["id"]
+    store.update(entry_id, "Bunu {i}gerçekten{/i} seviyorum.")
+    assert store.stats()["rejected"] == 0
+    assert store.query(status="rejected")[1] == 0
+
+
+def test_no_report_means_no_rejected_lines(game):
+    store = EditorStore()
+    store.load(load_language(game, "turkish").rows)
+    assert store.stats()["rejected"] == 0

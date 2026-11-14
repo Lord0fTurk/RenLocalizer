@@ -11,7 +11,7 @@ import logging
 import os
 import re
 from collections import Counter
-from typing import Dict, List, Set, Tuple
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 

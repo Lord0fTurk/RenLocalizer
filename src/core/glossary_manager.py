@@ -10,7 +10,7 @@ ve çeviri sonrası terimleri uygulama (apply_glossary) işlemlerini yönetir.
 
 import re
 import uuid
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Tuple, Optional
 
 
 COMMON_ENGLISH_STOPWORDS: frozenset = frozenset({
@@ -138,7 +138,7 @@ class GlossaryManager:
 
             def replace_func(
                 match,
-                _counter=[counter],
+                _counter=[counter],  # noqa: B006 - shared on purpose: binds this iteration's counter
                 _xml=xml_mode,
                 _dst=dst,
                 _ns=token_namespace,

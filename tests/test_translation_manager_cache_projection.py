@@ -109,7 +109,7 @@ def test_translate_batch_routes_to_google_translator_without_name_error() -> Non
 
 def test_translate_batch_routes_to_deepl_and_libre_without_name_error() -> None:
     from unittest.mock import AsyncMock
-    from src.core.translator import DeepLTranslator, LibreTranslateTranslator
+    from src.core.translator import DeepLTranslator
 
     manager = TranslationManager()
     dt = DeepLTranslator(api_key="mock_key")

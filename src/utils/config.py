@@ -13,6 +13,8 @@ import sys
 import threading
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+from src.utils.engine_registry import ENGINES as _ENGINE_SPECS
 from dataclasses import dataclass, asdict, field, fields
 from enum import Enum
 from src.utils.constants import (
@@ -21,7 +23,6 @@ from src.utils.constants import (
     AI_DEFAULT_MAX_TOKENS,
     AI_MAX_RETRIES,
     MAX_CHARS_PER_REQUEST,
-    WINDOW_DEFAULT_WIDTH,
 )
 
 
@@ -68,12 +69,9 @@ TURKIC_LANGUAGE_CODES = {
 MAX_GENERAL_BATCH_SIZE = 10000
 MAX_RECENT_PROJECTS = 8
 MAX_AI_BATCH_SIZE = 10000
+# Hard per-step ceilings by engine; the numbers live in engine_registry.
 ENGINE_BATCH_SIZE_CAPS: dict[str, int] = {
-    "google": 1000,
-    "bing": 100,  # edge.microsoft.com: ≤100 items / ~50k chars per request
-    # NvidiaTranslator splits a step into adaptive sub-batches itself; the step only
-    # has to be big enough to keep its few parallel requests fed.
-    "nvidia": 200,
+    spec.id: spec.batch_cap for spec in _ENGINE_SPECS if spec.batch_cap is not None
 }
 
 EXTRACTION_MODE_THRESHOLDS: dict[str, float] = {
@@ -426,19 +424,9 @@ class TranslationSettings:
         self.ai_request_delay = _safe_float(self.ai_request_delay, 1.5, 0.0, 60.0)
 
         # --- Enum / allowlist checks ---
-        _valid_engines = (
-            "google",
-            "deepl",
-            "openai",
-            "gemini",
-            "local_llm",
-            "libretranslate",
-            "bing",
-            "nvidia",
-            "deepseek",
-            "custom",
-            "pseudo",
-        )
+        from src.utils.engine_registry import engine_ids
+
+        _valid_engines = engine_ids()
         if self.selected_engine not in _valid_engines:
             self.selected_engine = "google"
         if self.output_mode not in ("strings", "native"):
@@ -540,7 +528,7 @@ class AppSettings:
     renpy_sdk_path: str = ""
     # Desktop notifications for translation completion and error events
     enable_desktop_notifications: bool = True
-    # UI Theme mode ('obsidian', 'daylight', 'cyber_neon') and accent preset ('cyan', 'emerald', 'indigo', 'amber')
+    # UI theme ('obsidian' = dark, 'daylight' = light) and accent preset ('cyan', 'emerald', 'indigo', 'amber')
     theme_mode: str = "obsidian"
     accent_preset: str = "cyan_teal"
     # Games picked before, newest first (dashboard's recent list)
@@ -553,7 +541,7 @@ class AppSettings:
         """Validate enum/allowlist fields."""
         if self.output_format not in ("old_new", "simple"):
             self.output_format = "old_new"
-        if self.theme_mode not in ("obsidian", "daylight", "cyber_neon"):
+        if self.theme_mode not in ("obsidian", "daylight"):  # a stored "cyber_neon" (2.8.21) becomes dark
             self.theme_mode = "obsidian"
         if self.accent_preset not in ("cyan", "cyan_teal", "emerald", "indigo", "amber"):
             self.accent_preset = "cyan_teal"
@@ -609,6 +597,16 @@ class ConfigManager:
 
         self.config_file = self.data_dir / config_file
         self._lock = threading.Lock()  # Thread-safety for configuration
+
+        # API keys and proxy passwords live in the OS credential store, not in
+        # config.json (see src/utils/secret_store.py). A portable install keeps
+        # them in its own folder so the folder still moves between machines.
+        from src.utils.path_manager import get_app_dir
+        from src.utils.secret_store import SecretStore
+
+        self.secret_store = SecretStore(enabled=self.data_dir != get_app_dir())
+        self._vault_known: Dict[str, str] = {}  # name -> value last seen in the store
+        self._vault_warned = False
 
         # Get the correct locales directory for both dev and executable
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -667,6 +665,7 @@ class ConfigManager:
                     "app_settings": asdict(self.app_settings),
                     "proxy_settings": asdict(self.proxy_settings),
                 }
+                self._move_secrets_to_vault(config_data)
 
                 # Check for write permissions proactively
                 dir_name = self.config_file.parent.absolute()
@@ -710,6 +709,92 @@ class ConfigManager:
                     return True
                 except Exception:
                     return False
+
+    # ── Secrets ────────────────────────────────────────────────────────────
+
+    # (section attribute, field name). Lists are stored newline-joined.
+    SECRET_FIELDS = (
+        ("api_keys", "deepl_api_key"),
+        ("api_keys", "openai_api_key"),
+        ("api_keys", "gemini_api_key"),
+        ("api_keys", "nvidia_api_key"),
+        ("translation_settings", "libretranslate_api_key"),
+        ("translation_settings", "custom_endpoint_api_key"),
+        ("proxy_settings", "proxy_url"),
+        ("proxy_settings", "manual_proxies"),
+    )
+
+    @staticmethod
+    def _secret_to_text(value) -> str:
+        if isinstance(value, (list, tuple)):
+            return chr(10).join(str(item) for item in value if str(item).strip())
+        return str(value or "")
+
+    @staticmethod
+    def _is_secret_worth_storing(attr: str, text: str) -> bool:
+        # A proxy address without credentials is not a secret; keeping it in
+        # config.json keeps the file readable when someone asks for help.
+        if attr in ("proxy_url", "manual_proxies"):
+            return "@" in text
+        return bool(text)
+
+    def _move_secrets_to_vault(self, config_data: dict) -> None:
+        """Blank the secrets in ``config_data`` once the store holds them."""
+        store = self.secret_store
+        if not store.available:
+            return
+        for section, attr in self.SECRET_FIELDS:
+            name = f"{section}.{attr}"
+            value = getattr(getattr(self, section), attr, "")
+            text = self._secret_to_text(value)
+            if not self._is_secret_worth_storing(attr, text):
+                # Unknown counts as "may be there": a stale entry would come
+                # back the next time this setting is empty.
+                if self._vault_known.get(name, None) != "":
+                    store.delete(name)
+                self._vault_known[name] = ""
+                continue
+            if self._vault_known.get(name) == text or store.set(name, text):
+                self._vault_known[name] = text
+                config_data[section][attr] = [] if isinstance(value, (list, tuple)) else ""
+            elif not self._vault_warned:
+                # Stays in config.json: never lose a key because the store failed.
+                self._vault_warned = True
+                self.logger.warning(
+                    "The system credential store did not accept '%s'; it stays in config.json.", name
+                )
+
+    def _load_secrets_from_vault(self) -> bool:
+        """Fill blank secrets from the store; True when config.json still held some."""
+        store = self.secret_store
+        if not store.available:
+            self.logger.info("Credential store not in use: %s", store.reason or "unknown")
+            return False
+        found_plain = False
+        for section, attr in self.SECRET_FIELDS:
+            name = f"{section}.{attr}"
+            holder = getattr(self, section)
+            value = getattr(holder, attr, "")
+            text = self._secret_to_text(value)
+            if self._is_secret_worth_storing(attr, text):
+                found_plain = True  # written to the store by the save that follows
+                continue
+            if text:
+                continue  # a proxy without credentials: stays in config.json
+            stored = store.get(name) or ""
+            self._vault_known[name] = stored
+            if stored:
+                if isinstance(value, (list, tuple)):
+                    setattr(holder, attr, [line for line in stored.splitlines() if line.strip()])
+                else:
+                    setattr(holder, attr, stored)
+        return found_plain
+
+    def forget_secrets(self) -> None:
+        """Remove every secret from the store (factory reset)."""
+        for section, attr in self.SECRET_FIELDS:
+            self.secret_store.delete(f"{section}.{attr}")
+        self._vault_known.clear()
 
     def _filter_config_data(self, dataclass_type, data):
         """Filter dictionary keys to match dataclass fields to avoid __init__ errors."""
@@ -927,6 +1012,10 @@ class ConfigManager:
 
                 config_loaded = True
                 self.logger.info("Configuration loaded successfully")
+                if self._load_secrets_from_vault():
+                    # Keys that were still in config.json are in the store now;
+                    # rewrite the file so the plain-text copies are gone.
+                    self.save_config()
             else:
                 self.logger.info(
                     "Config file not found. Creating default configuration."
@@ -1565,6 +1654,7 @@ class ConfigManager:
 
     def reset_to_defaults(self) -> None:
         """Reset configuration to defaults."""
+        self.forget_secrets()
         self.translation_settings = TranslationSettings()
         self.api_keys = ApiKeys()
         self.app_settings = AppSettings()

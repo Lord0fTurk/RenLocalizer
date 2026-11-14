@@ -8,15 +8,15 @@ API anahtarlarını ve hassas verileri loglara yazılmadan önce maskeler.
 import logging
 import re
 import os
-import sys
-import platform
-from typing import Optional
 
 # Maskelenecek desenler
 MASKS = [
     (re.compile(r'(sk-[a-zA-Z0-9\-_]{20,})'), r'sk-***MASKED***'),  # OpenAI / Generic
     (re.compile(r'(AIza[0-9A-Za-z\-_]{30,})'), r'AIza***MASKED***'),  # Google API
     (re.compile(r'(ghp_[a-zA-Z0-9]{30,})'), r'ghp_***MASKED***'),  # Github Token
+    (re.compile(r'(nvapi-[a-zA-Z0-9\-_]{20,})'), r'nvapi-***MASKED***'),  # NVIDIA API Catalog
+    # user:password@ in a URL (proxy addresses); keeps scheme, user and host readable
+    (re.compile(r'(?<=://)([^\s/:@]+):[^\s/@]+@'), r'\g<1>:***@'),
 ]
 
 def get_log_path(filename: str) -> str:
@@ -42,27 +42,18 @@ class SensitiveDataFilter(logging.Filter):
     """Log kayıtlarındaki hassas verileri maskeler."""
     
     def filter(self, record):
-        if not isinstance(record.msg, str):
-            return True
-            
-        msg = record.msg
-        # Mesajin kendisindeki hassas verileri maskele
+        # Format first, then mask: a secret can sit inside any argument (an
+        # exception, a URL object), not only in plain strings.
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True  # malformed format string: let logging report it
+        masked = message
         for pattern, replacement in MASKS:
-            if pattern.search(msg):
-                msg = pattern.sub(replacement, msg)
-        
-        # Argümanlardaki hassas verileri maskele (örn: log.info("Key: %s", key))
-        if record.args:
-            new_args = []
-            for arg in record.args:
-                if isinstance(arg, str):
-                    for pattern, replacement in MASKS:
-                        if pattern.search(arg):
-                            arg = pattern.sub(replacement, arg)
-                new_args.append(arg)
-            record.args = tuple(new_args)
-            
-        record.msg = msg
+            masked = pattern.sub(replacement, masked)
+        if masked != message:
+            record.msg = masked
+            record.args = None
         return True
 
 def setup_logger(name: str = "RenLocalizer", log_file: str = "renlocalizer.log", level=logging.DEBUG):

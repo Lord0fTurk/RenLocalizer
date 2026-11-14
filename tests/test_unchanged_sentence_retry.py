@@ -15,7 +15,6 @@ import pytest
 from src.core.pipeline.translating import (
     is_sentence_shaped_natural_language,
     should_retry_unchanged,
-    should_retry_unchanged_core_ui,
 )
 
 
@@ -148,7 +147,6 @@ class TestFallbackCooldownGuard:
 
     def _run(self, cooldown_until):
         import asyncio
-        import time
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, MagicMock
         from src.core.pipeline.translating import retry_unchanged_candidate

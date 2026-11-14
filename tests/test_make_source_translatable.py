@@ -4,10 +4,6 @@ Tests for _make_source_translatable() pattern improvements (v2.7.4).
 Verifies that popup/screen text gets _() wrapping correctly.
 """
 import re
-import os
-import sys
-import tempfile
-import shutil
 import unittest
 
 # ─── text pattern (v2.7.4: inclusive, no following-keyword requirement) ───

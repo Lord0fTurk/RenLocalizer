@@ -38,22 +38,10 @@ Dialog {
 
     background: Rectangle {
         color: Theme.card
-        radius: 18
+        radius: 10
         border.color: Theme.alpha(Theme.accent, 0.45)
         border.width: 1.5
         clip: true
-
-        Rectangle {
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: 3
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: Theme.accent }
-                GradientStop { position: 1.0; color: Theme.accent2 }
-            }
-        }
     }
 
     contentItem: ColumnLayout {
@@ -68,14 +56,14 @@ Dialog {
 
             Rectangle {
                 width: 40; height: 40; radius: 20
-                color: Theme.alpha(Theme.accent, 0.15)
-                border.color: Theme.accent; border.width: 1.5
+                color: "transparent"
+                border.color: Theme.borderControl; border.width: 1
 
                 Icon {
                     anchors.centerIn: parent
                     glyph: Icons.bookPlus
                     size: 20
-                    color: Theme.accent
+                    color: Theme.txt2
                 }
             }
 
@@ -150,7 +138,7 @@ Dialog {
                     background: Rectangle {
                         radius: 8
                         color: Theme.inputDeep
-                        border.color: addGlossarySource.activeFocus ? Theme.accent : Theme.cardBorder
+                        border.color: addGlossarySource.activeFocus ? Theme.txtDim : Theme.borderControl
                         border.width: addGlossarySource.activeFocus ? 1.5 : 1
                         Behavior on border.color { ColorAnimation { duration: 150 } }
                     }
@@ -173,7 +161,7 @@ Dialog {
                     background: Rectangle {
                         radius: 8
                         color: Theme.inputDeep
-                        border.color: addGlossaryTarget.activeFocus ? Theme.accent : Theme.cardBorder
+                        border.color: addGlossaryTarget.activeFocus ? Theme.txtDim : Theme.borderControl
                         border.width: addGlossaryTarget.activeFocus ? 1.5 : 1
                         Behavior on border.color { ColorAnimation { duration: 150 } }
                     }
@@ -219,7 +207,7 @@ Dialog {
                 Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
                 onClicked: {
                     if (addGlossarySource.text.trim().length > 0) {
-                        appBackend.addGlossaryItem(addGlossarySource.text.trim(), addGlossaryTarget.text.trim())
+                        appBackend.glossary.addGlossaryItem(addGlossarySource.text.trim(), addGlossaryTarget.text.trim())
                         addGlossarySource.text = ""
                         addGlossaryTarget.text = ""
                         addGlossaryDialog.close()
@@ -232,7 +220,7 @@ Dialog {
                     gradient: Gradient {
                         orientation: Gradient.Horizontal
                         GradientStop { position: 0.0; color: addGlossarySubmitBtn.hovered ? Theme.accentHover : Theme.accent }
-                        GradientStop { position: 1.0; color: addGlossarySubmitBtn.hovered ? Theme.accent : Theme.accent2 }
+                        GradientStop { position: 1.0; color: addGlossarySubmitBtn.hovered ? Theme.accentHover : Theme.accent }
                     }
                     Behavior on color { ColorAnimation { duration: 140 } }
                 }

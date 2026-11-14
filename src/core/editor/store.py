@@ -16,12 +16,12 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from src.core.editor.checks import _TOKEN_RE, find_problem, translation_status
 
-STATUS_FILTERS = ("all", "untranslated", "translated", "modified", "warnings")
+STATUS_FILTERS = ("all", "untranslated", "translated", "modified", "warnings", "rejected")
 KIND_FILTERS = ("all", "dialogue", "string")
 
 _COLUMNS = (
     "id, file_path, file_rel, line, kind, block_id, speaker, speaker_name, source_ref, "
-    "original, translated, saved, status, problem, modified, seq"
+    "original, translated, saved, status, problem, rejected, modified, seq"
 )
 
 
@@ -58,6 +58,7 @@ class EditorStore:
                 saved TEXT NOT NULL,
                 status TEXT NOT NULL,
                 problem TEXT DEFAULT '',
+                rejected TEXT DEFAULT '',
                 modified INTEGER DEFAULT 0,
                 seq INTEGER NOT NULL,
                 search TEXT NOT NULL
@@ -92,8 +93,8 @@ class EditorStore:
                 records.append(self._record(seq, r, text, saved))
             self.conn.executemany(
                 "INSERT INTO entries (file_path, file_rel, line, kind, block_id, speaker, speaker_name, "
-                "source_ref, original, translated, saved, status, problem, modified, seq, search) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "source_ref, original, translated, saved, status, problem, modified, seq, search, rejected) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 records,
             )
             self.conn.commit()
@@ -109,6 +110,7 @@ class EditorStore:
             r.get("source_ref") or "", original, text, saved,
             translation_status(original, text), find_problem(original, text) or "",
             1 if text != saved else 0, seq, _search_blob(original, text, speaker_name),
+            r.get("rejected") or "",
         )
 
     # ── Queries ─────────────────────────────────────────────────────────
@@ -136,6 +138,9 @@ class EditorStore:
             clauses.append("modified = 1")
         elif status == "warnings":
             clauses.append("problem != ''")
+        elif status == "rejected":
+            # The pipeline refused the engine's output and kept the source; editing the line clears it.
+            clauses.append("rejected != '' AND status = 'source_copy'")
         return ("WHERE " + " AND ".join(clauses)) if clauses else "", params
 
     def query(self, search: str = "", file_rel: str = "all", kind: str = "all", status: str = "all",
@@ -177,7 +182,7 @@ class EditorStore:
         with self._lock:
             row = self.conn.execute(
                 "SELECT COUNT(*), SUM(status = 'empty'), SUM(status = 'source_copy'), "
-                "SUM(modified = 1), SUM(problem != '') FROM entries"
+                "SUM(modified = 1), SUM(problem != ''), SUM(rejected != '' AND status = 'source_copy') FROM entries"
             ).fetchone()
         return {
             "total": row[0] or 0,
@@ -185,6 +190,7 @@ class EditorStore:
             "source_copy": row[2] or 0,
             "modified": row[3] or 0,
             "warnings": row[4] or 0,
+            "rejected": row[5] or 0,
         }
 
     # ── Editing ─────────────────────────────────────────────────────────

@@ -7,10 +7,9 @@ coverage warnings, and translation report writing.
 
 import os
 import re
-import json
 import time
 import logging
-from typing import List, Dict, Optional, Tuple, Any, Set, Callable
+from typing import List, Dict, Optional, Tuple, Any, Callable
 from pathlib import Path
 
 from .constants import (
@@ -381,7 +380,6 @@ def analyze_runtime_miss_log(log_path: str) -> Dict[str, Any]:
 def write_translation_reports(lang_dir: str, target_language: str, diagnostic_report,
                                 translation_guard_counts, translation_guard_events,
                                 translation_guard_sample_limit, log_emit, config) -> Optional[str]:
-    from src.utils.encoding import save_text_safely
 
     diag_dir = get_diagnostics_dir(lang_dir, target_language)
     diag_path = os.path.join(diag_dir, f'diagnostic_{target_language}.json')
@@ -404,8 +402,8 @@ def write_translation_reports(lang_dir: str, target_language: str, diagnostic_re
         try:
             import shutil
             shutil.rmtree(legacy_diag_dir)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).debug("Legacy diagnostics folder could not be removed: %s", exc)
 
     return diag_path
 
@@ -574,7 +572,6 @@ def create_language_init_file(game_dir: str, target_language: str, config, log_e
                 language_code = getattr(config.translation_settings, 'target_language', '') or ''
             except Exception:
                 language_code = ''
-        original_input = language_code
         reverse_lang_map = {v.lower(): k for k, v in lang_map_val.items()}
         if force and language_code:
             pass
@@ -965,7 +962,6 @@ def _write_skipped_corruption_report(
     if reason_summary:
         active_logger.info(f"strings.json: Corruption reasons -> {reason_summary}")
     try:
-        from src.utils.encoding import save_text_safely
         diag_dir = get_diagnostics_dir(lang_dir)
         report_path = os.path.join(diag_dir, 'strings_json_skipped_corruptions.json')
         payload = {
