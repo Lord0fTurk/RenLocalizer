@@ -71,7 +71,7 @@ run_portable_build() {
 ensure_python3() {
     if ! command -v python3 >/dev/null 2>&1; then
         print_error "Python 3 is not installed."
-        printf '%s\n' "Please install Python 3.10 or higher."
+        printf '%s\n' "Please install Python 3.11 or higher."
         printf '%s\n' "  Ubuntu/Debian: sudo apt install python3 python3-venv python3-pip"
         printf '%s\n' "  Fedora: sudo dnf install python3 python3-pip"
         printf '%s\n' "  macOS: brew install python3"
@@ -83,8 +83,8 @@ ensure_python3() {
     local python_major="${python_version%%.*}"
     local python_minor="${python_version##*.}"
 
-    if [[ "$python_major" -lt 3 || ( "$python_major" -eq 3 && "$python_minor" -lt 10 ) ]]; then
-        print_error "Python 3.10 or higher is required. Current version: Python ${python_version}"
+    if [[ "$python_major" -lt 3 || ( "$python_major" -eq 3 && "$python_minor" -lt 11 ) ]]; then
+        print_error "Python 3.11 or higher is required. Current version: Python ${python_version}"
         exit 1
     fi
 

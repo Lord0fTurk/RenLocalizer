@@ -710,8 +710,11 @@ class AsyncBaseAITranslator(BaseTranslator):
                     from openai import DefaultAsyncHttpxClient
                     kwargs["http_client"] = DefaultAsyncHttpxClient(trust_env=False)
                 except Exception:
-                    import httpx
-                    kwargs["http_client"] = httpx.AsyncClient(trust_env=False)
+                    try:
+                        import httpx2 as _httpx
+                    except ImportError:
+                        import httpx as _httpx
+                    kwargs["http_client"] = _httpx.AsyncClient(trust_env=False)
             elif (proxy_url := self._proxy_url()):
                 # The user's proxy (Settings > Proxy). The client is built once,
                 # so one proxy serves this translator's whole run.
@@ -719,8 +722,11 @@ class AsyncBaseAITranslator(BaseTranslator):
                     from openai import DefaultAsyncHttpxClient
                     kwargs["http_client"] = DefaultAsyncHttpxClient(proxy=proxy_url)
                 except Exception:
-                    import httpx
-                    kwargs["http_client"] = httpx.AsyncClient(proxy=proxy_url)
+                    try:
+                        import httpx2 as _httpx
+                    except ImportError:
+                        import httpx as _httpx
+                    kwargs["http_client"] = _httpx.AsyncClient(proxy=proxy_url)
             self._client = AsyncOpenAI(**kwargs)
         return self._client
 

@@ -12,7 +12,7 @@ render_with_liquid: false
 > - **Developer Mode (`app_settings.developer_mode`, default off):** New toggle under **Settings → General**. When enabled, reveals the **Developer** page in the sidebar and quick access from the completion dialog; when disabled, keeps raw `diagnostic_<lang>.json` path warnings out of the standard user log.
 > - **Developer Inspection Page:** Styled after the Editor page; lists guard-blocked lines, coverage warnings, and affected files from `tl/.diagnostics/<lang>/` with live search, category filters (`All`, `Blocked`, `Coverage Warnings`, `Affected Files`), and one-click **"Open in Editor"** (jumps directly to the matching entry inside Translation Editor), **"Open in External Editor"**, and **"Open Report (JSON)"** buttons.
 > - **Diagnostic Notice & Clearer Warnings:** Added `_notice` to `diagnostic_<lang>.json` clarifying it is intended for developers, and rewrote `coverage_warning_interpolated_values` across all 9 locales into plain user-focused language without asking users to edit game scripts.
-> - **Dependencies & Packaging:** Upgraded `openai` (`3.55.0`), `google-genai` (`3.5.0`), and `rpycdec` (`0.2.0`), raised `requirements.txt` floors (`openai>=2.0.0`, `google-genai>=3.0.0`, `rpycdec>=0.2.0`), and added `orjson` to `RenLocalizer.spec` `hidden_imports`.
+> - **Dependencies & Packaging:** Upgraded `openai` (`3.55.0`), `google-genai` (`3.5.0`), and `rpycdec` (`0.2.0`), raised minimum Python requirement to **3.11+** (dropped 3.10 from CI and requirements), raised `requirements.txt` floors (`openai>=2.0.0`, `google-genai>=3.0.0`, `rpycdec>=0.2.0`), and added `orjson` to `RenLocalizer.spec` `hidden_imports`.
 
 ##### 🔧 Reliability, Routing & Editor Hardening
 

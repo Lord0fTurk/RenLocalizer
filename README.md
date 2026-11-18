@@ -239,7 +239,7 @@ Run `python run_cli.py translate --help` for every option.
 <summary><b>Run from source</b></summary>
 <br>
 
-Requires Python 3.10 or newer.
+Requires Python 3.11 or newer.
 
 ```bash
 git clone https://github.com/Lord0fTurk/RenLocalizer.git

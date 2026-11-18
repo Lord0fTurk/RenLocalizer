@@ -204,7 +204,10 @@ class TestDeepSeekTranslator:
             sent.append(kwargs)
             if fail_first and len(sent) == 1:
                 from openai import APIStatusError
-                import httpx
+                try:
+                    import httpx2 as httpx
+                except ImportError:
+                    import httpx
                 req = httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions")
                 raise APIStatusError("bad", response=httpx.Response(400, request=req), body=None)
             msg = SimpleNamespace(content="ok")
