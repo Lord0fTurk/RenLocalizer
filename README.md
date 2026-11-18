@@ -175,7 +175,7 @@ To remove a translation, delete `game/tl/<language>/` and the `zzz_` files RenLo
 <summary><b>Windows warns me, or my antivirus flags the app.</b></summary>
 <br>
 
-The app is not code-signed, so Windows SmartScreen may show a warning: click **More info › Run anyway**. Some antivirus programs flag apps packaged with PyInstaller by mistake. The source code is open, and you can [run it from source](#for-power-users) instead.
+The app is not code-signed, so Windows SmartScreen may show a warning: click **More info › Run anyway** (or **Yine de çalıştır** on Turkish Windows). Some antivirus programs flag apps packaged with PyInstaller by mistake. All release builds are compiled publicly via **GitHub Actions** directly from this repository — if you want to be sure, you can inspect the open-source code yourself (or review it with any AI tool) and [run it from source](#for-power-users) instead.
 </details>
 
 <details>
