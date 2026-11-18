@@ -512,3 +512,24 @@ class TestPythonStatementBoundaries:
     def test_actual_python_code_skipped(self, fmt, text):
         assert fmt._should_skip_translation(text) is True, f"Should skip: {text}"
 
+
+
+# ==================================================================
+# Short lines in non-Latin scripts are text, not binary junk (GitHub #26)
+# ==================================================================
+class TestShortNonLatinLines:
+    @pytest.mark.parametrize("text", [
+        "마빡에 써있다 임마 ㅎㅎ.",          # Hangul + compatibility jamo
+        "ㅋㅋ 진짜?",
+        "ㅠㅠ 미안해",
+        "Γειά σου φίλε",                    # Greek
+        "สวัสดีครับ",                         # Thai
+        "नमस्ते दोस्त",                      # Devanagari
+        "Բարեւ ձեզ",                         # Armenian
+    ])
+    def test_short_lines_are_not_skipped(self, fmt, text):
+        assert fmt._should_skip_translation(text) is False, f"Should translate: {text}"
+
+    @pytest.mark.parametrize("text", ["\ufffd\ufffd\ufffd", "\ue001\ue002ab", "z\x8fX\x90"])
+    def test_binary_junk_is_still_skipped(self, fmt, text):
+        assert fmt._should_skip_translation(text) is True

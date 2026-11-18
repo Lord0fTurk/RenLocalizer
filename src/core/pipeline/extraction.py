@@ -406,6 +406,83 @@ def audit_dynamic_ui_runtime(game_dir: str, config, runtime_hook_enabled: bool =
     }
 
 
+
+# define/default text that other text shows with [name]. Ren'Py translates the
+# text around [name] ("I feel [mood]"), never the value that is put in, unless
+# the field says [name!t]. Checked against Ren'Py 8.5.3 (substitutions.py) and a
+# test game: neither output mode translated such a value.
+_ASSIGN_TEXT_RE = re.compile(
+    r"""^\s*(?:define|default)\s+(?:-?\d+\s+)?(?P<name>[A-Za-z_]\w*)\s*=\s*(?:_\(\s*)?"""
+    r"""(?P<lit>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')"""
+)
+_STRING_LITERAL_RE = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'""")
+_INTERPOLATION_RE = re.compile(
+    r"\[(?P<name>[A-Za-z_]\w*)(?P<rest>(?:\.\w+|\[[^\[\]]*\])*)(?P<conv>![A-Za-z]+)?(?::[^\]]*)?\]"
+)
+
+
+_CHARACTER_ARG_RE = re.compile(r"Character\(\s*(?:_\(\s*)?(?P<name>[A-Za-z_]\w*)\s*[,)]")
+_NAME_TOKENS = {'mc', 'hero', 'heroine', 'player', 'who', 'char', 'character', 'protagonist', 'pov'}
+
+
+def _looks_like_a_name_variable(variable: str) -> bool:
+    """Names of people and places must stay as written; `[name!t]` would send
+    them to the translator, so such variables are never suggested."""
+    lowered = variable.lower()
+    return 'name' in lowered or 'nick' in lowered or bool(_NAME_TOKENS & set(lowered.split('_')))
+
+
+def audit_interpolated_text_values(game_dir: str, config) -> Dict[str, Any] | None:
+    from src.core.marked_strings import worth_translating
+    from src.utils.encoding import read_text_safely
+
+    defined: Dict[str, Dict[str, Any]] = {}
+    uses: Dict[str, int] = {}
+    character_args: Set[str] = set()
+    for file_path in _iter_audit_files(game_dir, '.rpy'):
+        content = read_text_safely(file_path)
+        if not content:
+            continue
+        rel = _relative_audit_path(game_dir, file_path)
+        for idx, raw_line in enumerate(content.splitlines(), start=1):
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            for cm in _CHARACTER_ARG_RE.finditer(raw_line):
+                character_args.add(cm.group('name'))
+            m = _ASSIGN_TEXT_RE.match(raw_line)
+            defined_name = m.group('name') if m else None
+            if m:
+                value = m.group('lit')[1:-1]
+                if worth_translating(value) and defined_name not in defined:
+                    defined[defined_name] = {
+                        'variable': defined_name, 'value': value[:80],
+                        'file_path': rel, 'line_number': idx,
+                    }
+            for lit in _STRING_LITERAL_RE.findall(raw_line):
+                for um in _INTERPOLATION_RE.finditer(lit):
+                    if (
+                        um.group('name') == defined_name
+                        or um.group('rest')
+                        or 't' in (um.group('conv') or '').lower()
+                    ):
+                        continue
+                    uses[um.group('name')] = uses.get(um.group('name'), 0) + 1
+
+    risky = [
+        dict(info, uses=uses[name]) for name, info in defined.items()
+        if uses.get(name) and name not in character_args and not _looks_like_a_name_variable(name)
+    ]
+    if not risky:
+        return None
+    risky.sort(key=lambda r: (-r['uses'], r['variable']))
+    return {
+        'code': 'interpolated_define_values',
+        'count': len(risky),
+        'samples': risky[:20],
+    }
+
+
 def collect_coverage_warnings(game_dir: str, config, diagnostic_report, runtime_hook_enabled: bool = False, include_rpyc: bool = False) -> List[Dict[str, Any]]:
     from .validating import is_runtime_hook_enabled as _hook_enabled
 
@@ -416,6 +493,7 @@ def collect_coverage_warnings(game_dir: str, config, diagnostic_report, runtime_
         audit_image_only_ui,
         audit_compiled_only_scripts,
         audit_dynamic_ui_runtime,
+        audit_interpolated_text_values,
     ):
         try:
             if collector is audit_dynamic_ui_runtime:

@@ -405,6 +405,23 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
         }
+
+        // ═════════════════════════════════════════════════════════════
+        // SEKME 6: GELİŞTİRİCİ İNCELEMESİ (developerMode açıkken)
+        // ═════════════════════════════════════════════════════════════
+        DeveloperPage {
+            id: pageDeveloper
+            visible: navIndex === 6
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
+        }
+    }
+
+    Connections {
+        target: appBackend
+        function onDeveloperModeChanged() {
+            if (!appBackend.developerMode && navIndex === 6) navIndex = 0
         }
     }
 

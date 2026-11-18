@@ -86,6 +86,14 @@ ENGINES: Tuple[EngineSpec, ...] = (
         model_field="openai_model", api_quality_note=True,
     ),
     EngineSpec(
+        # Runs as the OpenAI engine with OpenRouter's endpoint fixed: only a key is needed.
+        id="openrouter", enum_value="openai", label="OpenRouter",
+        desc=("engine_desc_ai", "AI Engine"), icon="bot",
+        cli_label="OpenRouter", cli_icon="🛣️", cli_note="API key required — hundreds of models",
+        kind="llm", llm=True, key=("api_keys", "openai_api_key"), key_env="OPENROUTER_API_KEY",
+        model_field="openai_model", api_quality_note=True,
+    ),
+    EngineSpec(
         id="gemini", enum_value="gemini", label="Gemini",
         desc=("engine_desc_gemini", "Google AI"), icon="sparkles",
         cli_label="Google Gemini", cli_icon="✨", cli_note="API key required",

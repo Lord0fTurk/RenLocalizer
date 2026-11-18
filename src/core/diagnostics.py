@@ -241,6 +241,7 @@ class DiagnosticReport:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            '_notice': 'Developer diagnostic report — intended for developers and bug reports.',
             'project': self.project,
             'target_language': self.target_language,
             'totals': {

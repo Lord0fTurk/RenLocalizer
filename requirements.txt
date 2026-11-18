@@ -13,10 +13,10 @@ orjson>=3.10.0
 py3langid>=0.2.0
 
 # AI Translation Engines (OpenAI, DeepSeek, LocalLLM)
-openai>=1.14.0
+openai>=2.0.0
 
 # Google Gemini Translation
-google-genai>=1.0.0
+google-genai>=3.0.0
 
 # RPA Extraction
 unrpa>=2.3.0
@@ -25,7 +25,7 @@ unrpa>=2.3.0
 # unrpyc: pip install git+https://github.com/CensoredUsername/unrpyc.git (PyPI'da yok)
 # rpycdec: pip install rpycdec  (PyPI, C extension, derleme gerekebilir)
 # Kurulu degilse RPYC AST okuyucu yeterlidir.
-rpycdec>=0.1.12
+rpycdec>=0.2.0
 
 # Terminal UI (CLI mode)
 rich>=13.7.0
@@ -36,3 +36,7 @@ fonttools>=4.38.0
 
 # Glossary import/export (.xlsx); CSV and JSON need nothing extra
 openpyxl>=3.1.0
+# API keys and proxy passwords in the OS credential store (Windows Credential
+# Manager, Linux Secret Service). Optional at runtime: without it the keys stay
+# in config.json as before.
+keyring>=25.0

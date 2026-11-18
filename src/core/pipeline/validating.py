@@ -135,8 +135,13 @@ def needs_re_extraction(game_dir: str, tl_dir: str, config, log_emit, rpyc_enabl
     try:
         rpyc_enabled = rpyc_enabled or include_rpyc
         if rpyc_enabled:
-            diag_dir = os.path.join(tl_dir, 'diagnostics')
+            from .saving import get_diagnostics_dir
+            diag_dir = get_diagnostics_dir(tl_dir)
             sig_path = os.path.join(diag_dir, 'rpyc_extraction_signature.json')
+            if not os.path.exists(sig_path):
+                legacy_sig = os.path.join(tl_dir, 'diagnostics', 'rpyc_extraction_signature.json')
+                if os.path.exists(legacy_sig):
+                    sig_path = legacy_sig
             expected_sig = 'rpyc_reader_slot12_encoding_fallback_root_filter_v1'
             try:
                 if not os.path.exists(sig_path):

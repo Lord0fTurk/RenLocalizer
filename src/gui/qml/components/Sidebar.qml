@@ -28,8 +28,9 @@ Rectangle {
         { index: 5, glyph: Icons.squarePen, key: "nav_editor",     fallback: "Editor" },
         { index: 4, glyph: Icons.bookA,     key: "nav_glossary",   fallback: "Glossary" },
         { index: 3, glyph: Icons.wrench,    key: "nav_toolbox",    fallback: "Toolbox" },
-        { index: 2, glyph: Icons.terminal,  key: "nav_logs",       fallback: "Log Console" },
-        { index: 1, glyph: Icons.settings,  key: "nav_settings",   fallback: "Settings & AI" }
+        { index: 2, glyph: Icons.terminal,     key: "nav_logs",       fallback: "Log Console" },
+        { index: 1, glyph: Icons.settings,     key: "nav_settings",   fallback: "Settings & AI" },
+        { index: 6, glyph: Icons.stethoscope,  key: "nav_developer",  fallback: "Developer", devOnly: true }
     ]
 
     ColumnLayout {
@@ -70,6 +71,7 @@ Rectangle {
             Button {
                 id: navButton
                 readonly property bool current: navIndex === modelData.index
+                visible: !modelData.devOnly || appBackend.developerMode
                 objectName: "nav_" + modelData.index
                 Layout.fillWidth: true
                 implicitHeight: 34

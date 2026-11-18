@@ -15,11 +15,13 @@ All engines share a common base that handles:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import html
 import logging
 import random
 import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.core.translator import (
@@ -148,7 +150,7 @@ def _resolve_language_name(code: Optional[str]) -> str:
     return code  # Last resort: pass the raw code through
 
 
-def profile_prefers_single_segment(config_manager) -> bool:
+def profile_prefers_single_segment(config_manager, engine=None) -> bool:
     """True when the configured model profile is a pure translation model.
 
     Mirrors AsyncBaseAITranslator._prefers_single_segment() for callers that
@@ -157,8 +159,26 @@ def profile_prefers_single_segment(config_manager) -> bool:
     if not config_manager or not hasattr(config_manager, "translation_settings"):
         return False
     ts = config_manager.translation_settings
-    if str(getattr(ts, "ai_model_profile", "auto") or "").strip().lower() == "hy_mt2":
+    cfg_profile = str(getattr(ts, "ai_model_profile", "auto") or "").strip().lower()
+    if cfg_profile == "generic":
+        return False
+
+    selected = str(
+        (engine.value if hasattr(engine, "value") else engine)
+        or getattr(ts, "selected_engine", "local_llm")
+        or "local_llm"
+    ).strip().lower()
+    if selected == "gemini":
+        return False
+    if selected in ("openai", "deepseek", "openrouter"):
+        return detect_model_profile(getattr(ts, "openai_model", None)) == "hy_mt2"
+
+    if cfg_profile == "hy_mt2":
         return True
+    if getattr(ts, "local_llm_mode", "external") == "builtin":
+        gguf_path = (getattr(ts, "local_llm_gguf_path", "") or "").strip()
+        if gguf_path and detect_model_profile(Path(gguf_path).stem) == "hy_mt2":
+            return True
     model_name = getattr(ts, "local_llm_model", None) or getattr(ts, "openai_model", None)
     return detect_model_profile(model_name) == "hy_mt2"
 
@@ -184,13 +204,18 @@ def ai_lines_per_request(config_manager, engine=None) -> int:
     return batch_size
 
 
-def resolve_model_profile(config_manager, model_name: Optional[str]) -> Optional[str]:
+def resolve_model_profile(
+    config_manager,
+    model_name: Optional[str],
+    *,
+    allow_forced_profile: bool = True,
+) -> Optional[str]:
     """Resolve the effective model profile from config + autodetection.
 
     config.translation_settings.ai_model_profile:
       "auto"    -> detect from model_name
       "generic" -> force no profile
-      "hy_mt2"  -> force the Hy-MT2 profile
+      "hy_mt2"  -> force the Hy-MT2 profile (local LLM only when scoped)
     """
     cfg_profile = "auto"
     if config_manager and hasattr(config_manager, "translation_settings"):
@@ -201,7 +226,7 @@ def resolve_model_profile(config_manager, model_name: Optional[str]) -> Optional
     cfg_profile = str(cfg_profile).strip().lower()
     if cfg_profile == "generic":
         return None
-    if cfg_profile == "hy_mt2":
+    if cfg_profile == "hy_mt2" and allow_forced_profile:
         return "hy_mt2"
     return detect_model_profile(model_name)
 
@@ -569,6 +594,11 @@ def _jitter_sleep(base: float, attempt: int, cap: float = 60.0) -> float:
 # AsyncBaseAITranslator
 # ─────────────────────────────────────────────────────────────────────────────
 
+_CALL_OUTCOME: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
+    "renlocalizer_ai_call_outcome", default=None
+)
+
+
 class AsyncBaseAITranslator(BaseTranslator):
     """
     Shared base for all OpenAI-compatible AI translators.
@@ -601,6 +631,8 @@ class AsyncBaseAITranslator(BaseTranslator):
         "Do NOT add explanations or extra content outside the XML."
     )
 
+    _ALLOW_FORCED_MODEL_PROFILE: bool = False
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -611,6 +643,7 @@ class AsyncBaseAITranslator(BaseTranslator):
         timeout: Optional[float] = None,
         batch_size: Optional[int] = None,
         semaphore_count: Optional[int] = None,
+        profile_model_hint: Optional[str] = None,
     ) -> None:
         super().__init__(api_key=api_key, proxy_manager=proxy_manager, config_manager=config_manager)
         if not _OPENAI_AVAILABLE:
@@ -626,11 +659,16 @@ class AsyncBaseAITranslator(BaseTranslator):
         self._engine: TranslationEngine = TranslationEngine.OPENAI
         self._client: Optional[AsyncOpenAI] = None
         self._semaphore: Optional[asyncio.Semaphore] = None
+        self._last_call_content_filtered: bool = False
+        self._last_call_quota_exceeded: bool = False
+        self._last_call_error: Optional[str] = None
 
         # Resolve model-family profile (config override + autodetection).
         # None = generic behaviour; "hy_mt2" = Tencent Hy-MT optimized path.
         self._model_profile: Optional[str] = resolve_model_profile(
-            config_manager, self._model
+            config_manager,
+            profile_model_hint or self._model,
+            allow_forced_profile=self._ALLOW_FORCED_MODEL_PROFILE,
         )
         if self._model_profile == "hy_mt2":
             self.logger.info(
@@ -649,6 +687,12 @@ class AsyncBaseAITranslator(BaseTranslator):
                         "prompt — ai_custom_system_prompt is ignored. Set "
                         "ai_model_profile='generic' to use a custom prompt."
                     )
+
+    # Fields a provider needs on every chat request (None = nothing extra).
+    _provider_body_rejected: bool = False
+
+    def _provider_extra_body(self) -> Optional[Dict[str, Any]]:
+        return None
 
     def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
@@ -884,6 +928,23 @@ class AsyncBaseAITranslator(BaseTranslator):
             return getattr(self.config_manager.translation_settings, "ai_retry_count", AI_MAX_RETRIES)
         return AI_MAX_RETRIES
 
+    def _set_call_outcome(
+        self,
+        *,
+        content_filtered: bool = False,
+        quota_exceeded: bool = False,
+        error: Optional[str] = None,
+    ) -> None:
+        """Record the latest _call_api outcome both on self and in task-local context."""
+        self._last_call_content_filtered = content_filtered
+        self._last_call_quota_exceeded = quota_exceeded
+        self._last_call_error = error
+        outcome = _CALL_OUTCOME.get()
+        if outcome is not None:
+            outcome["content_filtered"] = content_filtered
+            outcome["quota_exceeded"] = quota_exceeded
+            outcome["error"] = error
+
     async def _call_api(
         self,
         system_prompt: Optional[str],
@@ -900,6 +961,7 @@ class AsyncBaseAITranslator(BaseTranslator):
         """
         client = self._get_client()
         retries = self._get_retry_count()
+        self._set_call_outcome()
 
         for attempt in range(retries + 1):
             try:
@@ -916,8 +978,13 @@ class AsyncBaseAITranslator(BaseTranslator):
                 }
                 if top_p is not None:
                     kwargs["top_p"] = top_p
+                body: Dict[str, Any] = {}
+                if not self._provider_body_rejected:
+                    body.update(self._provider_extra_body() or {})
                 if extra_body is not None:
-                    kwargs["extra_body"] = extra_body
+                    body.update(extra_body)
+                if body:
+                    kwargs["extra_body"] = body
                 if use_json_schema:
                     kwargs["response_format"] = {
                         "type": "json_schema",
@@ -935,9 +1002,14 @@ class AsyncBaseAITranslator(BaseTranslator):
                         f"[{self.__class__.__name__}] Content filter triggered. "
                         "Will return original text for affected segment(s)."
                     )
+                    self._set_call_outcome(content_filtered=True)
+                    return None
                 content = response.choices[0].message.content or None
                 if content:
                     self.logger.debug(f"[{self.__class__.__name__}] Raw Response (truncated): {content[:300]}")
+                    self._set_call_outcome()
+                else:
+                    self._set_call_outcome(error="Empty response from AI model")
                 return content
 
             except Exception as exc:
@@ -946,6 +1018,24 @@ class AsyncBaseAITranslator(BaseTranslator):
                     # (LM Studio / Ollama / llama.cpp variants):
                     # 1) extra_body fields (top_k, repetition_penalty) may be
                     #    rejected by servers that validate unknown keys.
+                    if extra_body is None and not self._provider_body_rejected and self._provider_extra_body():
+                        # The provider's own fields (e.g. DeepSeek "thinking") are
+                        # refused: remember it and retry without them.
+                        self._provider_body_rejected = True
+                        self.logger.warning(
+                            f"[{self.__class__.__name__}] Server rejected the provider request fields (400). "
+                            "Retrying without them."
+                        )
+                        retried = await self._call_api(
+                            system_prompt, user_content,
+                            use_json_schema=use_json_schema,
+                            top_p=top_p,
+                            extra_body=None,
+                        )
+                        if retried is None:
+                            # Failed without the fields too: they were not the cause.
+                            self._provider_body_rejected = False
+                        return retried
                     if extra_body is not None:
                         self.logger.warning(
                             f"[{self.__class__.__name__}] Server rejected extra_body fields (400). "
@@ -1010,8 +1100,11 @@ class AsyncBaseAITranslator(BaseTranslator):
                     elif isinstance(exc, (APITimeoutError, APIConnectionError)):
                         is_retryable = True
 
+                err_text = str(exc) or type(exc).__name__
+
                 if not is_retryable and not is_quota:
                     self.logger.error(f"[{self.__class__.__name__}] Non-retryable error: {exc}")
+                    self._set_call_outcome(quota_exceeded=False, error=err_text)
                     return None
 
                 if attempt >= retries:
@@ -1019,6 +1112,7 @@ class AsyncBaseAITranslator(BaseTranslator):
                         self.logger.warning(f"[{self.__class__.__name__}] Quota exceeded after {retries} retries.")
                     else:
                         self.logger.warning(f"[{self.__class__.__name__}] API error after {retries} retries: {exc}")
+                    self._set_call_outcome(quota_exceeded=is_quota, error=err_text)
                     return None
 
                 wait = retry_after if retry_after else _jitter_sleep(2.0, attempt)
@@ -1027,6 +1121,7 @@ class AsyncBaseAITranslator(BaseTranslator):
                 )
                 await asyncio.sleep(wait)
 
+        self._set_call_outcome(error="API call failed")
         return None
 
     async def translate_single(self, request: TranslationRequest) -> TranslationResult:
@@ -1104,31 +1199,51 @@ class AsyncBaseAITranslator(BaseTranslator):
                 )
             user_content = mapped_protected
 
-        async with self._get_semaphore():
-            response = await self._call_api(
-                system_prompt, user_content, **self._get_sampling_kwargs()
-            )
- 
+        real_orig = metadata.get("original_text") or source_text
+        outcome: Dict[str, Any] = {
+            "content_filtered": False,
+            "quota_exceeded": False,
+            "error": None,
+        }
+        token = _CALL_OUTCOME.set(outcome)
+        try:
+            async with self._get_semaphore():
+                response = await self._call_api(
+                    system_prompt, user_content, **self._get_sampling_kwargs()
+                )
+        finally:
+            _CALL_OUTCOME.reset(token)
+
         if response is None:
-            # Graceful recovery: return original
+            if outcome.get("content_filtered"):
+                skipped_meta = dict(metadata)
+                skipped_meta["skipped"] = True
+                skipped_meta["content_filtered"] = True
+                return TranslationResult(
+                    real_orig, real_orig, request.source_lang, request.target_lang,
+                    self._engine, True, confidence=0.0, metadata=skipped_meta,
+                )
             return TranslationResult(
-                source_text, source_text, request.source_lang, request.target_lang,
-                self._engine, True, confidence=0.0, metadata={"skipped": True},
+                real_orig, "", request.source_lang, request.target_lang,
+                self._engine, False, confidence=0.0,
+                error=outcome.get("error") or "AI translation request failed",
+                quota_exceeded=bool(outcome.get("quota_exceeded")),
+                metadata=metadata,
             )
- 
+
         if xml_mode:
             from src.core.syntax_guard import restore_renpy_syntax_xml
             translated = restore_renpy_syntax_xml(response.strip(), placeholders)
             missing = validate_translation_integrity(translated, placeholders)
             if missing:
-                translated = source_text
+                translated = real_orig
         else:
             unmapped_response = self._map_ascii_to_unicode_placeholders(response.strip(), ascii_map)
             translated = restore_renpy_syntax(unmapped_response, placeholders)
             missing = validate_translation_integrity(translated, placeholders)
             if missing:
                 # Attempt smart Levenshtein recovery first
-                recovered_lev = _recover_placeholders_levenshtein(source_text, translated, placeholders)
+                recovered_lev = _recover_placeholders_levenshtein(real_orig, translated, placeholders)
                 recovered_lev = restore_renpy_syntax(recovered_lev, placeholders)
                 still_missing = validate_translation_integrity(recovered_lev, placeholders)
                 if not still_missing:
@@ -1137,13 +1252,13 @@ class AsyncBaseAITranslator(BaseTranslator):
                     recovered = inject_missing_placeholders(translated, protected, placeholders, missing)
                     recovered = restore_renpy_syntax(recovered, placeholders)
                     still_missing = validate_translation_integrity(recovered, placeholders)
-                    translated = recovered if not still_missing else source_text
-        
+                    translated = recovered if not still_missing else real_orig
+
         # Clean any leftover orphaned/mangled placeholder residues at the very end
         translated = _clean_orphaned_placeholders(translated)
 
         return TranslationResult(
-            source_text, translated, request.source_lang, request.target_lang,
+            real_orig, translated, request.source_lang, request.target_lang,
             self._engine, True, confidence=0.9, metadata=request.metadata,
         )
 
@@ -1372,20 +1487,44 @@ class AsyncBaseAITranslator(BaseTranslator):
                     )
                 user_content = _build_json_batch(protected_list)
 
-            async with sem:
-                response = await self._call_api(
-                    system_prompt, user_content,
-                    use_json_schema=use_json,
-                    **self._get_sampling_kwargs(),
-                )
+            outcome: Dict[str, Any] = {
+                "content_filtered": False,
+                "quota_exceeded": False,
+                "error": None,
+            }
+            token = _CALL_OUTCOME.set(outcome)
+            try:
+                async with sem:
+                    response = await self._call_api(
+                        system_prompt, user_content,
+                        use_json_schema=use_json,
+                        **self._get_sampling_kwargs(),
+                    )
+            finally:
+                _CALL_OUTCOME.reset(token)
 
             if response is None:
-                # Graceful recovery for whole chunk
+                is_filtered = bool(outcome.get("content_filtered"))
+                is_quota = bool(outcome.get("quota_exceeded"))
+                err_msg = outcome.get("error") or "AI batch request failed"
                 for orig_idx, req in chunk:
-                    results[orig_idx] = TranslationResult(
-                        req.text, req.text, req.source_lang, req.target_lang,
-                        self._engine, True, confidence=0.0, metadata={"skipped": True},
-                    )
+                    req_meta = req.metadata if isinstance(req.metadata, dict) else {}
+                    real_orig = req_meta.get("original_text") or req.text
+                    if is_filtered:
+                        skipped_meta = dict(req_meta)
+                        skipped_meta["skipped"] = True
+                        skipped_meta["content_filtered"] = True
+                        results[orig_idx] = TranslationResult(
+                            real_orig, real_orig, req.source_lang, req.target_lang,
+                            self._engine, True, confidence=0.0, metadata=skipped_meta,
+                        )
+                    else:
+                        results[orig_idx] = TranslationResult(
+                            real_orig, "", req.source_lang, req.target_lang,
+                            self._engine, False, confidence=0.0,
+                            error=err_msg, quota_exceeded=is_quota,
+                            metadata=req.metadata,
+                        )
                 return
 
             # Parse response according to mode, with graceful multi-tier fallback
@@ -1466,12 +1605,16 @@ class AsyncBaseAITranslator(BaseTranslator):
 
         await asyncio.gather(*(process_chunk(ch) for ch in chunks))
 
-        # Fill any None gaps with original text (safety net)
+        # Fill any None gaps without returning untranslated text as success
         for i, req in enumerate(requests):
             if results[i] is None:
+                req_meta = req.metadata if isinstance(req.metadata, dict) else {}
+                real_orig = req_meta.get("original_text") or req.text
                 results[i] = TranslationResult(
-                    req.text, req.text, req.source_lang, req.target_lang,
-                    self._engine, True, confidence=0.0,
+                    real_orig, "", req.source_lang, req.target_lang,
+                    self._engine, False, confidence=0.0,
+                    error="Translation skipped or incomplete",
+                    metadata=req.metadata,
                 )
 
         return results  # type: ignore[return-value]
@@ -1539,13 +1682,22 @@ class OpenAITranslator(AsyncBaseAITranslator):
             resolved_model = getattr(
                 config_manager.translation_settings, "openai_model", "gpt-4o-mini"
             )
-        resolved_model = resolved_model or "gpt-4o-mini"
+        resolved_model = (resolved_model or "").strip() or "gpt-4o-mini"
 
         resolved_base_url = base_url
         if not resolved_base_url and config_manager:
             resolved_base_url = getattr(
                 config_manager.translation_settings, "openai_base_url", None
             ) or None
+
+        replaced_model = None
+        if type(self) is OpenAITranslator and (
+            not resolved_base_url or "api.openai.com" in str(resolved_base_url).lower()
+        ):
+            lowered_model = resolved_model.lower()
+            if "/" in resolved_model or lowered_model.startswith("deepseek"):
+                replaced_model = resolved_model
+                resolved_model = "gpt-4o-mini"
 
         timeout = AI_DEFAULT_TIMEOUT
         if config_manager:
@@ -1572,8 +1724,14 @@ class OpenAITranslator(AsyncBaseAITranslator):
             timeout=timeout,
             batch_size=batch_size,
             semaphore_count=semaphore_count,
+            profile_model_hint=kwargs.get("profile_model_hint"),
         )
         self._engine = TranslationEngine.OPENAI
+        if replaced_model:
+            self.logger.info(
+                "[OpenAITranslator] Model '%s' belongs to another provider; using gpt-4o-mini.",
+                replaced_model,
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1599,18 +1757,99 @@ class DeepSeekTranslator(OpenAITranslator):
         config_manager=None,
         **kwargs,
     ) -> None:
+        configured = (kwargs.pop("model", None) or "").strip()
+        if not configured and config_manager is not None:
+            ts = getattr(config_manager, "translation_settings", None)
+            configured = (getattr(ts, "openai_model", "") or "").strip()
+
+        replaced_model = None
+        low = configured.lower()
+        is_foreign_model = bool(
+            configured and (
+                "/" in configured
+                or low.startswith((
+                    "gpt-", "chatgpt-", "o1", "o3", "o4",
+                    "claude", "gemini", "llama", "qwen",
+                    "mistral", "gemma", "phi-",
+                ))
+            )
+        )
+        if not configured or is_foreign_model:
+            if configured and low != "gpt-4o-mini":
+                replaced_model = configured
+            resolved_model = _DEEPSEEK_DEFAULT_MODEL
+        else:
+            resolved_model = configured
+
+        kwargs.pop("base_url", None)
         super().__init__(
             api_key=api_key,
             proxy_manager=proxy_manager,
             config_manager=config_manager,
-            model=_DEEPSEEK_DEFAULT_MODEL,
+            model=resolved_model,
             base_url=_DEEPSEEK_BASE_URL,
+            **kwargs,
         )
         # DeepSeek allows more concurrent requests than OpenAI
         self._semaphore_count = 12
         self._semaphore = None  # Reset so new semaphore is created with updated count
-        self._timeout = 120.0
+        self._timeout = max(120.0, float(self._timeout))
         self._engine = TranslationEngine.OPENAI  # Routed through OpenAI engine enum
+        if replaced_model:
+            self.logger.info(
+                "[DeepSeekTranslator] Model '%s' is not a DeepSeek id; using %s.",
+                replaced_model,
+                _DEEPSEEK_DEFAULT_MODEL,
+            )
+
+    def _provider_extra_body(self) -> Optional[Dict[str, Any]]:
+        """Thinking is on by default at DeepSeek; translation does not need it (GitHub #27)."""
+        settings = getattr(self.config_manager, "translation_settings", None)
+        if getattr(settings, "deepseek_thinking", False):
+            return None
+        return {"thinking": {"type": "disabled"}}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenRouterTranslator
+# ─────────────────────────────────────────────────────────────────────────────
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# OpenRouter model ids are always "vendor/model"; the OpenAI default ("gpt-4o-mini")
+# would be rejected, so a name without a slash is replaced by this one.
+OPENROUTER_DEFAULT_MODEL = "google/gemini-2.5-flash"
+
+
+class OpenRouterTranslator(OpenAITranslator):
+    """OpenRouter preset: the OpenAI-compatible client with OpenRouter's endpoint fixed.
+
+    The user only supplies an API key (and, if wanted, a model). The key and model
+    fields are the ones the OpenAI engine uses.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        proxy_manager=None,
+        config_manager=None,
+        **kwargs,
+    ) -> None:
+        model = None
+        if config_manager is not None:
+            model = (getattr(config_manager.translation_settings, "openai_model", "") or "").strip()
+        super().__init__(
+            api_key=api_key,
+            proxy_manager=proxy_manager,
+            config_manager=config_manager,
+            model=model if model and "/" in model else OPENROUTER_DEFAULT_MODEL,
+            base_url=OPENROUTER_BASE_URL,
+            **kwargs,
+        )
+        if model and "/" not in model:
+            self.logger.info(
+                "[OpenRouterTranslator] Model '%s' is not an OpenRouter id (vendor/model); using %s.",
+                model, OPENROUTER_DEFAULT_MODEL,
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1627,6 +1866,8 @@ class LocalLLMTranslator(OpenAITranslator):
     higher values.
     """
 
+    _ALLOW_FORCED_MODEL_PROFILE: bool = True
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -1634,17 +1875,19 @@ class LocalLLMTranslator(OpenAITranslator):
         config_manager=None,
         **kwargs,
     ) -> None:
-        base_url = AI_LOCAL_URL
-        model = "llama3.2"
+        base_url = kwargs.pop("base_url", None) or AI_LOCAL_URL
+        model = kwargs.pop("model", None) or "llama3.2"
+        profile_model_hint = kwargs.pop("profile_model_hint", None)
         if config_manager:
-            base_url = (
-                getattr(config_manager.translation_settings, "local_llm_url", None)
-                or AI_LOCAL_URL
-            )
-            model = (
-                getattr(config_manager.translation_settings, "local_llm_model", None)
-                or "llama3.2"
-            )
+            ts = getattr(config_manager, "translation_settings", None)
+            if base_url == AI_LOCAL_URL:
+                base_url = getattr(ts, "local_llm_url", None) or AI_LOCAL_URL
+            if model == "llama3.2":
+                model = getattr(ts, "local_llm_model", None) or "llama3.2"
+            mode = (getattr(ts, "local_llm_mode", "external") or "external").strip().lower()
+            gguf_path = (getattr(ts, "local_llm_gguf_path", "") or "").strip()
+            if not profile_model_hint and mode == "builtin" and gguf_path:
+                profile_model_hint = Path(gguf_path).stem
 
         super().__init__(
             api_key=api_key or "none",  # Local LLM doesn't need a real key
@@ -1652,6 +1895,8 @@ class LocalLLMTranslator(OpenAITranslator):
             config_manager=config_manager,
             model=model,
             base_url=base_url,
+            profile_model_hint=profile_model_hint,
+            **kwargs,
         )
         # Local GPUs default to modest concurrency, but respect the user's
         # ai_concurrency setting (servers with parallel slots can use more).
@@ -1926,6 +2171,57 @@ class GeminiTranslator(BaseTranslator):
             self._semaphore = asyncio.Semaphore(self._semaphore_count)
         return self._semaphore
 
+    def _get_retry_count(self) -> int:
+        raw = AI_MAX_RETRIES
+        if self.config_manager and hasattr(self.config_manager, "translation_settings"):
+            raw = getattr(self.config_manager.translation_settings, "ai_retry_count", AI_MAX_RETRIES)
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return AI_MAX_RETRIES
+
+    def _get_custom_system_prompt(self) -> Optional[str]:
+        if not self.config_manager or not hasattr(self.config_manager, "translation_settings"):
+            return None
+        prompt = getattr(self.config_manager.translation_settings, "ai_custom_system_prompt", None)
+        if isinstance(prompt, str) and prompt.strip():
+            return prompt.strip()
+        return None
+
+    async def probe_endpoint(self, timeout: float = 10.0) -> Optional[str]:
+        """Cheap reachability/auth check before a run. None = usable, else a reason."""
+        if not self.api_key or self.api_key == "none":
+            return "Gemini API key is missing"
+        if _GEMINI_MODE != "google_genai" or not self._client:
+            return None
+        try:
+            await asyncio.wait_for(
+                self._client.aio.models.get(model=self._model),
+                timeout=timeout,
+            )
+            return None
+        except Exception as exc:
+            msg = str(exc) or type(exc).__name__
+            upper = msg.upper()
+            if (
+                "API_KEY_INVALID" in upper
+                or "UNAUTHENTICATED" in upper
+                or "PERMISSION_DENIED" in upper
+                or "401" in msg
+                or "403" in msg
+            ):
+                return "the Gemini API rejected the key"
+            if "NOT_FOUND" in upper or "404" in msg:
+                return f"Gemini model '{self._model}' was not found"
+            if (
+                isinstance(exc, (asyncio.TimeoutError, ConnectionError, OSError))
+                or "TIMEOUT" in upper
+                or "CONNECT" in upper
+            ):
+                return f"cannot connect to Gemini API ({type(exc).__name__})"
+            self.logger.debug("Gemini endpoint probe inconclusive: %s", exc)
+            return None
+
     @staticmethod
     def _build_fallback_request(req: TranslationRequest, fallback: Any) -> TranslationRequest:
         """
@@ -2082,6 +2378,16 @@ class GeminiTranslator(BaseTranslator):
         is_safety = "SAFETY" in upper or "blocked" in msg.lower() or "PROHIBITED_CONTENT" in upper
         return is_quota, is_safety
 
+    @staticmethod
+    def _is_fatal_error(exc: BaseException) -> bool:
+        """Returns True for auth/key/missing-model errors that retries cannot fix."""
+        msg = str(exc)
+        upper = msg.upper()
+        return any(
+            token in upper
+            for token in ("API_KEY_INVALID", "UNAUTHENTICATED", "PERMISSION_DENIED", "NOT_FOUND")
+        ) or any(code in msg for code in ("401", "403", "404"))
+
     async def translate_single(self, request: TranslationRequest) -> TranslationResult:
         """Translate a single text using Gemini with safety, thinking guard, and fallback."""
         source_lang = request.source_lang or "auto"
@@ -2091,10 +2397,11 @@ class GeminiTranslator(BaseTranslator):
         metadata = request.metadata if isinstance(request.metadata, dict) else {}
 
         source_text = request.text or ""
+        real_orig = metadata.get("original_text") or source_text
         if not source_text.strip():
             return TranslationResult(
-                original_text=source_text,
-                translated_text=source_text,
+                original_text=real_orig,
+                translated_text=real_orig,
                 source_lang=source_lang,
                 target_lang=target_lang,
                 engine=TranslationEngine.GEMINI,
@@ -2102,15 +2409,25 @@ class GeminiTranslator(BaseTranslator):
                 metadata=metadata,
             )
 
-        system_instruction = _GEMINI_SINGLE_SYSTEM_PROMPT.format(src=src_name, tgt=tgt_name)
+        custom_prompt = self._get_custom_system_prompt()
+        if custom_prompt:
+            system_instruction = (
+                f"{custom_prompt}\n\n"
+                f"Translate game dialogue and UI text from {src_name} to {tgt_name}. "
+                'Preserve ALL special placeholders and tags exactly: <ph id="N">...</ph>, [variable], {tag}, {color=#fff}. '
+                "Return ONLY the translated text without explanations, markdown ticks, or surrounding quotes."
+            )
+        else:
+            system_instruction = _GEMINI_SINGLE_SYSTEM_PROMPT.format(src=src_name, tgt=tgt_name)
         prompt = f"Translate the following text from {src_name} to {tgt_name}:\n{source_text}"
         max_tokens = getattr(request, 'max_tokens', None) or self._max_tokens
         temperature = getattr(request, 'temperature', None)
         if temperature is None:
             temperature = self._temperature
 
+        retries = self._get_retry_count()
         last_error = ""
-        for attempt in range(3):
+        for attempt in range(retries + 1):
             if self.should_stop_callback and self.should_stop_callback():
                 break
             try:
@@ -2126,8 +2443,12 @@ class GeminiTranslator(BaseTranslator):
                     )
                     return await self._delegate_to_fallback(request, "Content blocked by safety filter")
 
+                if self._is_fatal_error(exc):
+                    self.logger.error("Gemini non-retryable error: %s", exc)
+                    break
+
                 if is_quota:
-                    if attempt < 2:
+                    if attempt < retries:
                         wait = _jitter_sleep(2.0, attempt)
                         self.logger.warning("Gemini 429 quota hit. Retrying in %.1fs...", wait)
                         await asyncio.sleep(wait)
@@ -2138,7 +2459,7 @@ class GeminiTranslator(BaseTranslator):
                     return res
 
                 self.logger.error("Gemini translation error: %s", exc)
-                if attempt < 2:
+                if attempt < retries:
                     await asyncio.sleep(1.0)
                 continue
 
@@ -2155,7 +2476,7 @@ class GeminiTranslator(BaseTranslator):
                 return await self._delegate_to_fallback(request, "Placeholder integrity check failed")
 
             return TranslationResult(
-                original_text=source_text,
+                original_text=real_orig,
                 translated_text=final,
                 source_lang=source_lang,
                 target_lang=target_lang,
@@ -2175,35 +2496,60 @@ class GeminiTranslator(BaseTranslator):
         tgt_name = _SUPPORTED_LANGUAGES.get(target_lang, target_lang)
 
         xml_batch = _build_xml_batch([r.text for r in chunk])
-        system_instruction = _GEMINI_BATCH_SYSTEM_PROMPT.format(src=src_name, tgt=tgt_name)
+        custom_prompt = self._get_custom_system_prompt()
+        if custom_prompt:
+            system_instruction = (
+                f"{custom_prompt}\n\n"
+                f"Translate game dialogue and UI text from {src_name} to {tgt_name}.\n"
+                "Rules:\n"
+                '1) Preserve ALL special tokens/tags exactly: XML tags like <ph id="N">...</ph>, [variable], {tag}, {color=#fff}.\n'
+                '2) You will receive an XML block with numbered <item id="..."> elements. '
+                "Return the EXACT SAME XML structure with the translated text inside each <item>. "
+                "Do NOT add markdown code ticks (```xml), explanations, notes, or extra content outside the XML."
+            )
+        else:
+            system_instruction = _GEMINI_BATCH_SYSTEM_PROMPT.format(src=src_name, tgt=tgt_name)
         # Batch token budget: allocate proportionally up to 8192
         batch_max_tokens = min(8192, max(2048, len(chunk) * 200))
 
+        retries = self._get_retry_count()
         parsed: Optional[List[Optional[str]]] = None
-        for attempt in range(3):
+        chunk_fatal = False
+        chunk_quota = False
+        last_chunk_error = ""
+        for attempt in range(retries + 1):
             if self.should_stop_callback and self.should_stop_callback():
                 break
+            response_text = ""
             try:
                 async with self._get_semaphore():
                     response_text = await self._generate(
                         xml_batch, system_instruction, batch_max_tokens, self._temperature
                     )
             except Exception as exc:
+                last_chunk_error = str(exc) or type(exc).__name__
                 is_quota, is_safety = self._classify_error(exc)
                 if is_safety:
                     self.logger.warning("Gemini batch hit safety filter. Splitting batch into individual requests.")
                     break
+                if self._is_fatal_error(exc):
+                    self.logger.error("Gemini batch non-retryable error: %s", exc)
+                    chunk_fatal = True
+                    break
                 if is_quota:
-                    if attempt < 2:
+                    if attempt < retries:
                         wait = _jitter_sleep(2.5, attempt)
                         self.logger.warning("Gemini batch 429 rate limit. Retrying in %.1fs...", wait)
                         await asyncio.sleep(wait)
                         continue
+                    chunk_quota = True
                     break
                 self.logger.error("Gemini batch translation error on attempt %d: %s", attempt + 1, exc)
-                if attempt < 2:
+                if attempt < retries:
                     await asyncio.sleep(1.0)
-                continue
+                    continue
+                chunk_fatal = True
+                break
 
             if response_text:
                 candidate = _parse_xml_batch(response_text, len(chunk))
@@ -2220,23 +2566,38 @@ class GeminiTranslator(BaseTranslator):
             for i, req in enumerate(chunk):
                 val = parsed[i] if i < len(parsed) else None
                 final = self._finalize_translation(req, val) if val is not None else None
+                req_meta = req.metadata if isinstance(req.metadata, dict) else {}
+                real_orig = req_meta.get("original_text") or req.text
                 if final is not None:
                     results.append(TranslationResult(
-                        original_text=req.text,
+                        original_text=real_orig,
                         translated_text=final,
                         source_lang=source_lang,
                         target_lang=target_lang,
                         engine=TranslationEngine.GEMINI,
                         success=True,
                         confidence=0.9,
-                        metadata=req.metadata if isinstance(req.metadata, dict) else {},
+                        metadata=req_meta,
                     ))
                 else:
                     # Item missing from the batch answer or lost its placeholders
                     results.append(await self.translate_single(req))
             return results
 
-        # Whole chunk failed: item-by-item (translate_single handles 429/safety/fallback itself)
+        if chunk_quota or chunk_fatal:
+            # Avoid multiplying a chunk-wide quota/auth failure into len(chunk) * retries API calls
+            self.logger.warning(
+                "Gemini XML batch failed (%s); delegating chunk directly to fallback.",
+                "quota exceeded" if chunk_quota else "API error",
+            )
+            for req in chunk:
+                res = await self._delegate_to_fallback(req, last_chunk_error)
+                if chunk_quota and not res.success:
+                    res.quota_exceeded = True
+                results.append(res)
+            return results
+
+        # Safety split or XML parse failure: item-by-item retry
         self.logger.warning("Gemini XML batch failed; falling back to item-by-item translation.")
         for req in chunk:
             results.append(await self.translate_single(req))

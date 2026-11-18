@@ -147,19 +147,99 @@ class TestOpenAITranslator:
         sem = t._get_semaphore()
         assert sem is not None
 
+    def test_replaces_foreign_provider_model_on_default_endpoint(self):
+        from src.core.ai_translator import OpenAITranslator
+
+        for foreign in ("google/gemini-2.5-flash", "deepseek-chat"):
+            t = OpenAITranslator(api_key="sk-test", config_manager=_make_config(openai_model=foreign))
+            assert t._model == "gpt-4o-mini"
+
+        custom = OpenAITranslator(
+            api_key="sk-test",
+            config_manager=_make_config(
+                openai_model="meta-llama/Llama-3",
+                openai_base_url="https://custom.example.com/v1",
+            ),
+        )
+        assert custom._model == "meta-llama/Llama-3"
+
 
 class TestDeepSeekTranslator:
     def test_instantiation_defaults(self):
         config = _make_config()
-        from src.core.ai_translator import DeepSeekTranslator
+        from src.core.ai_translator import DeepSeekTranslator, _DEEPSEEK_DEFAULT_MODEL
         t = DeepSeekTranslator(api_key="sk-test", config_manager=config)
         assert t._engine == TranslationEngine.OPENAI
         assert "deepseek" in t._base_url
         assert t._semaphore_count == 12
+        assert t._model == _DEEPSEEK_DEFAULT_MODEL
+        assert t._timeout == 120.0
+
+    def test_honours_deepseek_model_and_higher_timeout(self):
+        from src.core.ai_translator import DeepSeekTranslator, _DEEPSEEK_DEFAULT_MODEL
+
+        custom = DeepSeekTranslator(
+            api_key="sk-test",
+            config_manager=_make_config(openai_model="deepseek-chat", ai_timeout=180),
+        )
+        assert custom._model == "deepseek-chat"
+        assert custom._timeout == 180.0
+
+        foreign = DeepSeekTranslator(
+            api_key="sk-test",
+            config_manager=_make_config(openai_model="google/gemini-2.5-flash"),
+        )
+        assert foreign._model == _DEEPSEEK_DEFAULT_MODEL
 
     def test_inherits_from_openai(self):
         from src.core.ai_translator import DeepSeekTranslator, OpenAITranslator
         assert issubclass(DeepSeekTranslator, OpenAITranslator)
+
+    @staticmethod
+    def _call_with_fake_client(translator, *, fail_first=False):
+        import asyncio
+        sent = []
+
+        async def create(**kwargs):
+            sent.append(kwargs)
+            if fail_first and len(sent) == 1:
+                from openai import APIStatusError
+                import httpx
+                req = httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions")
+                raise APIStatusError("bad", response=httpx.Response(400, request=req), body=None)
+            msg = SimpleNamespace(content="ok")
+            return SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=msg)])
+
+        translator._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        out = asyncio.run(translator._call_api("sys", "hi"))
+        return out, sent
+
+    def test_thinking_is_disabled_by_default(self):
+        """DeepSeek V4 thinks unless told not to; the reasoning wastes output tokens (GitHub #27)."""
+        from src.core.ai_translator import DeepSeekTranslator
+        t = DeepSeekTranslator(api_key="sk-test", config_manager=_make_config())
+        out, sent = self._call_with_fake_client(t)
+        assert out == "ok"
+        assert sent[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+    def test_thinking_can_be_turned_on(self):
+        from src.core.ai_translator import DeepSeekTranslator
+        t = DeepSeekTranslator(api_key="sk-test", config_manager=_make_config(deepseek_thinking=True))
+        _out, sent = self._call_with_fake_client(t)
+        assert "extra_body" not in sent[0]
+
+    def test_rejected_thinking_field_is_dropped_once(self):
+        from src.core.ai_translator import DeepSeekTranslator
+        t = DeepSeekTranslator(api_key="sk-test", config_manager=_make_config())
+        out, sent = self._call_with_fake_client(t, fail_first=True)
+        assert out == "ok" and len(sent) == 2
+        assert "extra_body" in sent[0] and "extra_body" not in sent[1]
+
+    def test_plain_openai_sends_no_extra_body(self):
+        from src.core.ai_translator import OpenAITranslator
+        t = OpenAITranslator(api_key="sk-test", config_manager=_make_config())
+        _out, sent = self._call_with_fake_client(t)
+        assert "extra_body" not in sent[0]
 
 
 class TestLocalLLMTranslator:

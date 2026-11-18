@@ -4,6 +4,44 @@ render_with_liquid: false
 
 # RenLocalizer Changelog
 
+#### [2.9.1] - 2026-11-18
+
+##### 🧑‍💻 Developer Mode, Developer Inspection Page & User-Friendly Warnings
+
+> **(`backend/developer_backend.py`, `backend/editor_backend.py`, `gui/qml/pages/DeveloperPage.qml`, `SettingsPage.qml`, `Sidebar.qml`, `CompletionDialog.qml`, `core/diagnostics.py`, `core/pipeline/saving.py`, `locales/*`)**
+> - **Developer Mode (`app_settings.developer_mode`, default off):** New toggle under **Settings → General**. When enabled, reveals the **Developer** page in the sidebar and quick access from the completion dialog; when disabled, keeps raw `diagnostic_<lang>.json` path warnings out of the standard user log.
+> - **Developer Inspection Page:** Styled after the Editor page; lists guard-blocked lines, coverage warnings, and affected files from `tl/.diagnostics/<lang>/` with live search, category filters (`All`, `Blocked`, `Coverage Warnings`, `Affected Files`), and one-click **"Open in Editor"** (jumps directly to the matching entry inside Translation Editor), **"Open in External Editor"**, and **"Open Report (JSON)"** buttons.
+> - **Diagnostic Notice & Clearer Warnings:** Added `_notice` to `diagnostic_<lang>.json` clarifying it is intended for developers, and rewrote `coverage_warning_interpolated_values` across all 9 locales into plain user-focused language without asking users to edit game scripts.
+> - **Dependencies & Packaging:** Upgraded `openai` (`3.55.0`), `google-genai` (`3.5.0`), and `rpycdec` (`0.2.0`), raised `requirements.txt` floors (`openai>=2.0.0`, `google-genai>=3.0.0`, `rpycdec>=0.2.0`), and added `orjson` to `RenLocalizer.spec` `hidden_imports`.
+
+##### 🔧 Reliability, Routing & Editor Hardening
+
+> **(`backend/*`, `core/ai_translator.py`, `core/translators/*`, `core/pipeline/*`, `core/tl_parser.py`, `core/editor/*`, `gui/qml/pages/SettingsPage.qml`, `cli_main.py`, `tests/test_v291_hardening_fixes.py`)**
+> - **Settings & Factory:** Fixed `SettingsBackend.save_settings()` overwriting `deepseek`/`openrouter` with `openai` and losing advanced translation switches; added `run_state.json` and `engine_speed.json` cleanup to `factory_reset()`; extended built-in GGUF Hy-MT2 detection and QML status signals; scoped `openai_base_url` DeepSeek redirect strictly to the `openai` engine.
+> - **AI Translators (`ai_translator.py`):** Prevented API failures (`429`, `401`, connection/empty responses) from masquerading as successful translations and poisoning cache/echoing `<ph>` tokens (`_CALL_OUTCOME` `ContextVar`, `success=False`, `quota_exceeded`), while keeping `finish_reason == "content_filter"` cleanly skipped. Scoped Hy-MT single-segment detection by active engine, expanded DeepSeek foreign-model cleanup (`gpt-*`, `claude*`, `gemini*`, `llama*`, `qwen*`, `mistral*`), and upgraded `GeminiTranslator` with `probe_endpoint()`, `ai_retry_count` / `ai_custom_system_prompt` support, and direct fallback on chunk-level quota/auth failures instead of per-item retry storms.
+> - **Google Translator:** Wired `_try_batch_separator` 429/200 events into `EndpointRouter`, fixed `_multi_q` alternate-family fallthrough (`batchexecute` → `clients5` → parallel/Lingva), forwarded configured proxies to sync `requests.get` fallback, and initialized `proxy_url_used` before `try:` blocks to avoid `UnboundLocalError`.
+> - **Pipeline & Parser:** Routed `rpyc_extraction_signature.json` into isolated `tl/.diagnostics/<lang>/` (with legacy fallback read), resolved active engine models properly for `DiagnosticReport.set_provenance()`, forwarded `proxy_manager` during online source-language detection, skipped unchanged cache hits when `aggressive_retry_translation` is enabled, removed duplicate `create_language_init_file`, and added `# context:` ID parity plus `_final_text()` empty-edit safety in `TLParser`.
+> - **Editor, QML Settings & CLI:** Added collision-safe nested backup filenames (`save_edits(..., lang_dir=...)`), active-engine missing-entry persistence in `sync_translation_cache` + in-memory cache updates, project-switch reset in `EditorBackend.refreshLanguages()`, and missing problem messages (`replacement_char`, `renpy_tag_order_invalid`). Tightened `SettingsPage.qml` engine visibility rules and added two-way bindings with `DashboardPage`. Fixed CLI `pseudo` (`_pseudo_transform` & `--output` precedence), `--config` dataclass `__post_init__()` validation, and `custom` endpoint reporting.
+
+##### ⚠️ Warning for define/default text shown with `[name]`
+
+> **(`pipeline/extraction.py`, `pipeline/constants.py`, `locales/*`, `tests/test_interpolated_values_audit.py`)**
+> - **New coverage warning** (log, `diagnostic_<lang>.json`): detects `define`/`default` text values (also `_("...")`) shown inside other text with `[name]`, as in `"I feel [mood] today."`, where Ren'Py translates the surrounding text rather than the variable value itself. Uses with attributes or indexes (`[hero.name]`, `[quotes[0]]`) and `!t` fields are not counted, and name-like variables (`mc_name`, `hero`, `player_nickname`) or `Character(...)` arguments are excluded. Only `.rpy` sources are checked.
+> - The UI warning is purely informational and advises users no action is needed; RenLocalizer does not modify the game's scripts, and variable details are logged in `diagnostic_<lang>.json` (inspectable via Developer Mode). Texts in all nine languages.
+
+##### 🧭 OpenRouter engine (GitHub #24)
+
+> **(`utils/engine_registry.py`, `translators/factory.py`, `ai_translator.py`, `cli_main.py`, `DashboardPage.qml`, `SettingsPage.qml`, `tests/test_engine_registry.py`)**
+> - **OpenRouter is now an engine of its own** in the engine list (and `-e openrouter` in the CLI, key from `OPENROUTER_API_KEY`). Pick it, paste the key, translate: the endpoint is fixed and the Base URL field is hidden. It used to need the OpenAI engine with a hand-typed OpenRouter URL.
+> - **Model:** OpenRouter model ids are `vendor/model` (placeholder `google/gemini-2.5-flash`). A name without a slash, such as the OpenAI default, is replaced by `google/gemini-2.5-flash` and the log says so. The key and model fields are shared with the OpenAI and DeepSeek engines; switching back to OpenAI or DeepSeek also replaces incompatible leftover model ids (`vendor/model`, `deepseek-*`, `gpt-4o-mini`) with that engine's default.
+
+##### 🛠 Fixes from user reports (GitHub #26, #27, #28)
+
+> **(`translators/nvidia.py`, `output_formatter.py`, `parser.py`, `ai_translator.py`, `utils/config.py`, `tests/*`)**
+> - **NVIDIA: Spanish, Portuguese and Chinese came back in random languages (#28).** The language pair sent to the model was built from region codes (`en-es-ES`); the model needs `xx-yy`. The pair now uses primary subtags only (`en-es`). Turkish, German and French were never affected. The request returned HTTP 200, so the Google fallback never ran.
+> - **Short Korean lines were silently skipped (#26).** The "binary junk" check did not know Hangul Compatibility Jamo (`ㅎㅎ`, `ㅋㅋ`), so `마빡에 써있다 임마 ㅎㅎ.` was dropped as corrupted data and never reached the engine. The check now shares one list of scripts (adds Hangul jamo, Greek, Thai, Devanagari, Armenian, Georgian); short lines in those scripts were affected the same way.
+> - **DeepSeek: thinking is turned off for translation (#27).** DeepSeek V4 reasons by default, which cost 3-4x more output tokens, made `temperature` a no-op and shared `max_tokens` with the answer. Requests now carry `thinking: disabled`; if a server rejects the field it is dropped for the rest of the run. Set `deepseek_thinking` to `true` in `config.json` to turn it back on. Applies to the DeepSeek engine and to the OpenAI engine pointed at a DeepSeek base URL. `DeepSeekTranslator` also now honours the configured model name (`openai_model`) and `ai_timeout` values above 120 s instead of hardcoding `deepseek-v4-flash` and `120 s`.
+
 #### [2.9.0] - 2026-11-12
 
 > **A new look (two themes, a rebuilt Translate page with a live preview of the line being translated), API keys moved out of `config.json` into the system credential store, a large internal cleanup (one table for all engines, a translation core that no longer needs Qt, and a `Main.qml` split into pages), and the AppImage again recovering from a GLX startup abort by retrying once in software mode.**

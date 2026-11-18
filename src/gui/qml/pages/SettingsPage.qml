@@ -19,6 +19,24 @@ Item {
 
     property int settingsSubTab: 0 // 0: Genel & Çıktı, 1: Yapay Zeka (AI), 2: Performans & Ağ
 
+    Connections {
+        target: appBackend
+        function onOpenaiApiKeyChanged() { if (!settingsOpenaiKeyField.activeFocus) settingsOpenaiKeyField.text = appBackend.openaiApiKey }
+        function onOpenaiModelChanged() { if (!settingsOpenaiModelField.activeFocus) settingsOpenaiModelField.text = appBackend.openaiModel }
+        function onOpenaiBaseUrlChanged() { if (!settingsOpenaiBaseUrlField.activeFocus) settingsOpenaiBaseUrlField.text = appBackend.openaiBaseUrl }
+        function onGeminiApiKeyChanged() { if (!settingsGeminiKeyField.activeFocus) settingsGeminiKeyField.text = appBackend.geminiApiKey }
+        function onGeminiModelChanged() { if (!settingsGeminiModelField.activeFocus) settingsGeminiModelField.text = appBackend.geminiModel }
+        function onLocalLlmGgufPathChanged() { if (!settingsLocalLlmGgufField.activeFocus) settingsLocalLlmGgufField.text = appBackend.localLlmGgufPath }
+        function onLocalLlmServerPathChanged() { if (!settingsLocalLlmServerField.activeFocus) settingsLocalLlmServerField.text = appBackend.localLlmServerPath }
+        function onLocalLlmUrlChanged() { if (!settingsLocalLlmUrlField.activeFocus) settingsLocalLlmUrlField.text = appBackend.localLlmUrl }
+        function onLocalLlmModelChanged() { if (!settingsLocalLlmModelField.activeFocus) settingsLocalLlmModelField.text = appBackend.localLlmModel }
+        function onLibretranslateUrlChanged() { if (!settingsLibreUrlField.activeFocus) settingsLibreUrlField.text = appBackend.libretranslateUrl }
+        function onLibretranslateApiKeyChanged() { if (!settingsLibreKeyField.activeFocus) settingsLibreKeyField.text = appBackend.libretranslateApiKey }
+        function onCustomEndpointUrlChanged() { if (!settingsCustomUrlField.activeFocus) settingsCustomUrlField.text = appBackend.customEndpointUrl }
+        function onCustomEndpointApiKeyChanged() { if (!settingsCustomKeyField.activeFocus) settingsCustomKeyField.text = appBackend.customEndpointApiKey }
+        function onAiCustomSystemPromptChanged() { if (!aiPromptField.activeFocus) aiPromptField.text = appBackend.aiCustomSystemPrompt }
+    }
+
     // ── SABİT STICKY HEADER & SUB-NAVIGATION ──────────────
     PageHeader {
         id: settingsStickyHeader
@@ -338,6 +356,19 @@ Item {
                     RlSwitch {
                         checked: appBackend.enableDesktopNotifications
                         onToggled: appBackend.enableDesktopNotifications = checked
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 16
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 2
+                        IconLabel { alignment: Qt.AlignLeft; glyph: Icons.terminal; text: appBackend.uiTrigger, appBackend.getTextWithDefault("developer_mode_label", "Geliştirici Seçenekleri (Developer Mode)"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
+                        Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("developer_mode_tooltip", "Sol menüde Geliştirici inceleme sayfasını, ham tanılama raporlarını ve harici editör kısayollarını gösterir."); color: Theme.txt2; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    }
+                    RlSwitch {
+                        checked: appBackend.developerMode
+                        onToggled: appBackend.developerMode = checked
                     }
                 }
             }
@@ -789,7 +820,7 @@ Item {
                 // OpenAI / DeepSeek Ayarları
                 ColumnLayout {
                     Layout.fillWidth: true; spacing: 14
-                    visible: appBackend.selectedEngine === "openai" || appBackend.selectedEngine === "deepseek"
+                    visible: appBackend.selectedEngine === "openai" || appBackend.selectedEngine === "deepseek" || appBackend.selectedEngine === "openrouter"
 
                     RowLayout {
                         Layout.fillWidth: true; spacing: 18
@@ -797,6 +828,7 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_openai_key", "OpenAI / DeepSeek API Key:"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
+                                id: settingsOpenaiKeyField
                                 Layout.fillWidth: true; height: 40; text: appBackend.openaiApiKey; echoMode: TextInput.Password; placeholderText: (text.length === 0 && !activeFocus) ? ("sk-...") : ""
                                 onEditingFinished: appBackend.openaiApiKey = text
                                 background: Rectangle {
@@ -817,7 +849,8 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_openai_model", "Model Name:"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
-                                Layout.fillWidth: true; height: 40; text: appBackend.openaiModel; placeholderText: (text.length === 0 && !activeFocus) ? (appBackend.selectedEngine === "deepseek" ? "deepseek-v4-flash" : "gpt-4o-mini") : ""
+                                id: settingsOpenaiModelField
+                                Layout.fillWidth: true; height: 40; text: appBackend.openaiModel; placeholderText: (text.length === 0 && !activeFocus) ? (appBackend.selectedEngine === "openrouter" ? "google/gemini-2.5-flash" : appBackend.selectedEngine === "deepseek" ? "deepseek-v4-flash" : "gpt-4o-mini") : ""
                                 onEditingFinished: appBackend.openaiModel = text
                                 background: Rectangle {
                                     radius: 8; color: Theme.input
@@ -836,8 +869,10 @@ Item {
                     }
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 5
+                        visible: appBackend.selectedEngine === "openai"
                         Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("openai_base_url_label", "Base URL (Optional, empty for default):"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                         TextField {
+                            id: settingsOpenaiBaseUrlField
                             Layout.fillWidth: true; height: 40; text: appBackend.openaiBaseUrl; placeholderText: (text.length === 0 && !activeFocus) ? (appBackend.selectedEngine === "deepseek" ? "https://api.deepseek.com/v1" : "https://api.openai.com/v1") : ""
                             onEditingFinished: appBackend.openaiBaseUrl = text
                             background: Rectangle {
@@ -916,6 +951,7 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_gemini_key", "Gemini API Key:"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
+                                id: settingsGeminiKeyField
                                 Layout.fillWidth: true; height: 40; text: appBackend.geminiApiKey; echoMode: TextInput.Password; placeholderText: (text.length === 0 && !activeFocus) ? ("AIza...") : ""
                                 onEditingFinished: appBackend.geminiApiKey = text
                                 background: Rectangle {
@@ -936,6 +972,7 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_gemini_model", "Model:"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
+                                id: settingsGeminiModelField
                                 Layout.fillWidth: true; height: 40; text: appBackend.geminiModel; placeholderText: (text.length === 0 && !activeFocus) ? ("gemini-2.0-flash") : ""
                                 onEditingFinished: appBackend.geminiModel = text
                                 background: Rectangle {
@@ -1003,7 +1040,7 @@ Item {
                 // Local LLM (Ollama / LM Studio) Ayarları
                 ColumnLayout {
                     Layout.fillWidth: true; spacing: 14
-                    visible: appBackend.selectedEngine === "local_llm" || appBackend.selectedEngine === "google"
+                    visible: appBackend.selectedEngine === "local_llm"
 
                     // ── Çalışma Modu: Harici sunucu vs Yerleşik GGUF ──
                     RowLayout {
@@ -1065,6 +1102,7 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 10
                                 TextField {
+                                    id: settingsLocalLlmGgufField
                                     Layout.fillWidth: true; height: 40
                                     text: appBackend.localLlmGgufPath
                                     placeholderText: (text.length === 0 && !activeFocus) ? ("C:\\models\\Hy-MT2-7B-Q4_K_M.gguf") : ""
@@ -1166,6 +1204,7 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 10
                                 TextField {
+                                    id: settingsLocalLlmServerField
                                     Layout.fillWidth: true; height: 36
                                     text: appBackend.localLlmServerPath
                                     placeholderText: (text.length === 0 && !activeFocus) ? (appBackend.getTextWithDefault("local_llm_server_path_hint", "Boş bırakılırsa indirilen çalışma zamanı kullanılır")) : ""
@@ -1263,6 +1302,7 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_ollama_url", "Local LLM Server URL (Ollama/LM Studio):"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
+                                id: settingsLocalLlmUrlField
                                 Layout.fillWidth: true; height: 40; text: appBackend.localLlmUrl; placeholderText: (text.length === 0 && !activeFocus) ? ("http://localhost:11434/v1") : ""
                                 onEditingFinished: appBackend.localLlmUrl = text
                                 background: Rectangle { radius: 8; color: Theme.input; border.color: Theme.cardBorder; border.width: 1 }
@@ -1272,6 +1312,7 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("label_ollama_model", "Local LLM Model Name:"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
+                                id: settingsLocalLlmModelField
                                 Layout.fillWidth: true; height: 40; text: appBackend.localLlmModel; placeholderText: (text.length === 0 && !activeFocus) ? ("qwen2.5-coder:7b-instruct, llama3...") : ""
                                 onEditingFinished: appBackend.localLlmModel = text
                                 background: Rectangle { radius: 8; color: Theme.input; border.color: Theme.cardBorder; border.width: 1 }
@@ -1318,7 +1359,7 @@ Item {
                 // AI Çeviri Modu (Translation Mode: Scene / JSON / XML) & Sahne Blok Boyutu
                 ColumnLayout {
                     Layout.fillWidth: true; spacing: 14
-                    visible: appBackend.selectedEngine === "local_llm" || appBackend.selectedEngine === "openai" || appBackend.selectedEngine === "deepseek" || appBackend.selectedEngine === "gemini" || appBackend.selectedEngine === "custom" || appBackend.selectedEngine === "google"
+                    visible: appBackend.selectedEngine === "local_llm" || appBackend.selectedEngine === "openai" || appBackend.selectedEngine === "deepseek" || appBackend.selectedEngine === "openrouter"
 
                     RowLayout {
                         Layout.fillWidth: true; spacing: 18
@@ -1502,6 +1543,7 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("libretranslate_url_label", "LibreTranslate Server URL:"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
+                                id: settingsLibreUrlField
                                 Layout.fillWidth: true; height: 40; text: appBackend.libretranslateUrl; placeholderText: (text.length === 0 && !activeFocus) ? ("http://localhost:5000") : ""
                                 onEditingFinished: appBackend.libretranslateUrl = text
                                 background: Rectangle { radius: 8; color: Theme.input; border.color: Theme.cardBorder; border.width: 1 }
@@ -1511,6 +1553,7 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("libretranslate_api_key_label", "LibreTranslate API Key (Optional):"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
+                                id: settingsLibreKeyField
                                 Layout.fillWidth: true; height: 40; text: appBackend.libretranslateApiKey; echoMode: TextInput.Password
                                 onEditingFinished: appBackend.libretranslateApiKey = text
                                 background: Rectangle { radius: 8; color: Theme.input; border.color: Theme.cardBorder; border.width: 1 }
@@ -1530,6 +1573,7 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("custom_url_label", "Custom API Endpoint URL:"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
+                                id: settingsCustomUrlField
                                 Layout.fillWidth: true; height: 40; text: appBackend.customEndpointUrl; placeholderText: (text.length === 0 && !activeFocus) ? ("http://localhost:8000/translate") : ""
                                 onEditingFinished: appBackend.customEndpointUrl = text
                                 background: Rectangle { radius: 8; color: Theme.input; border.color: Theme.cardBorder; border.width: 1 }
@@ -1539,6 +1583,7 @@ Item {
                             Layout.fillWidth: true; spacing: 5
                             Label { text: appBackend.uiTrigger, appBackend.getTextWithDefault("custom_api_key_label", "Custom API Key (Optional):"); color: Theme.txt; font.bold: true; font.pixelSize: 13 }
                             TextField {
+                                id: settingsCustomKeyField
                                 Layout.fillWidth: true; height: 40; text: appBackend.customEndpointApiKey; echoMode: TextInput.Password
                                 onEditingFinished: appBackend.customEndpointApiKey = text
                                 background: Rectangle { radius: 8; color: Theme.input; border.color: Theme.cardBorder; border.width: 1 }

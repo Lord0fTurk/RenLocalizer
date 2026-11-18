@@ -13,6 +13,19 @@ import re
 if TYPE_CHECKING:
     pass
 
+# Letters of every script a game can be written in, as the inside of a regex
+# character class. The "binary junk" checks count characters outside this set, so
+# a script missing here loses its short lines silently (GitHub #26: Korean
+# "ㅎㅎ" is Hangul Compatibility Jamo, not a Hangul syllable).
+LEGIT_SCRIPT_RANGES = (
+    r' -ÿĀ-ɏͰ-ϿЀ-ӿ԰-֏'
+    r'֐-׿؀-ۿݐ-ݿऀ-ॿ฀-๿'
+    r'Ⴀ-ჿᄀ-ᇿ぀-ヿ㄰-㆏一-鿿'
+    r'가-힯ﭐ-﷿ﹰ-﻿'
+)
+_STRANGE_CHAR_RE = re.compile(r'[^\x20-\x7E\s' + LEGIT_SCRIPT_RANGES + r']')
+_UNUSUAL_CHAR_RE = re.compile(r'[^\x20-\x7E' + LEGIT_SCRIPT_RANGES + r']')
+
 
 def _preserve_case(src: str, dst: str) -> str:
     # Kaynak kelimenin büyük/küçük harfini hedefe uygula
@@ -350,7 +363,7 @@ class RenPyOutputFormatter:
         stripped_of_markup = stripped_of_vars.strip()
         # If after removing all tags/vars, only punctuation/numbers/spaces remain, skip
         # "I'm" counts as a word too ("[povname]... I'm...").
-        if (stripped_of_markup and not re.search(r'[a-zA-Z\u00C0-\u024F\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]{2,}', stripped_of_markup)
+        if (stripped_of_markup and not re.search(r'[a-zA-Z\u00C0-\u024F' + LEGIT_SCRIPT_RANGES + r']{2,}', stripped_of_markup)
                 and not re.search(r"[A-Za-z]['\u2019][A-Za-z]", stripped_of_markup)):
             return True
         
@@ -394,7 +407,7 @@ class RenPyOutputFormatter:
         # - Hebrew: \u0590-\u05FF
         # - Arabic / Persian / Urdu: \u0600-\u06FF + \u0750-\u077F + presentation forms
         # - Common punctuation and symbols
-        strange_chars = len(re.findall(r'[^\x20-\x7E\s\u00A0-\u00FF\u0100-\u024F\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]', text_strip))
+        strange_chars = len(_STRANGE_CHAR_RE.findall(text_strip))
         
         # If more than 30% strange characters, it's likely corrupted
         if len(text_strip) > 0 and strange_chars > len(text_strip) * 0.3:
@@ -419,7 +432,7 @@ class RenPyOutputFormatter:
             # CJK, Japanese, Korean, Hebrew, Arabic/Persian/Urdu). Replacement
             # chars, PUA, and random binary bytes are NOT in this set, so they
             # still count as "unusual" — but real CJK/RTL words no longer do.
-            unusual_sequences = len(re.findall(r'[^\x20-\x7E\u00A0-\u00FF\u0100-\u024F\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]', text_strip))
+            unusual_sequences = len(_UNUSUAL_CHAR_RE.findall(text_strip))
             ascii_letters = len(re.findall(r'[a-zA-Z]', text_strip))
             # If we have unusual chars and very few letters, skip
             if unusual_sequences >= 1 and ascii_letters <= 3:

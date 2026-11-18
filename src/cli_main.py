@@ -458,8 +458,11 @@ def run_translate_command(args) -> int:
         override = load_config_override(config_path)
         for section, values in override.items():
             if hasattr(config, section) and isinstance(values, dict):
+                section_obj = getattr(config, section)
                 for key, val in values.items():
-                    setattr(getattr(config, section), key, val)
+                    setattr(section_obj, key, val)
+                if hasattr(section_obj, "__post_init__"):
+                    section_obj.__post_init__()
 
     engine_id = args.engine
     ts = config.translation_settings
@@ -500,8 +503,12 @@ def run_translate_command(args) -> int:
 
     lt_url = getattr(args, 'lt_url', '')
     lt_key = getattr(args, 'lt_key', '')
-    if engine_id in ("libretranslate", "custom"):
-        print_key_value("Endpoint", lt_url or "http://localhost:5000", "🔗")
+    if engine_id == "libretranslate":
+        endpoint_display = lt_url or getattr(ts, 'libretranslate_url', '') or "http://localhost:5000"
+        print_key_value("Endpoint", endpoint_display, "🔗")
+    elif engine_id == "custom":
+        endpoint_display = lt_url or getattr(ts, 'custom_endpoint_url', '') or getattr(ts, 'libretranslate_url', '') or "http://localhost:5000"
+        print_key_value("Endpoint", endpoint_display, "🔗")
 
     config, translation_manager = setup_engines(config, engine_id, lt_url, lt_key)
 
@@ -567,8 +574,8 @@ def _apply_ai_overrides(config: ConfigManager, engine_id: str, args) -> None:
         keys.nvidia_api_key = api_key or keys.nvidia_api_key or os.environ.get("NVIDIA_API_KEY", "")
         if model:
             ts.nvidia_model = model
-    elif engine_id in ("openai", "deepseek"):
-        env_name = "DEEPSEEK_API_KEY" if engine_id == "deepseek" else "OPENAI_API_KEY"
+    elif engine_id in ("openai", "deepseek", "openrouter"):
+        env_name = {"deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY"}.get(engine_id, "OPENAI_API_KEY")
         keys.openai_api_key = api_key or keys.openai_api_key or os.environ.get(env_name, "")
         if model:
             ts.openai_model = model
@@ -960,7 +967,12 @@ def run_pseudo_command(args) -> int:
 
     print_key_value("Input", input_path, "📁")
     print_key_value("Mode", args.mode, "⚙")
-    output_dir = args.output or os.path.join(input_path, "game", "tl", "pseudo") if os.path.isdir(input_path) else os.path.join(os.path.dirname(input_path), "pseudo")
+    default_out = (
+        os.path.join(input_path, "game", "tl", "pseudo")
+        if os.path.isdir(input_path)
+        else os.path.join(os.path.dirname(input_path), "pseudo")
+    )
+    output_dir = args.output or default_out
     print_key_value("Output", output_dir, "📂")
     console.print()
 
@@ -1003,7 +1015,7 @@ def run_pseudo_command(args) -> int:
                     with open(rpy_file, 'r', encoding='utf-8') as f: content = f.read()
                     def replace(m):
                         nonlocal translated_count; translated_count += 1
-                        return f'{m.group(1)}{m.group(2) or ""} "{translator._apply_pseudo(m.group(3))}"'
+                        return f'{m.group(1)}{m.group(2) or ""} "{translator._pseudo_transform(m.group(3))}"'
                     with open(out, 'w', encoding='utf-8') as f: f.write(pattern.sub(replace, content))
                 except Exception as e: print_error(f"{rel}: {e}")
                 progress.advance(task)
@@ -1016,7 +1028,7 @@ def run_pseudo_command(args) -> int:
                 with open(rpy_file, 'r', encoding='utf-8') as f: content = f.read()
                 def replace(m):
                     nonlocal translated_count; translated_count += 1
-                    return f'{m.group(1)}{m.group(2) or ""} "{translator._apply_pseudo(m.group(3))}"'
+                    return f'{m.group(1)}{m.group(2) or ""} "{translator._pseudo_transform(m.group(3))}"'
                 with open(out, 'w', encoding='utf-8') as f: f.write(pattern.sub(replace, content))
             except Exception as e: print_error(f"{rel}: {e}")
 

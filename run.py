@@ -369,8 +369,10 @@ def main() -> int:
         backend = AppBackend(parent=app)
 
         from src.backend.editor_backend import EditorBackend
+        from src.backend.developer_backend import DeveloperBackend
 
         editor_backend = EditorBackend(backend, parent=app)
+        developer_backend = DeveloperBackend(backend, parent=app)
 
         # ── QML Engine ────────────────────────────────────────────────────
         _splash_msg("Starting interface...")
@@ -392,6 +394,7 @@ def main() -> int:
         # Context property
         engine.rootContext().setContextProperty("appBackend", backend)
         engine.rootContext().setContextProperty("editorBackend", editor_backend)
+        engine.rootContext().setContextProperty("developerBackend", developer_backend)
 
         def _on_object_created(obj, url) -> None:
             if obj is None:

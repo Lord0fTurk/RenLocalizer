@@ -93,6 +93,7 @@ from .saving import (
     create_language_init_file,
     write_atomic_segments_rpy,
     generate_visible_text_aliases,
+    get_diagnostics_dir,
 )
 
 # py3langid speaks bare ISO 639-1; the translation APIs want these spellings.
@@ -1342,8 +1343,6 @@ class TranslationPipeline:
             except Exception:
                 self.logger.debug("Failed to remove old .rpyc file")
 
-        self._create_language_init_file(game_dir)
-
         tl_files_updated = [
             tl_file for tl_file in self.tl_parser.parse_directory(tl_path, self.target_language)
             if not self._is_generated_export_file(tl_file.file_path)
@@ -1898,8 +1897,7 @@ class TranslationPipeline:
             self.log_message.emit("success", f"Successfully created {generated_count} translation files ({total_entries_count} unique strings total).")
 
             try:
-                diag_dir = os.path.join(tl_dir, 'diagnostics')
-                os.makedirs(diag_dir, exist_ok=True)
+                diag_dir = get_diagnostics_dir(tl_dir, renpy_lang)
                 sig_path = os.path.join(diag_dir, 'rpyc_extraction_signature.json')
                 save_text_safely(
                     Path(sig_path),
@@ -1935,8 +1933,24 @@ class TranslationPipeline:
         formatter = RenPyOutputFormatter()
         try:
             _engine_val = getattr(self.engine, 'value', str(self.engine))
-            _model_val = getattr(getattr(self.config, 'api_keys', None), 'openai_model', '')
-            self.diagnostic_report.set_provenance(engine=_engine_val, model=_model_val)
+            _active_tr = self.translation_manager.translators.get(self.engine)
+            _model_val = getattr(_active_tr, '_model', '') or ''
+            if not _model_val and self.config is not None:
+                _ts = getattr(self.config, 'translation_settings', None)
+                if _ts is not None:
+                    if self.engine == TranslationEngine.GEMINI:
+                        _model_val = getattr(_ts, 'gemini_model', '') or ''
+                    elif self.engine == TranslationEngine.LOCAL_LLM:
+                        _mode = str(getattr(_ts, 'local_llm_mode', 'external') or '').strip().lower()
+                        _gguf = str(getattr(_ts, 'local_llm_gguf_path', '') or '').strip()
+                        _model_val = (
+                            Path(_gguf).stem
+                            if (_mode == 'builtin' and _gguf)
+                            else (getattr(_ts, 'local_llm_model', '') or '')
+                        )
+                    elif is_llm_engine(self.engine):
+                        _model_val = getattr(_ts, 'openai_model', '') or ''
+            self.diagnostic_report.set_provenance(engine=_engine_val, model=str(_model_val))
         except Exception as exc:
             self.logger.debug("Diagnostic provenance could not be recorded: %s", exc)
 
@@ -1983,7 +1997,7 @@ class TranslationPipeline:
             _ai_batch_format = str(
                 getattr(self.config.translation_settings, 'ai_batch_format', 'scene') or ''
             ).strip().lower()
-            _single_mode = _ai_batch_format == 'single' or _profile_prefers_single_segment(self.config)
+            _single_mode = _ai_batch_format == 'single' or _profile_prefers_single_segment(self.config, engine=self.engine)
             if _single_mode:
                 # Batch size is irrelevant here: every line is its own request.
                 self.log_message.emit("info", self.config.get_log_text(
@@ -2068,7 +2082,10 @@ class TranslationPipeline:
             # 2. Aşama: Çevrimdışı tespit başarısızsa ve Google motoru seçiliyse online fallback
             if not detected_lang and self.engine == TranslationEngine.GOOGLE:
                 try:
-                    detection_translator = GoogleTranslator(config_manager=self.config)
+                    detection_translator = GoogleTranslator(
+                        config_manager=self.config,
+                        proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
+                    )
                     detected_lang = loop.run_until_complete(
                         detection_translator.detect_language(text_samples, target_lang=api_target_lang)
                     )
@@ -2227,10 +2244,18 @@ class TranslationPipeline:
                 continue
 
             # 3. TranslationManager Fast-Path Cache Check
+            _aggressive_retry = bool(
+                getattr(getattr(self.config, 'translation_settings', None), 'aggressive_retry_translation', False)
+            )
             cached_res = self.translation_manager.get_cached_translation(
                 entry.original_text, api_source_lang, api_target_lang, self.engine
             )
-            if cached_res and cached_res.success and cached_res.translated_text:
+            if (
+                cached_res
+                and cached_res.success
+                and cached_res.translated_text
+                and not (_aggressive_retry and cached_res.translated_text.strip() == entry.original_text.strip())
+            ):
                 cached_text = cached_res.translated_text
                 # Apply glossary if configured
                 if self.config and hasattr(self.config, 'glossary') and self.config.glossary:

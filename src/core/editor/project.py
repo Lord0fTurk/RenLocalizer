@@ -126,6 +126,7 @@ def save_edits(
     edits_by_file: Dict[str, List[Dict[str, Any]]],
     snapshots: Dict[str, Tuple[int, int]],
     backup_dir: Optional[str] = None,
+    lang_dir: Optional[str] = None,
 ) -> SaveResult:
     """Write edited lines back into their tl files.
 
@@ -152,7 +153,7 @@ def save_edits(
             failed = set(failed_lines)
             if len(failed) < len(rows):
                 if backup_dir:
-                    _backup_once(path, backup_dir)
+                    _backup_once(path, backup_dir, lang_dir=lang_dir)
                 if not save_text_safely(Path(path), new_content, encoding="utf-8-sig", newline="\n"):
                     result.errors.append(path)
                     continue
@@ -166,8 +167,16 @@ def save_edits(
     return result
 
 
-def _backup_once(path: str, backup_dir: str) -> None:
-    target = os.path.join(backup_dir, os.path.basename(path) + ".bak")
+def _backup_once(path: str, backup_dir: str, lang_dir: Optional[str] = None) -> None:
+    name = os.path.basename(path) + ".bak"
+    if lang_dir:
+        try:
+            rel = os.path.relpath(path, lang_dir)
+            if not rel.startswith("..") and not os.path.isabs(rel):
+                name = rel.replace("\\", "__").replace("/", "__") + ".bak"
+        except ValueError:
+            pass
+    target = os.path.join(backup_dir, name)
     if os.path.exists(target):
         return
     os.makedirs(backup_dir, exist_ok=True)
@@ -196,12 +205,22 @@ def sync_strings_json(lang_dir: str, changes: Dict[str, str]) -> int:
     return count
 
 
-def sync_translation_cache(cache_file: str, target_lang_codes: List[str], changes: Dict[str, str]) -> int:
+def sync_translation_cache(
+    cache_file: str,
+    target_lang_codes: List[str],
+    changes: Dict[str, str],
+    *,
+    insert_missing_engine: Optional[str] = None,
+    insert_missing_source: str = "auto",
+    insert_missing_target: Optional[str] = None,
+) -> int:
     """Put hand-edited translations into the project's translation cache.
 
     Only an existing cache file is updated, and only entries for the given
     target language, so a later run (or a regenerated tl folder) reuses the
-    edit instead of the old machine translation.
+    edit instead of the old machine translation. When *insert_missing_engine*
+    is given, newly translated originals missing from all target-language
+    buckets are added under that engine bucket.
     """
     if not changes or not cache_file or not os.path.isfile(cache_file):
         return 0
@@ -210,6 +229,8 @@ def sync_translation_cache(cache_file: str, target_lang_codes: List[str], change
         return 0
     wanted = {c.lower() for c in target_lang_codes if c}
     count = 0
+    seen_originals = set()
+    preferred_tl: Optional[str] = None
     for sl_map in data.values():
         if not isinstance(sl_map, dict):
             continue
@@ -219,10 +240,29 @@ def sync_translation_cache(cache_file: str, target_lang_codes: List[str], change
             for tl, text_map in tl_map.items():
                 if tl.lower() not in wanted or not isinstance(text_map, dict):
                     continue
+                if preferred_tl is None:
+                    preferred_tl = tl
                 for original, text in changes.items():
-                    if original in text_map and text_map[original] != text:
-                        text_map[original] = text
-                        count += 1
+                    if original in text_map:
+                        seen_originals.add(original)
+                        if text_map[original] != text:
+                            text_map[original] = text
+                            count += 1
+    if insert_missing_engine:
+        missing = {o: t for o, t in changes.items() if o not in seen_originals}
+        if missing:
+            target_tl = insert_missing_target or preferred_tl or (target_lang_codes[-1] if target_lang_codes else "")
+            if target_tl:
+                eng_map = data.setdefault(insert_missing_engine, {})
+                if isinstance(eng_map, dict):
+                    src_map = eng_map.setdefault(insert_missing_source or "auto", {})
+                    if isinstance(src_map, dict):
+                        text_map = src_map.setdefault(target_tl, {})
+                        if isinstance(text_map, dict):
+                            for original, text in missing.items():
+                                if text_map.get(original) != text:
+                                    text_map[original] = text
+                                    count += 1
     if count:
         save_json_safely(cache_file, data, indent=2)
     return count

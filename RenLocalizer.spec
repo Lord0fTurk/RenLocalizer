@@ -84,6 +84,15 @@ hidden_imports += collect_submodules('openai')
 hidden_imports += collect_submodules('google.genai')
 hidden_imports += collect_submodules('fontTools')
 hidden_imports += collect_submodules('openpyxl')  # glossary .xlsx import/export (imported lazily)
+hidden_imports += ['orjson']  # fast JSON serializer (imported inside try/except in encoding.py)
+# Credential store (src/utils/secret_store.py). The backend is imported by name
+# at runtime, and its platform libraries are imported lazily inside keyring.
+hidden_imports += ['keyring.backends.Windows', 'keyring.backends.SecretService']
+for _secret_pkg in ('win32ctypes', 'secretstorage', 'jeepney'):
+    try:
+        hidden_imports += collect_submodules(_secret_pkg)
+    except Exception:
+        pass  # not installed on this platform
 
 
 # Manual additions for specific edge cases

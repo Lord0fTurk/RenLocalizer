@@ -89,6 +89,12 @@ Item {
             transArea.text = editorBackend.selected.translated || ""
             page.liveProblem = editorBackend.selected.problemText || ""
         }
+        function onPageChanged() {
+            if (searchField.text !== editorBackend.search) {
+                searchField.text = editorBackend.search
+                searchTimer.stop()
+            }
+        }
     }
 
     Timer {

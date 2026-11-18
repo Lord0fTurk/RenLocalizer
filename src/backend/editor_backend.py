@@ -28,9 +28,13 @@ _PROBLEM_TEXT = {
     "renpy_tag_set_mismatch": ("editor_problem_tags", "Text tags ({i}, {color}, ...) differ from the original."),
     "renpy_tag_order_mismatch": ("editor_problem_tag_order",
                                  "A text tag is closed before it is opened (for example {/i} before {i}); the game shows an error on this line."),
+    "renpy_tag_order_invalid": ("editor_problem_tag_order",
+                                "A text tag is closed before it is opened (for example {/i} before {i}); the game shows an error on this line."),
     "printf_set_mismatch": ("editor_problem_printf", "Format codes (%s, %d, ...) differ from the original."),
     "length_inflation": ("editor_problem_length", "The translation is much longer than the original."),
     "html_leakage": ("editor_problem_html", "The translation contains HTML markup."),
+    "replacement_char": ("editor_problem_replacement_char",
+                         "The translation contains an unreadable replacement character (U+FFFD)."),
     "placeholder_remnant": ("editor_problem_remnant", "The translation contains a leftover placeholder token."),
     "separator_remnant": ("editor_problem_remnant", "The translation contains a leftover placeholder token."),
 }
@@ -61,6 +65,8 @@ class EditorBackend(QObject):
         self._file = "all"
         self._kind = "all"
         self._status = "all"
+        self._pending_focus_query: Optional[str] = None
+        self._pending_focus_file: Optional[str] = None
         self._page = 1
         self._total = 0
         self._rows: List[Dict[str, Any]] = []
@@ -256,6 +262,19 @@ class EditorBackend(QObject):
         from src.core.pipeline.saving import list_tl_languages
 
         game_dir = self.app._tool_game_dir() or ""
+        if self._loaded is not None and game_dir != self._game_dir:
+            self._loaded = None
+            self._game_dir = game_dir
+            self._language = ""
+            self.store = EditorStore()
+            self._rows = []
+            self._stats = {}
+            self._selected = {}
+            self._total = 0
+            self._page = 1
+            self.stateChanged.emit()
+            self.pageChanged.emit()
+            self.selectedChanged.emit()
         self._languages = list_tl_languages(game_dir) if game_dir else []
         self.languagesChanged.emit()
 
@@ -286,10 +305,41 @@ class EditorBackend(QObject):
             self._loaded = loaded
             self.store.load(loaded.rows)
             self._page = 1
-            self._refresh_page()
+            if self._pending_focus_query is not None or self._pending_focus_file is not None:
+                q = self._pending_focus_query or ""
+                f = self._pending_focus_file or ""
+                self._pending_focus_query = None
+                self._pending_focus_file = None
+                self._apply_focus(q, f)
+            else:
+                self._refresh_page()
             self.notify.emit("info", self._t("editor_loaded", "{count} lines loaded.", count=len(loaded.rows)))
 
         self._run(lambda: load_language(game_dir, language), done)
+
+    def _apply_focus(self, search_query: str, file_rel: str) -> None:
+        self._kind = "all"
+        self._status = "all"
+        files = self.store.files() if self._loaded else []
+        self._file = file_rel if (file_rel and file_rel in files) else "all"
+        self._search = (search_query or "").strip()
+        self._page = 1
+        self._refresh_page()
+        if self._rows:
+            self._select(self._rows[0]["id"])
+
+    @pyqtSlot(str, str, str)
+    def focusEntry(self, language: str, search_query: str = "", file_rel: str = "") -> None:
+        """Open *language* in the editor, filter by *file_rel*/*search_query*, and select the first match."""
+        game_dir = self.app._tool_game_dir() or ""
+        if not game_dir or not language:
+            return
+        if self._loaded is not None and game_dir == self._game_dir and language == self._language:
+            self._apply_focus(search_query, file_rel)
+            return
+        self._pending_focus_query = search_query or ""
+        self._pending_focus_file = file_rel or ""
+        self.loadLanguage(language)
 
     @pyqtSlot()
     def reload(self) -> None:
@@ -379,6 +429,46 @@ class EditorBackend(QObject):
             codes.append(RENPY_TO_API_LANG.get(language.lower(), language))
         return [c for c in codes if c]
 
+    def _sync_memory_cache(self, changes: Dict[str, str], codes: List[str]) -> None:
+        tm = getattr(self.app, "translation_manager", None)
+        cache = getattr(tm, "_cache", None)
+        if not changes or cache is None:
+            return
+        from src.core.pipeline.constants import RENPY_TO_API_LANG
+        from src.core.translator import TranslationEngine, TranslationResult
+        from src.core.translators.factory import engine_enum
+
+        wanted = {c.lower() for c in codes if c}
+        updated_originals = set()
+        target_bucket = None
+        for key, val in list(cache.items()):
+            if not (isinstance(key, tuple) and len(key) == 4):
+                continue
+            eng_str, sl, tl, orig = key
+            if tl.lower() in wanted:
+                if target_bucket is None:
+                    target_bucket = (eng_str, sl, tl, getattr(val, "engine", None))
+                if orig in changes and isinstance(val, TranslationResult):
+                    val.translated_text = changes[orig]
+                    val.success = True
+                    updated_originals.add(orig)
+        missing = {o: t for o, t in changes.items() if o not in updated_originals}
+        if missing:
+            if target_bucket is not None:
+                eng_str, sl, tl, eng_obj = target_bucket
+                if not isinstance(eng_obj, TranslationEngine):
+                    eng_obj = engine_enum(eng_str)
+            else:
+                selected = getattr(self.app.config.translation_settings, "selected_engine", "google") or "google"
+                eng_obj = engine_enum(selected)
+                eng_str = eng_obj.value
+                sl = getattr(self.app.config.translation_settings, "source_language", "auto") or "auto"
+                tl = RENPY_TO_API_LANG.get(self._language.lower(), self._language)
+            for orig, text in missing.items():
+                cache[(eng_str, sl, tl, orig)] = TranslationResult(
+                    orig, text, sl, tl, eng_obj, True, confidence=1.0
+                )
+
     @pyqtSlot()
     def save(self) -> None:
         if self._locked or not self._loaded or self._busy:
@@ -387,7 +477,9 @@ class EditorBackend(QObject):
         if not edits:
             self.notify.emit("info", self._t("editor_nothing_to_save", "No changes to save."))
             return
+        from src.core.pipeline.constants import RENPY_TO_API_LANG
         from src.core.pipeline.saving import get_diagnostics_dir
+        from src.core.translators.factory import engine_enum
         from src.utils.path_manager import resolve_project_root, translation_cache_file
 
         lang_dir = os.path.join(self._game_dir, "tl", self._language)
@@ -396,28 +488,42 @@ class EditorBackend(QObject):
         project_root = resolve_project_root(self._game_dir)
         cache_file = translation_cache_file(self.app.config, project_root, self.app._project_path, self._language)
         codes = self._target_codes()
+        selected_eng = getattr(self.app.config.translation_settings, "selected_engine", "google") or "google"
+        insert_eng = engine_enum(selected_eng).value
+        insert_src = getattr(self.app.config.translation_settings, "source_language", "auto") or "auto"
+        insert_tl = RENPY_TO_API_LANG.get(self._language.lower(), self._language)
+        pending_changes: Dict[str, str] = {}
 
         def job() -> Any:
-            result = save_edits(edits, snapshots, backup_dir)
+            result = save_edits(edits, snapshots, backup_dir, lang_dir=lang_dir)
             saved = set(result.saved_ids)
             changes = {
                 r["original"]: r["translated"]
                 for rows in edits.values() for r in rows
                 if r["id"] in saved and r["status"] == "translated" and not r["problem"]
             }
+            pending_changes.update(changes)
             strings = {
                 r["original"]: r["translated"]
                 for rows in edits.values() for r in rows
-                if r["id"] in saved and r["kind"] == "string" and r["status"] == "translated"
+                if r["id"] in saved and r["kind"] == "string" and r["status"] == "translated" and not r["problem"]
             }
             try:
                 sync_strings_json(lang_dir, strings)
-                sync_translation_cache(cache_file, codes, changes)
+                sync_translation_cache(
+                    cache_file,
+                    codes,
+                    changes,
+                    insert_missing_engine=insert_eng,
+                    insert_missing_source=insert_src,
+                    insert_missing_target=insert_tl,
+                )
             except Exception as exc:  # the tl files are saved; the cache is a bonus
                 self.logger.warning("[Editor] cache/strings.json sync failed: %s", exc)
             return result
 
         def done(result: Any) -> None:
+            self._sync_memory_cache(pending_changes, codes)
             self.store.mark_saved(result.saved_ids)
             self._refresh_page()
             if result.saved_ids:

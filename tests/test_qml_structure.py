@@ -23,6 +23,7 @@ MOVED = {
     "pageLogs": "pages/LogPage.qml",
     "pageToolbox": "pages/ToolboxPage.qml",
     "pageGlossary": "pages/GlossaryPage.qml",
+    "pageDeveloper": "pages/DeveloperPage.qml",
     "completionDialog": "dialogs/CompletionDialog.qml",
     "updateDialog": "dialogs/UpdateDialog.qml",
     "factoryResetDialog": "dialogs/FactoryResetDialog.qml",
@@ -80,6 +81,7 @@ def test_moved_files_can_reach_what_they_use_from_main_qml():
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     from src.backend.app_backend import AppBackend
+    from src.backend.developer_backend import DeveloperBackend
     from src.backend.editor_backend import EditorBackend
 
     backend = AppBackend(parent=app)
@@ -87,6 +89,8 @@ def test_moved_files_can_reach_what_they_use_from_main_qml():
     engine.rootContext().setContextProperty("appBackend", backend)
     editor_backend = EditorBackend(backend, parent=app)
     engine.rootContext().setContextProperty("editorBackend", editor_backend)
+    developer_backend = DeveloperBackend(backend, parent=app)
+    engine.rootContext().setContextProperty("developerBackend", developer_backend)
     engine.addImportPath(str(QML))
     engine.load(QUrl.fromLocalFile(str(QML / "Main.qml")))
     assert engine.rootObjects(), "Main.qml failed to load"
@@ -135,6 +139,7 @@ def test_opening_every_page_raises_nothing_in_python(monkeypatch):
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     from src.backend.app_backend import AppBackend
+    from src.backend.developer_backend import DeveloperBackend
     from src.backend.editor_backend import EditorBackend
 
     backend = AppBackend(parent=app)
@@ -142,6 +147,8 @@ def test_opening_every_page_raises_nothing_in_python(monkeypatch):
     engine.rootContext().setContextProperty("appBackend", backend)
     editor_backend = EditorBackend(backend, parent=app)
     engine.rootContext().setContextProperty("editorBackend", editor_backend)
+    developer_backend = DeveloperBackend(backend, parent=app)
+    engine.rootContext().setContextProperty("developerBackend", developer_backend)
     engine.addImportPath(str(QML))
     qml_errors = []
     engine.warnings.connect(lambda ws: qml_errors.extend(w.toString() for w in ws))

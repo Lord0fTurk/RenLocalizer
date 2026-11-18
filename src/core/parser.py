@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from src.utils.encoding import read_text_safely
 from src.core.constants import is_renlocalizer_generated_script
+from src.core.output_formatter import LEGIT_SCRIPT_RANGES
 import configparser
 import yaml
 from src.core.deep_extraction import (
@@ -3473,7 +3474,8 @@ class RenPyParser:
             # - General Punctuation (Em dash, quotes): \u2000-\u206F
             # - Arabic/Farsi: \u0600-\u06FF
             # - Hebrew: \u0590-\u05FF
-            strange_chars = len(re.findall(r'[^\x20-\x7E\s\u00A0-\u024F\u0400-\u052F\u0590-\u05FF\u0600-\u06FF\u2000-\u206F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]', text_strip))
+            strange_chars = len(re.findall(
+                r'[^\x20-\x7E\s\u0400-\u052F\u2000-\u206F' + LEGIT_SCRIPT_RANGES + r']', text_strip))
             if strange_chars > len(text_strip) * 0.4:
                 return False
             

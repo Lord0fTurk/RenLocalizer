@@ -863,13 +863,13 @@ class GoogleTranslator(BaseTranslator):
                 # whether the IP block has lifted, not to wait it out.
                 if not entered_as_probe:
                     await self._wait_out_global_cooldown()
+                proxy = None
+                proxy_url_used = None
                 try:
                     query = urllib.parse.urlencode({**params, "client": client}, doseq=True, safe="")
                     url = f"{endpoint}?{query}"
                     session = await self._get_session()
 
-                    proxy = None
-                    proxy_url_used = None
                     if self.use_proxy and self.proxy_manager:
                         p = self.proxy_manager.get_next_proxy()
                         if p:
@@ -1481,11 +1481,15 @@ class GoogleTranslator(BaseTranslator):
         try:
             import requests as req_lib
 
+            proxy_url = self._proxy_url()
+            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+
             def do():
                 return req_lib.get(
                     self.google_endpoints[0],
                     params=params,
                     timeout=5,
+                    proxies=proxies,
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                     },
@@ -2054,10 +2058,8 @@ class GoogleTranslator(BaseTranslator):
             )
 
         # ── ALTERNATE FAMILIES (primary blocked or separator failed) ────────
-        best = router.best_family_for_batch()
-
         # BATCHEXECUTE: true multi-item batch — single round-trip
-        if best in (EndpointRouter.FAMILY_BATCHEXECUTE, EndpointRouter.FAMILY_PRIMARY):
+        if not router._health[EndpointRouter.FAMILY_BATCHEXECUTE].is_blocked():
             source_lang = batch[0].source_lang
             target_lang = batch[0].target_lang
             protected_texts = []
@@ -2092,11 +2094,14 @@ class GoogleTranslator(BaseTranslator):
 
             router.record_family_failure(EndpointRouter.FAMILY_BATCHEXECUTE, block_for=120.0)
             self.logger.debug("batchexecute batch failed — falling through to clients5.")
-            best = router.best_family_for_batch()
 
         # CLIENTS5: parallel single-item calls
-        if best == EndpointRouter.FAMILY_CLIENTS5:
-            return await self._translate_via_clients5_parallel(batch, router)
+        if not router._health[EndpointRouter.FAMILY_CLIENTS5].is_blocked():
+            c5_results = await self._translate_via_clients5_parallel(batch, router)
+            if any(r.success for r in c5_results):
+                return c5_results
+            router.record_family_failure(EndpointRouter.FAMILY_CLIENTS5, block_for=120.0)
+            self.logger.debug("clients5 parallel batch failed — falling through to Lingva/last resort.")
 
         # LINGVA / last resort: fall back to parallel individual translate_single
         self.logger.debug(f"Using parallel translation for {len(batch)} texts (lingva/last resort)")
@@ -2172,11 +2177,11 @@ class GoogleTranslator(BaseTranslator):
                 # to test whether the IP block has lifted, not wait it out.
                 if not entered_as_probe:
                     await self._wait_out_global_cooldown()
+                proxy = None
+                proxy_url_used = None
                 try:
                     session = await self._get_session()
 
-                    proxy = None
-                    proxy_url_used = None
                     if self.use_proxy and self.proxy_manager:
                         p = self.proxy_manager.get_next_proxy()
                         if p:
@@ -2202,6 +2207,7 @@ class GoogleTranslator(BaseTranslator):
                                 attempt -= 1
                                 continue
                             # 429 = IP-level rate limit — apply global cooldown
+                            self._router.record_primary_429()
                             global_wait = self._apply_global_cooldown()
                             if endpoint in self._endpoint_health:
                                 self._endpoint_health[endpoint]["fails"] += 1
@@ -2303,6 +2309,7 @@ class GoogleTranslator(BaseTranslator):
                                 return None
 
                         # Success - reset endpoint failures and 429 counter
+                        self._router.record_primary_success()
                         if endpoint in self._endpoint_health:
                             self._endpoint_health[endpoint]["fails"] = 0
                         self._consecutive_429_count = max(

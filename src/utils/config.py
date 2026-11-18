@@ -233,6 +233,9 @@ class TranslationSettings:
     translate_confirmations: bool = True  # Confirm() ve renpy.confirm() metinleri
     translate_define_strings: bool = True  # define statements ile tanımlanan stringler
     translate_character_names: bool = False  # NEW: Character("Name") isimleri
+    # DeepSeek V4 thinks by default: the reasoning tokens cost 3-4x the output, make
+    # temperature a no-op and share max_tokens with the answer. Off for translation.
+    deepseek_thinking: bool = False
 
     # v2.8.7: Native TLID output mode — generates translate <lang> <label>_<hash>:
     # blocks instead of translate <lang> strings: for dialogues. UI text stays strings:.
@@ -528,6 +531,8 @@ class AppSettings:
     renpy_sdk_path: str = ""
     # Desktop notifications for translation completion and error events
     enable_desktop_notifications: bool = True
+    # Show developer-oriented inspection page, raw diagnostic paths and extra details
+    developer_mode: bool = False
     # UI theme ('obsidian' = dark, 'daylight' = light) and accent preset ('cyan', 'emerald', 'indigo', 'amber')
     theme_mode: str = "obsidian"
     accent_preset: str = "cyan_teal"

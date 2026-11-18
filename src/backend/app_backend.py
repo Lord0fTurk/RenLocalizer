@@ -138,6 +138,7 @@ class AppBackend(QObject):
     translateCharacterNamesChanged = pyqtSignal()
     enableStatefulLexerChanged = pyqtSignal()
     enableDesktopNotificationsChanged = pyqtSignal()
+    developerModeChanged = pyqtSignal()
     checkForUpdatesOnStartupChanged = pyqtSignal()
     selectedEngineChanged = pyqtSignal(str)
     openaiApiKeyChanged = pyqtSignal()
@@ -263,6 +264,7 @@ class AppBackend(QObject):
         self.settings.on("use_cache", lambda: self.useCacheChanged.emit())
         self.settings.on("check_for_updates", lambda: self.refreshUI())
         self.settings.on("enable_desktop_notifications", lambda: self.enableDesktopNotificationsChanged.emit())
+        self.settings.on("developer_mode", lambda: self.developerModeChanged.emit())
         self.settings.on("rpyc_reader", lambda: self.enableRpycReaderChanged.emit())
         self.settings.on("deep_scan", lambda: self.enableDeepScanChanged.emit())
         self.settings.on("activate_language_on_launch", lambda: self.activateLanguageOnLaunchChanged.emit())
@@ -281,7 +283,9 @@ class AppBackend(QObject):
         self.settings.on("local_llm_model", lambda: self.localLlmModelChanged.emit())
         self.settings.on("local_llm_model", lambda: self.hyMt2StatusChanged.emit())
         self.settings.on("local_llm_mode", lambda: self.localLlmModeChanged.emit())
+        self.settings.on("local_llm_mode", lambda: self.hyMt2StatusChanged.emit())
         self.settings.on("local_llm_gguf_path", lambda: self.localLlmGgufPathChanged.emit())
+        self.settings.on("local_llm_gguf_path", lambda: self.hyMt2StatusChanged.emit())
         self.settings.on("local_llm_server_path", lambda: self.localLlmServerPathChanged.emit())
         self.settings.on("local_llm_backend", lambda: self.localLlmBackendChanged.emit())
         self.settings.on("local_llm_gpu_layers", lambda: self.localLlmGpuLayersChanged.emit())
@@ -609,6 +613,15 @@ class AppBackend(QObject):
     @enableDesktopNotifications.setter
     def enableDesktopNotifications(self, val: bool) -> None:
         self.settings.set_enable_desktop_notifications(val)
+
+    @pyqtProperty(bool, notify=developerModeChanged)
+    def developerMode(self) -> bool:
+        return self.settings.get_developer_mode()
+
+    @developerMode.setter
+    def developerMode(self, val: bool) -> None:
+        self.settings.set_developer_mode(val)
+        self.settings.save_settings()
 
     def _init_system_tray(self) -> None:
         """PyQt6 QSystemTrayIcon sistemini güvenle başlatır."""

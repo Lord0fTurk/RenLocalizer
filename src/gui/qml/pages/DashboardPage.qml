@@ -1202,7 +1202,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 14
-                            visible: appBackend.selectedEngine === "openai" || appBackend.selectedEngine === "deepseek"
+                            visible: appBackend.selectedEngine === "openai" || appBackend.selectedEngine === "deepseek" || appBackend.selectedEngine === "openrouter"
 
                             ColumnLayout {
                                 Layout.fillWidth: true; Layout.preferredWidth: 6; spacing: 4
@@ -1225,7 +1225,7 @@ Item {
                                 TextField {
                                     id: quickOpenaiModelField
                                     Layout.fillWidth: true; height: 38
-                                    text: appBackend.openaiModel; placeholderText: (text.length === 0 && !activeFocus) ? (appBackend.selectedEngine === "deepseek" ? "deepseek-chat" : "gpt-4o-mini") : ""
+                                    text: appBackend.openaiModel; placeholderText: (text.length === 0 && !activeFocus) ? (appBackend.selectedEngine === "openrouter" ? "google/gemini-2.5-flash" : appBackend.selectedEngine === "deepseek" ? "deepseek-v4-flash" : "gpt-4o-mini") : ""
                                     onEditingFinished: appBackend.openaiModel = text
                                     background: Rectangle {
                                         radius: 6; color: Theme.input; border.color: parent.activeFocus ? Theme.accent : Theme.cardBorder; border.width: 1

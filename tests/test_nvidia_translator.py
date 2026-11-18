@@ -200,6 +200,17 @@ def test_auto_source_language_is_english():
     assert t.calls[0][0] == "en-tr"
 
 
+@pytest.mark.parametrize("tgt,src,expected", [
+    ("es", "en", "en-es"), ("es-ES", "en", "en-es"), ("pt", "en", "en-pt"),
+    ("zh", "en", "en-zh"), ("zh-CN", "auto", "en-zh"), ("tr", "pt-BR", "pt-tr"),
+])
+def test_system_message_is_a_two_part_pair(tgt, src, expected):
+    """Region codes must not leak into the pair ("en-es-ES" makes the model answer in random languages)."""
+    t = FakeNvidia()
+    run(t.translate_batch(reqs(["Hello", "World"], tgt=tgt, src=src)))
+    assert t.calls[0][0] == expected
+
+
 def test_placeholders_round_trip():
     t = FakeNvidia()
     out = run(t.translate_batch(reqs(["Hello, [player_name]! {i}Wait{/i} %d left"])))

@@ -23,10 +23,13 @@ def test_qml_loads_cleanly():
     engine = QQmlApplicationEngine(app)
     engine.rootContext().setContextProperty("appBackend", backend)
     from src.backend.editor_backend import EditorBackend
+    from src.backend.developer_backend import DeveloperBackend
     # Parented so Python keeps it alive; an unowned object is collected at once
     # and the editor page would bind against null.
     editor_backend = EditorBackend(backend, parent=app)
     engine.rootContext().setContextProperty("editorBackend", editor_backend)
+    developer_backend = DeveloperBackend(backend, parent=app)
+    engine.rootContext().setContextProperty("developerBackend", developer_backend)
 
     qml_root = os.path.abspath("src/gui/qml")
     engine.addImportPath(qml_root)
@@ -177,7 +180,7 @@ def test_pages_use_the_shared_page_header():
     # The Translate page (DashboardPage) has no header on purpose: the game's
     # name is its title, and its one 24 px line is the empty-state headline.
     pages = [os.path.join("pages", name + ".qml") for name in
-             ("SettingsPage", "LogPage", "ToolboxPage", "GlossaryPage")]
+             ("SettingsPage", "LogPage", "ToolboxPage", "GlossaryPage", "DeveloperPage")]
     pages.append(os.path.join("components", "EditorPage.qml"))
     for rel in pages:
         with open(os.path.join(qml_root, rel), encoding="utf-8") as fh:

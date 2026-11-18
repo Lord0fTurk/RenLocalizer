@@ -4,10 +4,10 @@ PyQt6-sip==13.10.3
 aiohttp==3.13.5
 requests==2.33.1
 charset-normalizer==3.4.7
-openai==2.31.0
-google-genai==1.72.0
+openai==3.55.0
+google-genai==3.5.0
 unrpa==2.3.0
-rpycdec==0.1.12
+rpycdec==0.2.0
 rich==14.3.4
 PyYAML==6.0.3
 fonttools==4.62.1
@@ -16,6 +16,14 @@ py3langid==0.4.0
 openpyxl==3.1.5
 et_xmlfile==2.0.0
 numpy==2.4.4
+keyring==25.7.0
+jaraco.classes==3.4.0
+jaraco.functools==4.6.0
+jaraco.context==6.1.2
+more-itertools==11.2.1
+pywin32-ctypes==0.2.3
+SecretStorage==3.5.0
+jeepney==0.9.0
 # Build tool — pinned for reproducible CI bundles (macOS BUNDLE is sensitive
 # to bootloader changes; bump deliberately and re-test all 3 platforms)
 pyinstaller==6.22.2

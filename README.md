@@ -90,7 +90,8 @@ AI engines read lines as a scene, with who is speaking to whom, so tone, gender 
 | Bing / Microsoft Edge | Nothing | Free | Separate from Google's limits; falls back to Google if it fails. |
 | DeepSeek | API key | Low | Strong quality for the price. |
 | Google Gemini | API key | Free tier / paid | Large context window. |
-| OpenAI | API key | Paid | Also works with any OpenAI-compatible service (OpenRouter and others) through a custom base URL. |
+| OpenRouter | API key | Varies | One key for hundreds of models (`vendor/model` names). Nothing else to set up. |
+| OpenAI | API key | Paid | Also works with any other OpenAI-compatible service through a custom base URL. |
 | Local LLM, built-in runner | A `.gguf` file | Free | RenLocalizer downloads and runs llama.cpp for you. No other install. |
 | Local LLM, Ollama / LM Studio | The app running | Free | Uses the model you already have loaded. Includes a profile for translation models such as Hy-MT. |
 | LibreTranslate | Your own server | Free | Self-hosted. |

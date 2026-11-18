@@ -190,6 +190,7 @@ COVERAGE_WARNING_UI_KEYS = {
     'image_only_ui': 'coverage_warning_image_only_ui',
     'compiled_only_scripts': 'coverage_warning_compiled_only',
     'dynamic_ui_runtime': 'coverage_warning_dynamic_ui',
+    'interpolated_define_values': 'coverage_warning_interpolated_values',
 }
 
 COVERAGE_AUDIT_EXCLUDE_DIRS = {

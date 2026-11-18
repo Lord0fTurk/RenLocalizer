@@ -88,6 +88,15 @@ def riva_language_code(lang: str, *, default: Optional[str] = None) -> Optional[
     return _RIVA_BY_LOWER.get(primary) or _RIVA_ALIASES.get(primary) or default
 
 
+def riva_pair(src: str, tgt: str) -> str:
+    """The system message the model needs: ``xx-yy`` with primary subtags only.
+
+    A region-tagged code (``es-ES``) makes ``en-es-ES``; the model then answers
+    in random languages and still returns HTTP 200 (GitHub #28).
+    """
+    return f"{src.split('-')[0].lower()}-{tgt.split('-')[0].lower()}"
+
+
 class AdaptiveBatchSizer:
     """Finds how many lines one request can carry, while translating.
 
@@ -463,7 +472,7 @@ class NvidiaTranslator(BaseTranslator):
         if tgt is None:
             msg = f"Riva-Translate does not support target language '{requests[0].target_lang}'"
             return await self._delegate_all(requests, msg)
-        system = f"{src}-{tgt}"
+        system = riva_pair(src, tgt)
 
         protected: List[str] = []
         placeholders: List[Dict[str, str]] = []

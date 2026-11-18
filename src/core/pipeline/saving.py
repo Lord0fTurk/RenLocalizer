@@ -384,7 +384,8 @@ def write_translation_reports(lang_dir: str, target_language: str, diagnostic_re
     diag_dir = get_diagnostics_dir(lang_dir, target_language)
     diag_path = os.path.join(diag_dir, f'diagnostic_{target_language}.json')
     diagnostic_report.write(diag_path)
-    log_emit('info', config.get_log_text('log_diagnostic_written', path=diag_path))
+    dev_mode = bool(getattr(getattr(config, 'app_settings', None), 'developer_mode', False))
+    log_emit('info' if dev_mode else 'debug', config.get_log_text('log_diagnostic_written', path=diag_path))
 
     report_path = os.path.join(diag_dir, 'translation_blocked_or_fallback.json')
     payload = {
@@ -420,8 +421,9 @@ def emit_coverage_warning_summary(diagnostic_report, config, log_emit, last_diag
         log_emit('warning', f"\u26a0\ufe0f {localized}")
 
     if last_diagnostic_path:
+        dev_mode = bool(getattr(getattr(config, 'app_settings', None), 'developer_mode', False))
         report_line = config.get_ui_text('coverage_warning_report_path', 'Diagnostics report: {path}').format(path=last_diagnostic_path)
-        log_emit('warning', report_line)
+        log_emit('warning' if dev_mode else 'debug', report_line)
 
 
 def manage_runtime_hook(project_path: str, target_language: str, config, log_emit) -> None:

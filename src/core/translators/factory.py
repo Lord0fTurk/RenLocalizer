@@ -70,13 +70,16 @@ def build_translator(
             model=_setting(config, "nvidia_model"),
             **common,
         )
-    elif engine_id in ("openai", "deepseek"):
-        from src.core.ai_translator import DeepSeekTranslator, OpenAITranslator
+    elif engine_id in ("openai", "deepseek", "openrouter"):
+        from src.core.ai_translator import DeepSeekTranslator, OpenAITranslator, OpenRouterTranslator
 
         key = getattr(keys, "openai_api_key", "") or ""
-        # "deepseek" is the OpenAI engine pointed at DeepSeek; a config that
-        # only carries the URL means the same thing.
-        if engine_id == "deepseek" or "deepseek" in _setting(config, "openai_base_url").lower():
+        base = _setting(config, "openai_base_url").lower()
+        # "deepseek" / "openrouter" are the OpenAI engine pointed at that service;
+        # a config that only carries the URL means the same thing.
+        if engine_id == "openrouter" or (engine_id == "openai" and "openrouter" in base):
+            translator = OpenRouterTranslator(api_key=key, **common)
+        elif engine_id == "deepseek" or (engine_id == "openai" and "deepseek" in base):
             translator = DeepSeekTranslator(api_key=key, **common)
         else:
             translator = OpenAITranslator(api_key=key, **common)

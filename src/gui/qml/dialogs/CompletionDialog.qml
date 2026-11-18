@@ -514,6 +514,37 @@ Dialog {
             Layout.bottomMargin: 20
             spacing: 12
 
+            // Geliştirici İncelemesi (yalnızca developerMode açıkken)
+            Button {
+                id: openDevPageBtn
+                Layout.fillWidth: true; height: 42
+                visible: appBackend.developerMode
+                scale: down ? 0.97 : (hovered ? 1.02 : 1.0)
+                transformOrigin: Item.Center
+                Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                onClicked: { completionDialog.close(); navIndex = 6 }
+
+                background: Rectangle {
+                    radius: 10
+                    color: openDevPageBtn.down ? Theme.cardHover : (openDevPageBtn.hovered ? Theme.cardHover : Theme.input)
+                    border.color: openDevPageBtn.hovered ? Theme.accent : Theme.alpha(Theme.white, 0.12)
+                    border.width: 1
+                    Behavior on color { ColorAnimation { duration: 140 } }
+                    Behavior on border.color { ColorAnimation { duration: 140 } }
+                }
+                contentItem: RowLayout {
+                    spacing: 8
+                    Item { Layout.fillWidth: true }
+                    Icon { glyph: Icons.stethoscope; size: 14; color: Theme.txt }
+                    Label {
+                        text: appBackend.uiTrigger, appBackend.getTextWithDefault("nav_developer", "Geliştirici")
+                        color: Theme.txt
+                        font.bold: true; font.pixelSize: 13
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+            }
+
             // Çıktı Klasörünü Aç (Secondary Action Button)
             Button {
                 id: openFolderBtn
@@ -548,8 +579,8 @@ Dialog {
             // Tamam (Primary Action Button)
             Button {
                 id: completionOkBtn
-                Layout.preferredWidth: completionDialog.outputPath.length > 0 ? 130 : parent.width
-                Layout.fillWidth: completionDialog.outputPath.length === 0
+                Layout.preferredWidth: (completionDialog.outputPath.length > 0 || appBackend.developerMode) ? 130 : -1
+                Layout.fillWidth: completionDialog.outputPath.length === 0 && !appBackend.developerMode
                 height: 42
                 scale: down ? 0.97 : (hovered ? 1.02 : 1.0)
                 transformOrigin: Item.Center

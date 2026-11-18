@@ -64,6 +64,7 @@ class SettingsBackend:
             "use_cache": [],
             "check_for_updates": [],
             "enable_desktop_notifications": [],
+            "developer_mode": [],
             "rpyc_reader": [],
             "deep_scan": [],
             "activate_language_on_launch": [],
@@ -207,6 +208,13 @@ class SettingsBackend:
     def set_enable_desktop_notifications(self, val: bool) -> None:
         self.config.app_settings.enable_desktop_notifications = bool(val)
         self._emit("enable_desktop_notifications")
+
+    def get_developer_mode(self) -> bool:
+        return bool(getattr(self.config.app_settings, "developer_mode", False))
+
+    def set_developer_mode(self, val: bool) -> None:
+        self.config.app_settings.developer_mode = bool(val)
+        self._emit("developer_mode")
 
     def get_enable_rpyc_reader(self) -> bool:
         return self.config.translation_settings.enable_rpyc_reader
@@ -420,6 +428,13 @@ class SettingsBackend:
             from src.core.ai_translator import detect_model_profile
         except Exception:
             return False
+        if self.get_local_llm_mode() == "builtin":
+            gguf_path = self.get_local_llm_gguf_path()
+            if gguf_path:
+                from pathlib import Path
+
+                if detect_model_profile(Path(gguf_path).stem) == "hy_mt2":
+                    return True
         model = self.get_local_llm_model()
         return detect_model_profile(model) == "hy_mt2"
 
@@ -456,6 +471,8 @@ class SettingsBackend:
             "glossary.json",
             "critical_terms.json",  # legacy: no longer read, still cleaned up
             "never_translate.json",
+            "run_state.json",
+            "engine_speed.json",
             ".migrated_286",
         ):
             p = data_dir / filename
@@ -798,7 +815,35 @@ class SettingsBackend:
         deep_scan = self.config.translation_settings.enable_deep_scan
         enable_parallel = self.config.translation_settings.enable_parallel_batch
 
-        selected_engine_str = self._selected_engine.value
+        selected_engine_str = (
+            self.config.translation_settings.selected_engine
+            or self._selected_engine.value
+        )
+        activate_lang = getattr(
+            self.config.translation_settings, "activate_language_on_launch", True
+        )
+        trans_char_names = getattr(
+            self.config.translation_settings, "translate_character_names", False
+        )
+        stateful_lexer = getattr(
+            self.config.translation_settings, "enable_stateful_lexer", False
+        )
+        ai_profile = getattr(
+            self.config.translation_settings, "ai_model_profile", "auto"
+        )
+        ai_bformat = getattr(
+            self.config.translation_settings, "ai_batch_format", "scene"
+        )
+        ai_sbatch = getattr(
+            self.config.translation_settings, "ai_scene_batch_size", 15
+        )
+        deepseek_think = getattr(
+            self.config.translation_settings, "deepseek_thinking", False
+        )
+        desktop_notify = getattr(
+            self.config.app_settings, "enable_desktop_notifications", True
+        )
+        developer_mode = bool(getattr(self.config.app_settings, "developer_mode", False))
         openai_key = self.config.api_keys.openai_api_key or ""
         openai_model = self.config.translation_settings.openai_model or "gpt-4o-mini"
         openai_base_url = (
@@ -873,6 +918,15 @@ class SettingsBackend:
 
             # Engine & AI
             self.config.translation_settings.selected_engine = selected_engine_str
+            self.config.translation_settings.activate_language_on_launch = activate_lang
+            self.config.translation_settings.translate_character_names = trans_char_names
+            self.config.translation_settings.enable_stateful_lexer = stateful_lexer
+            self.config.translation_settings.ai_model_profile = ai_profile
+            self.config.translation_settings.ai_batch_format = ai_bformat
+            self.config.translation_settings.ai_scene_batch_size = ai_sbatch
+            self.config.translation_settings.deepseek_thinking = deepseek_think
+            self.config.app_settings.enable_desktop_notifications = desktop_notify
+            self.config.app_settings.developer_mode = developer_mode
             self.config.api_keys.openai_api_key = openai_key
             self.config.translation_settings.openai_model = openai_model
             self.config.translation_settings.openai_base_url = openai_base_url

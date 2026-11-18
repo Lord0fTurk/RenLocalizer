@@ -56,7 +56,7 @@ def test_llm_flag_matches_the_three_instruction_model_engines():
 
 
 def test_api_note_engines():
-    assert {s.id for s in reg.ENGINES if s.api_quality_note} == {"nvidia", "openai", "gemini", "deepseek"}
+    assert {s.id for s in reg.ENGINES if s.api_quality_note} == {"nvidia", "openai", "gemini", "deepseek", "openrouter"}
 
 
 def test_key_fields_exist_in_the_config_dataclasses():
@@ -97,7 +97,7 @@ def test_cli_lists_exactly_the_registered_cli_engines():
     assert cli.ENGINE_MAP == {eid: engine_enum(eid) for eid in reg.engine_ids(cli=True)}
     # The numbered terminal menu must not shift under people's fingers.
     assert [row[0] for row in cli.ENGINES] == [
-        "google", "bing", "nvidia", "openai", "deepseek", "gemini", "local_llm", "libretranslate", "custom",
+        "google", "bing", "nvidia", "openai", "deepseek", "openrouter", "gemini", "local_llm", "libretranslate", "custom",
     ]
 
 
@@ -121,7 +121,7 @@ def test_gui_list_has_no_second_copy_of_the_engines():
 
 @pytest.mark.parametrize("engine_id,class_name", [
     ("google", "GoogleTranslator"), ("bing", "BingTranslator"), ("nvidia", "NvidiaTranslator"),
-    ("openai", "OpenAITranslator"), ("deepseek", "DeepSeekTranslator"), ("gemini", "GeminiTranslator"),
+    ("openai", "OpenAITranslator"), ("deepseek", "DeepSeekTranslator"), ("openrouter", "OpenRouterTranslator"), ("gemini", "GeminiTranslator"),
     ("local_llm", "LocalLLMTranslator"), ("libretranslate", "LibreTranslateTranslator"),
 ])
 def test_factory_builds_each_engine(engine_id, class_name):
@@ -170,3 +170,19 @@ def test_factory_passes_the_status_callback_to_engine_and_fallback():
 def test_unknown_engines_are_not_built():
     assert build_translator("yandex", make_config()) is None
     assert build_translator("pseudo", make_config()) is None   # known id, built by the pipeline itself
+
+
+def test_openrouter_is_a_preset_of_the_openai_engine():
+    from src.core.ai_translator import OPENROUTER_BASE_URL, OPENROUTER_DEFAULT_MODEL
+
+    assert engine_enum("openrouter") is TranslationEngine.OPENAI
+    config = make_config(openai_model="gpt-4o-mini")
+    t = build_translator("openrouter", config)
+    assert t._base_url == OPENROUTER_BASE_URL
+    # The OpenAI default is not an OpenRouter id; a "vendor/model" name is kept.
+    assert t._model == OPENROUTER_DEFAULT_MODEL
+    config = make_config(openai_model="deepseek/deepseek-chat")
+    assert build_translator("openrouter", config)._model == "deepseek/deepseek-chat"
+    # A config that only carries the URL means the same thing.
+    config = make_config(openai_base_url="https://openrouter.ai/api/v1")
+    assert build_translator("openai", config).__class__.__name__ == "OpenRouterTranslator"

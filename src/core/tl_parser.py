@@ -644,6 +644,7 @@ class TLParser:
         current_block_id: Optional[str] = None
         block_type: Optional[str] = None  # strings | dialogue
         in_translate_block = False
+        pending_ctx: List[str] = []
         i = 0
         while i < len(lines):
             line = lines[i]
@@ -655,6 +656,15 @@ class TLParser:
                 current_block_id = block_match.group(2)
                 in_translate_block = True
                 block_type = 'strings' if current_block_id == 'strings' else 'dialogue'
+                pending_ctx = []
+                new_lines.append(line)
+                i += 1
+                continue
+
+            # Context comment (# context: screen:x)
+            ctx_match = self._context_comment_re.match(stripped)
+            if ctx_match:
+                pending_ctx.append(ctx_match.group(1).strip())
                 new_lines.append(line)
                 i += 1
                 continue
@@ -664,7 +674,9 @@ class TLParser:
             if old_match:
                 old_text = self._unescape_string(old_match.group('text'))
                 new_lines.append(line)  # old satırını ekle
-                translation_id = self.make_translation_id(tl_file.file_path, i + 1, old_text, ctx)
+                final_ctx = ([current_block_id] if current_block_id else []) + pending_ctx
+                pending_ctx = []
+                translation_id = self.make_translation_id(tl_file.file_path, i + 1, old_text, final_ctx)
                 
                 if i + 1 < len(lines):
                     next_line = lines[i + 1]
@@ -795,7 +807,7 @@ class TLParser:
                 failed.append(ln)
                 continue
             indent = body[:len(body) - len(body.lstrip())]
-            escaped = self._escape_string(edit["text"] or "")
+            escaped = self._escape_string(self._final_text(edit["text"] or "", edit["original"]))
             if kind == 'string':
                 new_body = f'new "{escaped}"'
             elif kind == 'dialogue':
