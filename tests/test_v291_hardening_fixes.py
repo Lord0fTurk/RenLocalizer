@@ -640,6 +640,7 @@ def test_settings_page_visibility_and_two_way_qml_bindings(tmp_path: Path):
     qml_dir = Path(__file__).resolve().parents[1] / "src" / "gui" / "qml"
     app = QApplication.instance() or QApplication(sys.argv[:1])
     cfg = ConfigManager(config_file=str(tmp_path / "config.json"))
+    cfg.app_settings.check_for_updates = False
     with patch("src.backend.app_backend.ConfigManager", return_value=cfg):
         backend = AppBackend(parent=app)
     engine = QQmlApplicationEngine(app)
@@ -649,66 +650,74 @@ def test_settings_page_visibility_and_two_way_qml_bindings(tmp_path: Path):
     developer_backend = DeveloperBackend(backend, parent=app)
     engine.rootContext().setContextProperty("developerBackend", developer_backend)
     engine.addImportPath(str(qml_dir))
-    engine.load(QUrl.fromLocalFile(str(qml_dir / "Main.qml")))
+    with patch.object(backend, "refreshProjectInfo"), patch.object(backend, "checkForUpdates"):
+        engine.load(QUrl.fromLocalFile(str(qml_dir / "Main.qml")))
     assert engine.rootObjects()
 
     root = engine.rootObjects()[0]
-    root.show()
-    app.processEvents()
-    root_ctx = engine.contextForObject(root)
-    page_settings = QQmlExpression(root_ctx, root, "pageSettings").evaluate()[0]
-    assert page_settings is not None
+    try:
+        root.show()
+        app.processEvents()
+        root_ctx = engine.contextForObject(root)
+        page_settings = QQmlExpression(root_ctx, root, "pageSettings").evaluate()[0]
+        assert page_settings is not None
 
-    inner_item = next(c for c in page_settings.children() if c.property("visible") is not None)
-    inner_ctx = engine.contextForObject(inner_item)
+        inner_item = next(c for c in page_settings.children() if c.property("visible") is not None)
+        inner_ctx = engine.contextForObject(inner_item)
 
-    # Activate Settings -> AI sub-tab so parent containers don't mask section visibility
-    QQmlExpression(root_ctx, root, "navIndex = 1").evaluate()
-    QQmlExpression(inner_ctx, inner_item, "pageSettings.settingsSubTab = 1").evaluate()
-    app.processEvents()
+        # Activate Settings -> AI sub-tab so parent containers don't mask section visibility
+        QQmlExpression(root_ctx, root, "navIndex = 1").evaluate()
+        QQmlExpression(inner_ctx, inner_item, "pageSettings.settingsSubTab = 1").evaluate()
+        app.processEvents()
 
-    def eval_settings(expr: str):
-        expr_obj = QQmlExpression(inner_ctx, inner_item, expr)
-        val = expr_obj.evaluate()[0]
-        assert not expr_obj.hasError(), f"QML expression failed: {expr} ({expr_obj.error().toString()})"
-        return val
+        def eval_settings(expr: str):
+            expr_obj = QQmlExpression(inner_ctx, inner_item, expr)
+            val = expr_obj.evaluate()[0]
+            assert not expr_obj.hasError(), f"QML expression failed: {expr} ({expr_obj.error().toString()})"
+            return val
 
-    # Check Base URL visibility: only visible for openai, NOT deepseek/openrouter
-    backend.setSelectedEngine("deepseek")
-    app.processEvents()
-    assert eval_settings("settingsOpenaiBaseUrlField.parent.visible") is False
-    backend.setSelectedEngine("openai")
-    app.processEvents()
-    assert eval_settings("settingsOpenaiBaseUrlField.parent.visible") is True
+        # Check Base URL visibility: only visible for openai, NOT deepseek/openrouter
+        backend.setSelectedEngine("deepseek")
+        app.processEvents()
+        assert eval_settings("settingsOpenaiBaseUrlField.parent.visible") is False
+        backend.setSelectedEngine("openai")
+        app.processEvents()
+        assert eval_settings("settingsOpenaiBaseUrlField.parent.visible") is True
 
-    # Check Local LLM section visibility: NOT visible for google
-    backend.setSelectedEngine("google")
-    app.processEvents()
-    assert eval_settings("localLlmModeCombo.parent.parent.visible") is False
-    backend.setSelectedEngine("local_llm")
-    app.processEvents()
-    assert eval_settings("localLlmModeCombo.parent.parent.visible") is True
+        # Check Local LLM section visibility: NOT visible for google
+        backend.setSelectedEngine("google")
+        app.processEvents()
+        assert eval_settings("localLlmModeCombo.parent.parent.visible") is False
+        backend.setSelectedEngine("local_llm")
+        app.processEvents()
+        assert eval_settings("localLlmModeCombo.parent.parent.visible") is True
 
-    # Check AI Batch Mode section visibility: only openai/deepseek/openrouter/local_llm
-    backend.setSelectedEngine("gemini")
-    app.processEvents()
-    assert eval_settings("aiBatchModeCombo.parent.parent.parent.visible") is False
-    backend.setSelectedEngine("google")
-    app.processEvents()
-    assert eval_settings("aiBatchModeCombo.parent.parent.parent.visible") is False
-    backend.setSelectedEngine("openai")
-    app.processEvents()
-    assert eval_settings("aiBatchModeCombo.parent.parent.parent.visible") is True
+        # Check AI Batch Mode section visibility: only openai/deepseek/openrouter/local_llm
+        backend.setSelectedEngine("gemini")
+        app.processEvents()
+        assert eval_settings("aiBatchModeCombo.parent.parent.parent.visible") is False
+        backend.setSelectedEngine("google")
+        app.processEvents()
+        assert eval_settings("aiBatchModeCombo.parent.parent.parent.visible") is False
+        backend.setSelectedEngine("openai")
+        app.processEvents()
+        assert eval_settings("aiBatchModeCombo.parent.parent.parent.visible") is True
 
-    # Two-way sync: changing appBackend properties updates SettingsPage fields
-    backend.openaiApiKey = "sk-updated-123"
-    backend.openaiModel = "gpt-4o"
-    backend.localLlmUrl = "http://localhost:1234/v1"
-    app.processEvents()
-    assert eval_settings("settingsOpenaiKeyField.text") == "sk-updated-123"
-    assert eval_settings("settingsOpenaiModelField.text") == "gpt-4o"
-    assert eval_settings("settingsLocalLlmUrlField.text") == "http://localhost:1234/v1"
-    root.hide()
+        # Two-way sync: changing appBackend properties updates SettingsPage fields
+        backend.openaiApiKey = "sk-updated-123"
+        backend.openaiModel = "gpt-4o"
+        backend.localLlmUrl = "http://localhost:1234/v1"
+        app.processEvents()
+        assert eval_settings("settingsOpenaiKeyField.text") == "sk-updated-123"
+        assert eval_settings("settingsOpenaiModelField.text") == "gpt-4o"
+        assert eval_settings("settingsLocalLlmUrlField.text") == "http://localhost:1234/v1"
+    finally:
+        root.hide()
+        engine.deleteLater()
+        developer_backend.deleteLater()
+        editor_backend.deleteLater()
+        backend.deleteLater()
+        app.processEvents()
 
 
 def test_developer_mode_setting_and_developer_backend(tmp_path: Path):

@@ -85,6 +85,7 @@ def test_moved_files_can_reach_what_they_use_from_main_qml():
     from src.backend.editor_backend import EditorBackend
 
     backend = AppBackend(parent=app)
+    backend.config.app_settings.check_for_updates = False
     engine = QQmlApplicationEngine(app)
     engine.rootContext().setContextProperty("appBackend", backend)
     editor_backend = EditorBackend(backend, parent=app)
@@ -95,28 +96,35 @@ def test_moved_files_can_reach_what_they_use_from_main_qml():
     engine.load(QUrl.fromLocalFile(str(QML / "Main.qml")))
     assert engine.rootObjects(), "Main.qml failed to load"
     root = engine.rootObjects()[0]
-    root_ctx = engine.contextForObject(root)
+    try:
+        root_ctx = engine.contextForObject(root)
 
-    main_code = _code(QML / "Main.qml")
-    main_names = _ids(main_code)
-    main_names |= set(re.findall(r"^\s{4}function\s+([A-Za-z_]\w*)", main_code, re.M))
-    main_names |= set(re.findall(r"^\s{4}property\s+\w+\s+([A-Za-z_]\w*)", main_code, re.M))
-    assert {"root", "showToast", "navIndex", "fileDialog"} <= main_names
+        main_code = _code(QML / "Main.qml")
+        main_names = _ids(main_code)
+        main_names |= set(re.findall(r"^\s{4}function\s+([A-Za-z_]\w*)", main_code, re.M))
+        main_names |= set(re.findall(r"^\s{4}property\s+\w+\s+([A-Za-z_]\w*)", main_code, re.M))
+        assert {"root", "showToast", "navIndex", "fileDialog"} <= main_names
 
-    unresolved, checked = [], 0
-    for inst, rel in MOVED.items():
-        code = _code(QML / rel)
-        obj = QQmlExpression(root_ctx, root, inst).evaluate()[0]
-        assert obj is not None, f"Main.qml has no instance with id {inst}"
-        inner = engine.contextForObject(obj)
-        for name in sorted(n for n in main_names - _ids(code) if _uses(n, code)):
-            expr = QQmlExpression(inner, obj, f"(typeof {name}) !== 'undefined'")
-            ok = expr.evaluate()[0]
-            checked += 1
-            if expr.hasError() or ok is not True:
-                unresolved.append(f"{rel}: {name}")
-    assert checked > 30, "the check found almost nothing to verify; did the layout change?"
-    assert not unresolved, "Names from Main.qml that a moved file cannot reach:\n" + "\n".join(unresolved)
+        unresolved, checked = [], 0
+        for inst, rel in MOVED.items():
+            code = _code(QML / rel)
+            obj = QQmlExpression(root_ctx, root, inst).evaluate()[0]
+            assert obj is not None, f"Main.qml has no instance with id {inst}"
+            inner = engine.contextForObject(obj)
+            for name in sorted(n for n in main_names - _ids(code) if _uses(n, code)):
+                expr = QQmlExpression(inner, obj, f"(typeof {name}) !== 'undefined'")
+                ok = expr.evaluate()[0]
+                checked += 1
+                if expr.hasError() or ok is not True:
+                    unresolved.append(f"{rel}: {name}")
+        assert checked > 30, "the check found almost nothing to verify; did the layout change?"
+        assert not unresolved, "Names from Main.qml that a moved file cannot reach:\n" + "\n".join(unresolved)
+    finally:
+        engine.deleteLater()
+        developer_backend.deleteLater()
+        editor_backend.deleteLater()
+        backend.deleteLater()
+        app.processEvents()
 
 
 def test_opening_every_page_raises_nothing_in_python(monkeypatch):
@@ -143,6 +151,7 @@ def test_opening_every_page_raises_nothing_in_python(monkeypatch):
     from src.backend.editor_backend import EditorBackend
 
     backend = AppBackend(parent=app)
+    backend.config.app_settings.check_for_updates = False
     engine = QQmlApplicationEngine(app)
     engine.rootContext().setContextProperty("appBackend", backend)
     editor_backend = EditorBackend(backend, parent=app)
@@ -155,22 +164,29 @@ def test_opening_every_page_raises_nothing_in_python(monkeypatch):
     engine.load(QUrl.fromLocalFile(str(QML / "Main.qml")))
     assert engine.rootObjects(), "Main.qml failed to load"
     root = engine.rootObjects()[0]
-    root.show()
+    try:
+        root.show()
 
-    def pump(seconds):
-        end = time.time() + seconds
-        while time.time() < end:
-            app.processEvents()
-            time.sleep(0.01)
+        def pump(seconds):
+            end = time.time() + seconds
+            while time.time() < end:
+                app.processEvents()
+                time.sleep(0.01)
 
-    context = engine.contextForObject(root)
-    for nav in (1, 2, 3, 4, 5, 0):
-        QQmlExpression(context, root, f"root.navIndex = {nav}").evaluate()
-        pump(0.35)
-    for sub in (0, 1, 2):
-        QQmlExpression(context, root, f"root.navIndex = 1; pageSettings.settingsSubTab = {sub}").evaluate()
-        pump(0.2)
-    root.hide()
+        context = engine.contextForObject(root)
+        for nav in (1, 2, 3, 4, 5, 0):
+            QQmlExpression(context, root, f"root.navIndex = {nav}").evaluate()
+            pump(0.35)
+        for sub in (0, 1, 2):
+            QQmlExpression(context, root, f"root.navIndex = 1; pageSettings.settingsSubTab = {sub}").evaluate()
+            pump(0.2)
+    finally:
+        root.hide()
+        engine.deleteLater()
+        developer_backend.deleteLater()
+        editor_backend.deleteLater()
+        backend.deleteLater()
+        app.processEvents()
 
     assert not raised, "A backend slot raised while a page opened:\n" + "\n".join(raised)
     script_errors = [e for e in qml_errors if "TypeError" in e or "ReferenceError" in e]
