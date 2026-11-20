@@ -38,6 +38,7 @@ class Language(Enum):
     PERSIAN = "fa"
     CHINESE_S = "zh-CN"
     JAPANESE = "ja"
+    KOREAN = "ko"
 
 
 TURKIC_PRIMARY_LANG_IDS = {
@@ -122,6 +123,7 @@ def _build_ui_lang_map() -> dict[str, str]:
         "fa": "fa",
         "zh": "zh-CN",
         "ja": "ja",
+        "ko": "ko",
     }
 
 
@@ -147,6 +149,7 @@ def detect_system_language() -> str:
                     0x29: "fa",
                     0x04: "zh-CN",
                     0x11: "ja",
+                    0x12: "ko",
                 }
                 if primary_lang in TURKIC_PRIMARY_LANG_IDS:
                     return "tr"
@@ -1584,7 +1587,7 @@ class ConfigManager:
 
     def get_source_languages_for_ui(self) -> list:
         """Get languages for source language UI dropdown, with Auto-detect first."""
-        result = [("auto", "Auto-detect")]
+        result = [("auto", self.get_ui_text("auto_detect", "Auto-detect"))]
         for item in self.get_all_languages():
             name = item["native"]
             if item["english"].lower() != item["native"].lower():

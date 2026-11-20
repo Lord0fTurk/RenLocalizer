@@ -87,7 +87,7 @@ def test_warning_is_registered_localised_and_formats():
     from src.core.pipeline.constants import COVERAGE_WARNING_UI_KEYS
 
     key = COVERAGE_WARNING_UI_KEYS["interpolated_define_values"]
-    for lang in ("en", "tr", "de", "es", "fr", "ru", "fa", "zh-CN", "ja"):
+    for lang in ("en", "tr", "de", "es", "fr", "ru", "fa", "zh-CN", "ja", "ko"):
         text = json.loads(Path(f"locales/{lang}.json").read_text(encoding="utf-8"))[key]
         assert "{count}" in text
         assert text.format(count=3)

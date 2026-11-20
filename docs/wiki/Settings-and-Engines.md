@@ -8,7 +8,7 @@ RenLocalizer organizes all configuration options into clean, themed cards on the
 
 | Setting | Options | Description |
 |:---|:---|:---|
-| 🌐 **UI Language** | EN, TR, DE, ES, FR, RU, FA, ZH-CN, JA | Changes the application language dynamically. |
+| 🌐 **UI Language** | EN, TR, DE, ES, FR, RU, FA, ZH-CN, JA, KO | Changes the application language dynamically. |
 | 🎨 **Theme** | Dark, Light, Red, Turquoise, Green, Neon | Select the visual color palette that suits your style. |
 | 🔄 **Auto Update** | Check on startup | Checks GitHub Releases for new updates automatically. |
 

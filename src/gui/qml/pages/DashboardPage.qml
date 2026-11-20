@@ -487,7 +487,8 @@ Item {
                                 ComboBox {
                                     id: sourceLangCombo
                                     implicitHeight: pageDashboard.wide ? 48 : 34; implicitWidth: contentItem.implicitWidth; padding: 0
-                                    model: appBackend.getSourceLanguages()
+                                    model: appBackend.uiTrigger, appBackend.getSourceLanguages()
+                                    onModelChanged: syncSourceLanguage()
                                     textRole: "name"; valueRole: "code"
                                     function syncSourceLanguage() {
                                         var src = appBackend.getSourceLanguage() || "auto"

@@ -23,7 +23,7 @@ Unlike standard translators that break formatting and crash games, RenLocalizer 
 | 🛡️ | **SyntaxGuard Protection** | 3 protection modes + 6-stage fallback recovery to guarantee crash-free game execution |
 | 📦 | **Dual Output Pipeline** | **Native TLID** (pure native Ren'Py blocks, default) or **Standard Mode** (dynamic runtime hook) |
 | 🔍 | **Deep Extraction** | Automatically decompiles compiled `.rpyc` files and unpacks `.rpa` archives |
-| 🎨 | **9 Languages & 6 Themes** | UI available in EN, TR, DE, ES, FR, RU, FA, ZH-CN, JA + Material Design themes |
+| 🎨 | **10 Languages & 6 Themes** | UI available in EN, TR, DE, ES, FR, RU, FA, ZH-CN, JA, KO + Material Design themes |
 | 🖥️ | **Cross-Platform** | Portable Windows, Linux AppImage, and macOS ARM64 DMG |
 
 ---

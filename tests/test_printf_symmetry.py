@@ -152,7 +152,7 @@ class TestReasonText:
         import json
         import os
         root = os.path.join(os.path.dirname(__file__), "..", "locales")
-        for lang in ("en", "tr", "de", "es", "fr", "ru", "fa", "zh-CN", "ja"):
+        for lang in ("en", "tr", "de", "es", "fr", "ru", "fa", "zh-CN", "ja", "ko"):
             with open(os.path.join(root, f"{lang}.json"), encoding="utf-8") as f:
                 data = json.load(f)
             assert "guard_reason_printf_set_mismatch" in data, f"missing in {lang}"

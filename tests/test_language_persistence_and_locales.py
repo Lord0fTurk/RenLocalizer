@@ -2,15 +2,16 @@
 """
 Tests for language persistence and dialog locale key completeness.
 Ensures that:
-1. All 9 supported locale files contain all required UI dialog keys.
+1. All supported locale files contain all required UI dialog keys.
 2. QML ComboBoxes initialize with persisted settings without reverting to Turkish.
 3. ConfigManager correctly persists and reloads UI and target languages.
 """
 
 import json
-import os
 import sys
 from pathlib import Path
+
+import pytest
 
 REQUIRED_DIALOG_KEYS = [
     "completion_summary_subtitle",
@@ -24,11 +25,11 @@ REQUIRED_DIALOG_KEYS = [
     "update_download_btn",
 ]
 
-SUPPORTED_LANGUAGES = ["ru", "en", "tr", "de", "es", "fr", "fa", "zh-CN", "ja"]
+SUPPORTED_LANGUAGES = ["ru", "en", "tr", "de", "es", "fr", "fa", "zh-CN", "ja", "ko"]
 
 
 def test_all_locales_have_dialog_keys():
-    """Verify that all 9 locales contain all required dialog keys with non-empty values."""
+    """Verify that all supported locales contain all required dialog keys with non-empty values."""
     locales_dir = Path("locales")
     assert locales_dir.exists(), "locales directory must exist"
 
@@ -68,10 +69,12 @@ def test_config_manager_preserves_ui_and_target_language():
         test_path.unlink()
 
 
-def test_qml_comboboxes_sync_persisted_languages():
-    """Verify that QML ComboBoxes initialize with persisted Russian settings without reverting to Turkish."""
-    os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    os.environ["QML_DISABLE_DISK_CACHE"] = "1"
+@pytest.mark.parametrize("ui_language", ["ru", "ko"])
+def test_qml_comboboxes_sync_persisted_languages(ui_language, tmp_path, monkeypatch):
+    """Verify that the settings UI loads the persisted interface and target languages."""
+    monkeypatch.setattr("src.utils.path_manager.get_data_path", lambda: tmp_path)
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("QML_DISABLE_DISK_CACHE", "1")
 
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtQml import QQmlApplicationEngine
@@ -86,7 +89,11 @@ def test_qml_comboboxes_sync_persisted_languages():
     backend = AppBackend(parent=app)
     backend.config.translation_settings.target_language = "russian"
     backend.config.translation_settings.source_language = "auto"
-    backend.config.app_settings.ui_language = "ru"
+    backend.setUILanguage(ui_language)
+    assert backend.config.app_settings.ui_language == ui_language
+    from src.utils.config import ConfigManager
+
+    assert ConfigManager().app_settings.ui_language == ui_language
 
     engine = QQmlApplicationEngine(app)
     engine.rootContext().setContextProperty("appBackend", backend)
@@ -94,11 +101,9 @@ def test_qml_comboboxes_sync_persisted_languages():
     editor_backend = EditorBackend(backend, parent=app)
     engine.rootContext().setContextProperty("editorBackend", editor_backend)
 
-    qml_root = os.path.abspath("src/gui/qml")
-    engine.addImportPath(qml_root)
-    qml_path = os.path.join(qml_root, "Main.qml")
-
-    engine.load(QUrl.fromLocalFile(qml_path))
+    qml_root = Path("src/gui/qml").resolve()
+    engine.addImportPath(str(qml_root))
+    engine.load(QUrl.fromLocalFile(str(qml_root / "Main.qml")))
     assert len(engine.rootObjects()) > 0, "Main.qml must load cleanly"
 
     root = engine.rootObjects()[0]
@@ -114,9 +119,9 @@ def test_qml_comboboxes_sync_persisted_languages():
             idx = obj.property("currentIndex")
             if val in ("russian", "turkish", "german", "english"):
                 combos["target"] = (val, text, idx)
-            elif val in ("ru", "tr", "de", "en"):
+            elif val in ("ru", "tr", "de", "en", "ko"):
                 combos["ui_lang"] = (val, text, idx)
-            elif val == "auto":
+            elif val == "auto" and obj.property("valueRole") == "code":
                 combos["source"] = (val, text, idx)
         for ch in obj.children():
             walk(ch)
@@ -127,4 +132,8 @@ def test_qml_comboboxes_sync_persisted_languages():
     assert combos["target"][0] == "russian", f"Target language combo must be 'russian', got {combos['target']}"
 
     assert "ui_lang" in combos, "UI language combo must be found"
-    assert combos["ui_lang"][0] == "ru", f"UI language combo must be 'ru', got {combos['ui_lang']}"
+    assert combos["ui_lang"][0] == ui_language
+    if ui_language == "ko":
+        assert "한국어" in combos["ui_lang"][1]
+        assert combos["source"][1] == "자동 감지 (auto)"
+        assert backend.config.get_ui_text("nav_editor") == "편집기"
