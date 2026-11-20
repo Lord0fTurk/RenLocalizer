@@ -39,7 +39,7 @@ def test_quick_config_localization_keys():
         "gemini_safety_only_high",
         "gemini_safety_standard",
     ]
-    all_locales = ["de", "en", "es", "fa", "fr", "ja", "ru", "tr", "zh-CN"]
+    all_locales = ["de", "en", "es", "fa", "fr", "ja", "ko", "ru", "tr", "zh-CN"]
     
     for loc in all_locales:
         file_path = locales_dir / f"{loc}.json"

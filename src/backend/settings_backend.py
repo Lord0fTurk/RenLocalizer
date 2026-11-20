@@ -690,6 +690,7 @@ class SettingsBackend:
             {"code": "fa", "name": "🇮🇷 فارسی"},
             {"code": "zh-CN", "name": "🇨🇳 中文 (简体)"},
             {"code": "ja", "name": "🇯🇵 日本語"},
+            {"code": "ko", "name": "🇰🇷 한국어"},
         ]
 
     def get_current_ui_language(self) -> str:

@@ -4,6 +4,10 @@ render_with_liquid: false
 
 # RenLocalizer Changelog
 
+#### [Unreleased]
+
+- Added Korean (한국어) to the interface language selector and system language detection.
+
 #### [2.9.1] - 2026-11-18
 
 ##### 🧑‍💻 Developer Mode, Developer Inspection Page & User-Friendly Warnings
